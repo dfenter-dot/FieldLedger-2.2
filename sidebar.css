@@ -1,0 +1,63 @@
+.sidebar{
+  width: 260px;
+  background: rgba(11,31,58,0.92);
+  border-right: 1px solid rgba(43,54,71,0.8);
+  padding: 14px;
+  display:none;
+}
+@media (min-width: 900px){
+  .sidebar{ display:flex; flex-direction:column; }
+}
+.sidebarBrand{
+  display:flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(212,175,55,0.18);
+  border-radius: 14px;
+  background: rgba(16,43,82,0.35);
+}
+.brandMark{
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: rgba(212,175,55,0.12);
+  border: 1px solid rgba(212,175,55,0.3);
+  color: var(--gold);
+  font-weight: 800;
+}
+.brandName{ font-weight: 800; letter-spacing: 0.2px; }
+.brandSub{ color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+.sidebarNav{
+  margin-top: 16px;
+  display:flex;
+  flex-direction:column;
+  gap: 6px;
+}
+.navItem{
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  color: var(--text);
+}
+.navItem:hover{
+  border-color: rgba(212,175,55,0.18);
+  background: rgba(17,24,39,0.35);
+}
+.navItem.active{
+  border-color: rgba(212,175,55,0.35);
+  background: rgba(17,24,39,0.45);
+}
+
+.navGroup{ margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(43,54,71,0.7); }
+.navGroupLabel{ color: var(--muted); font-size: 12px; padding: 6px 12px; }
+
+.sidebarFooter{
+  margin-top: auto;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
