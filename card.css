@@ -1,0 +1,22 @@
+.card{
+  border:1px solid rgba(43,54,71,0.85);
+  background: rgba(31,41,55,0.55);
+  border-radius: var(--radius);
+  overflow:hidden;
+}
+.cardHeader{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding: 14px 14px 10px 14px;
+  border-bottom: 1px solid rgba(43,54,71,0.7);
+  background: rgba(17,24,39,0.35);
+}
+.cardTitle{
+  margin:0;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+}
+.cardBody{
+  padding: 14px;
+}

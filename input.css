@@ -1,0 +1,24 @@
+.inputWrap{
+  display:flex;
+  align-items:center;
+  border:1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(17,24,39,0.7);
+  overflow:hidden;
+}
+.inputPrefix{
+  padding: 10px 10px;
+  color: var(--muted);
+  border-right: 1px solid rgba(43,54,71,0.8);
+}
+.input{
+  width:100%;
+  border:none;
+  background: transparent;
+  color: var(--text);
+  padding: 10px 12px;
+  outline:none;
+}
+.inputWrap:focus-within{
+  border-color: rgba(212,175,55,0.45);
+}

@@ -1,0 +1,25 @@
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(43,54,71,0.7);
+  background: rgba(17,24,39,0.55);
+  position: sticky;
+  top: 0;
+  backdrop-filter: blur(10px);
+  z-index: 5;
+}
+.topbarTitle{
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+.topbarRight{ display:flex; gap: 10px; align-items:center; }
+.chip{
+  padding: 6px 10px;
+  border-radius: 999px;
+  border:1px solid rgba(43,54,71,0.8);
+  background: rgba(11,18,32,0.5);
+  color: var(--muted);
+  font-size: 12px;
+}

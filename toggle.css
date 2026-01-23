@@ -1,0 +1,36 @@
+.toggle{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  color: var(--text);
+  user-select:none;
+}
+.toggle input{ display:none; }
+.toggleTrack{
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.05);
+  position: relative;
+}
+.toggleTrack::after{
+  content:"";
+  position:absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(229,231,235,0.9);
+  transition: transform 160ms ease;
+}
+.toggle input:checked + .toggleTrack{
+  border-color: rgba(212,175,55,0.35);
+  background: rgba(212,175,55,0.12);
+}
+.toggle input:checked + .toggleTrack::after{
+  transform: translateX(18px);
+  background: rgba(212,175,55,0.85);
+}
+.toggleLabel{ color: var(--muted); font-size: 12px; }
