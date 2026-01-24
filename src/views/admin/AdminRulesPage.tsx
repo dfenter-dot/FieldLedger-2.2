@@ -5,6 +5,7 @@ import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { AdminRule } from '../../providers/data/types';
+import { useDialogs } from '../../providers/dialogs/DialogContext';
 
 function makeNewRule(): AdminRule {
   return {
@@ -19,6 +20,7 @@ function makeNewRule(): AdminRule {
 
 export function AdminRulesPage() {
   const data = useData();
+  const { confirm } = useDialogs();
   const [rules, setRules] = useState<AdminRule[]>([]);
   const [editing, setEditing] = useState<Record<string, AdminRule>>({});
   const [status, setStatus] = useState<string>('');
@@ -58,8 +60,13 @@ export function AdminRulesPage() {
 
   async function remove(id: string) {
     try {
-      // eslint-disable-next-line no-restricted-globals
-      if (!confirm('Delete this rule?')) return;
+      const ok = await confirm({
+        title: 'Delete Rule',
+        message: 'Delete this rule?',
+        confirmText: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
       setStatus('Deleting...');
       await data.deleteAdminRule(id);
       setRules((prev) => prev.filter((x) => x.id !== id));
