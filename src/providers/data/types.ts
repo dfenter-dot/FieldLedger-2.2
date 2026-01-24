@@ -1,94 +1,54 @@
-export type LibraryType = 'app' | 'user';
+// src/providers/data/types.ts
 
-export type Folder = {
-  id: string;
-  companyId: string;
-  libraryType: LibraryType;
-  parentId: string | null;
+export type UUID = string;
+
+export interface Company {
+  id: UUID;
   name: string;
-  imageUrl?: string | null;
-  sortOrder: number;
-};
+  created_at: string;
+}
 
-export type Material = {
-  id: string;
-  companyId: string;
-  libraryType: LibraryType;
-  folderId: string;
-  name: string;
-  sku?: string | null;
-  description?: string | null;
+export interface CompanySettings {
+  id: UUID;
+  company_id: UUID;
+  starting_estimate_number: number | null;
+  min_labor_minutes: number | null;
+  created_at: string;
+  updated_at: string;
+}
 
-  baseCost: number; // cost-side, before purchase tax
-  useCustomCost: boolean;
-  customCost?: number | null;
-
-  taxable: boolean;
-  jobTypeId?: string | null;
-
-  laborMinutes: number; // stored as minutes
-  imageUrl?: string | null;
-  sortOrder: number;
-};
-
-export type Assembly = {
-  id: string;
-  companyId: string;
-  libraryType: LibraryType;
-  folderId: string;
+export interface JobType {
+  id: UUID;
+  company_id: UUID;
   name: string;
   description?: string | null;
-  code?: string | null; // numeric-ish identifier
-  jobTypeId?: string | null;
-  useAdminRules: boolean;
-  customerSuppliesMaterials: boolean;
+  active: boolean;
+  created_at: string;
+}
 
-  // v0.1 placeholders; line items will be added once UI finalized
-  sortOrder: number;
-};
-
-export type EstimateStatus = 'draft' | 'sent' | 'approved' | 'declined' | 'archived';
-
-export type Estimate = {
-  id: string;
-  companyId: string;
-  number: number;
-
+export interface AdminRule {
+  id: UUID;
+  company_id: UUID;
   name: string;
-  customerName?: string | null;
-  customerPhone?: string | null;
-  customerEmail?: string | null;
-  customerAddress?: string | null;
-
-  privateNotes?: string | null;
-
-  jobTypeId?: string | null;
-  useAdminRules: boolean;
-  customerSuppliesMaterials: boolean;
-
-  discountId?: string | null;
-  applyProcessingFees: boolean;
-  applyMiscMaterial: boolean;
-
-  status: EstimateStatus;
-  createdAt: string;
-  validUntil?: string | null;
-};
-
-export type JobType = {
-  id: string;
-  name: string;
+  priority: number;
   enabled: boolean;
-  isDefault: boolean;
-  mode: 'flat' | 'hourly';
-  grossMarginPct: number; // 0-100
-  efficiencyPct: number; // 0-100
-  allowDiscount: boolean;
-};
+  created_at: string;
+}
 
-export type BrandingSettings = {
-  companyName?: string | null;
-  licenseInfo?: string | null;
-  warrantyInfo?: string | null;
-  logoUrl?: string | null;
-};
+export interface CsvSettings {
+  id: UUID;
+  company_id: UUID;
+  allow_material_import: boolean;
+  allow_assembly_import: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrandingSettings {
+  id: UUID;
+  company_id: UUID;
+  logo_url?: string | null;
+  primary_color?: string | null;
+  created_at: string;
+  updated_at: string;
+}
