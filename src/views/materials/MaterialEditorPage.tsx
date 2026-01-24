@@ -6,11 +6,13 @@ import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { Material } from '../../providers/data/types';
+import { useDialogs } from '../../providers/dialogs/DialogContext';
 
 export function MaterialEditorPage() {
   const { materialId } = useParams();
   const data = useData();
   const nav = useNavigate();
+  const { confirm } = useDialogs();
 
   const [m, setM] = useState<Material | null>(null);
   const [status, setStatus] = useState<string>('');
@@ -44,7 +46,13 @@ export function MaterialEditorPage() {
     if (!m) return;
     try {
       // eslint-disable-next-line no-restricted-globals
-      if (!confirm('Delete this material?')) return;
+      const ok = await confirm({
+        title: 'Delete Material',
+        message: 'Delete this material?',
+        confirmText: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
       setStatus('Deleting...');
       await data.deleteMaterial(m.id);
       nav(-1);
@@ -121,3 +129,4 @@ export function MaterialEditorPage() {
     </div>
   );
 }
+
