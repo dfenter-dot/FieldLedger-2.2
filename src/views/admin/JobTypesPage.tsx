@@ -55,7 +55,13 @@ export function JobTypesPage() {
     try {
       setStatus('Saving...');
       const saved = await data.upsertJobType(jt);
-      setRows((prev) => (prev.some((x) => x.id === saved.id) ? prev.map((x) => (x.id === saved.id ? saved : x)) : [...prev, saved]));
+      if (saved.is_default) {
+        await data.setDefaultJobType(saved.id);
+        const fresh = await data.listJobTypes();
+        setRows(fresh);
+      } else {
+        setRows((prev) => (prev.some((x) => x.id === saved.id) ? prev.map((x) => (x.id === saved.id ? saved : x)) : [...prev, saved]));
+      }
       setEditing((prev) => {
         const { [saved.id]: _, ...rest } = prev;
         return rest;
