@@ -1,162 +1,139 @@
-import type { IDataProvider, LibraryKind } from '../IDataProvider';
-import type { Assembly, BrandingSettings, Estimate, Folder, JobType, LibraryType, Material } from '../types';
-import { lsGet, lsSet, uid } from './localStore';
-import { SEED_BRANDING, SEED_ESTIMATES, SEED_FOLDERS, SEED_JOB_TYPES, SEED_MATERIALS } from './seed';
+// src/providers/data/local/LocalDataProvider.ts
 
-const KEY = {
-  folders: (kind: LibraryKind) => `fl_${kind}_folders_v1`,
-  materials: `fl_materials_v1`,
-  assemblies: `fl_assemblies_v1`,
-  estimates: `fl_estimates_v1`,
-  jobTypes: `fl_job_types_v1`,
-  branding: `fl_branding_v1`,
-};
+import { IDataProvider } from "../IDataProvider";
+import {
+  Company,
+  CompanySettings,
+  JobType,
+  AdminRule,
+  CsvSettings,
+  BrandingSettings,
+  UUID,
+} from "../types";
+import {
+  seedCompany,
+  seedCompanySettings,
+  seedJobTypes,
+  seedAdminRules,
+  seedCsvSettings,
+  seedBrandingSettings,
+} from "./seed";
 
-function ensureSeeded(kind: LibraryKind) {
-  const foldersKey = KEY.folders(kind);
-  const seeded = lsGet<boolean>(`__seeded_${foldersKey}`, false);
-  if (!seeded) {
-    lsSet(foldersKey, SEED_FOLDERS);
-    lsSet(KEY.materials, SEED_MATERIALS);
-    lsSet(KEY.estimates, SEED_ESTIMATES);
-    lsSet(KEY.jobTypes, SEED_JOB_TYPES);
-    lsSet(KEY.branding, SEED_BRANDING);
-    lsSet(`__seeded_${foldersKey}`, true);
+export class LocalDataProvider implements IDataProvider {
+  private company: Company = seedCompany;
+  private companySettings: CompanySettings = seedCompanySettings;
+  private jobTypes: JobType[] = [...seedJobTypes];
+  private adminRules: AdminRule[] = [...seedAdminRules];
+  private csvSettings: CsvSettings = seedCsvSettings;
+  private brandingSettings: BrandingSettings = seedBrandingSettings;
+
+  /* Company */
+  async getCompany(companyId: UUID): Promise<Company | null> {
+    return companyId === this.company.id ? this.company : null;
+  }
+
+  /* Company Settings */
+  async getCompanySettings(
+    companyId: UUID
+  ): Promise<CompanySettings | null> {
+    return companyId === this.companySettings.company_id
+      ? this.companySettings
+      : null;
+  }
+
+  async upsertCompanySettings(
+    settings: Partial<CompanySettings> & { company_id: UUID }
+  ): Promise<void> {
+    this.companySettings = {
+      ...this.companySettings,
+      ...settings,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  /* Job Types */
+  async listJobTypes(companyId: UUID): Promise<JobType[]> {
+    return this.jobTypes.filter((jt) => jt.company_id === companyId);
+  }
+
+  async createJobType(
+    jobType: Omit<JobType, "id" | "created_at">
+  ): Promise<JobType> {
+    const newJobType: JobType = {
+      ...jobType,
+      id: crypto.randomUUID(),
+      created_at: new Date().toISOString(),
+    };
+    this.jobTypes.push(newJobType);
+    return newJobType;
+  }
+
+  async updateJobType(jobType: JobType): Promise<void> {
+    this.jobTypes = this.jobTypes.map((jt) =>
+      jt.id === jobType.id ? jobType : jt
+    );
+  }
+
+  async deleteJobType(id: UUID): Promise<void> {
+    this.jobTypes = this.jobTypes.filter((jt) => jt.id !== id);
+  }
+
+  /* Admin Rules */
+  async listAdminRules(companyId: UUID): Promise<AdminRule[]> {
+    return this.adminRules.filter((r) => r.company_id === companyId);
+  }
+
+  async upsertAdminRule(
+    rule: Partial<AdminRule> & { company_id: UUID }
+  ): Promise<void> {
+    const existing = this.adminRules.find((r) => r.id === rule.id);
+    if (existing) {
+      Object.assign(existing, rule);
+    } else {
+      this.adminRules.push({
+        id: crypto.randomUUID(),
+        name: rule.name ?? "New Rule",
+        priority: rule.priority ?? 0,
+        enabled: rule.enabled ?? true,
+        company_id: rule.company_id,
+        created_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  /* CSV Settings */
+  async getCsvSettings(companyId: UUID): Promise<CsvSettings | null> {
+    return companyId === this.csvSettings.company_id
+      ? this.csvSettings
+      : null;
+  }
+
+  async upsertCsvSettings(
+    settings: Partial<CsvSettings> & { company_id: UUID }
+  ): Promise<void> {
+    this.csvSettings = {
+      ...this.csvSettings,
+      ...settings,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  /* Branding */
+  async getBrandingSettings(
+    companyId: UUID
+  ): Promise<BrandingSettings | null> {
+    return companyId === this.brandingSettings.company_id
+      ? this.brandingSettings
+      : null;
+  }
+
+  async upsertBrandingSettings(
+    settings: Partial<BrandingSettings> & { company_id: UUID }
+  ): Promise<void> {
+    this.brandingSettings = {
+      ...this.brandingSettings,
+      ...settings,
+      updated_at: new Date().toISOString(),
+    };
   }
 }
-
-function sortByOrder<T extends { sortOrder: number }>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => a.sortOrder - b.sortOrder);
-}
-
-export const LocalDataProvider: IDataProvider = {
-  async listFolders({ kind, libraryType, parentId }) {
-    ensureSeeded(kind);
-    const folders = lsGet<Folder[]>(KEY.folders(kind), []);
-    return sortByOrder(folders.filter(f => f.libraryType === libraryType && f.parentId === parentId));
-  },
-
-  async createFolder({ kind, libraryType, parentId, name }) {
-    ensureSeeded(kind);
-    const folders = lsGet<Folder[]>(KEY.folders(kind), []);
-    const nextOrder = Math.max(0, ...folders.filter(f => f.parentId === parentId && f.libraryType === libraryType).map(f => f.sortOrder)) + 1;
-    const folder: Folder = {
-      id: uid('folder'),
-      companyId: 'mock-company',
-      libraryType,
-      parentId,
-      name,
-      sortOrder: nextOrder,
-      imageUrl: null,
-    };
-    folders.push(folder);
-    lsSet(KEY.folders(kind), folders);
-    return folder;
-  },
-
-  async listMaterials({ libraryType, folderId }) {
-    ensureSeeded('materials');
-    const rows = lsGet<Material[]>(KEY.materials, []);
-    return sortByOrder(rows.filter(m => m.libraryType === libraryType && m.folderId === folderId));
-  },
-
-  async upsertMaterial(m) {
-    ensureSeeded('materials');
-    const rows = lsGet<Material[]>(KEY.materials, []);
-    const idx = rows.findIndex(x => x.id === m.id);
-    if (idx >= 0) rows[idx] = m;
-    else rows.push(m);
-    lsSet(KEY.materials, rows);
-    return m;
-  },
-
-  async deleteMaterial(id) {
-    ensureSeeded('materials');
-    const rows = lsGet<Material[]>(KEY.materials, []);
-    lsSet(KEY.materials, rows.filter(x => x.id !== id));
-  },
-
-  async listAssemblies({ libraryType, folderId }) {
-    ensureSeeded('assemblies');
-    const rows = lsGet<Assembly[]>(KEY.assemblies, []);
-    return sortByOrder(rows.filter(a => a.libraryType === libraryType && a.folderId === folderId));
-  },
-
-  async upsertAssembly(a) {
-    ensureSeeded('assemblies');
-    const rows = lsGet<Assembly[]>(KEY.assemblies, []);
-    const idx = rows.findIndex(x => x.id === a.id);
-    if (idx >= 0) rows[idx] = a;
-    else rows.push(a);
-    lsSet(KEY.assemblies, rows);
-    return a;
-  },
-
-  async deleteAssembly(id) {
-    ensureSeeded('assemblies');
-    const rows = lsGet<Assembly[]>(KEY.assemblies, []);
-    lsSet(KEY.assemblies, rows.filter(x => x.id !== id));
-  },
-
-  async listEstimates() {
-    ensureSeeded('estimates');
-    const rows = lsGet<Estimate[]>(KEY.estimates, []);
-    return [...rows].sort((a,b)=> b.number - a.number);
-  },
-
-  async getEstimate(id) {
-    ensureSeeded('estimates');
-    const rows = lsGet<Estimate[]>(KEY.estimates, []);
-    return rows.find(e => e.id === id) ?? null;
-  },
-
-  async upsertEstimate(e) {
-    ensureSeeded('estimates');
-    const rows = lsGet<Estimate[]>(KEY.estimates, []);
-    const idx = rows.findIndex(x => x.id === e.id);
-    if (idx >= 0) rows[idx] = e;
-    else rows.push(e);
-    lsSet(KEY.estimates, rows);
-    return e;
-  },
-
-  async deleteEstimate(id) {
-    ensureSeeded('estimates');
-    const rows = lsGet<Estimate[]>(KEY.estimates, []);
-    lsSet(KEY.estimates, rows.filter(x => x.id !== id));
-  },
-
-  async listJobTypes() {
-    ensureSeeded('jobTypes');
-    const rows = lsGet<JobType[]>(KEY.jobTypes, []);
-    return rows;
-  },
-
-  async upsertJobType(jt) {
-    ensureSeeded('jobTypes');
-    const rows = lsGet<JobType[]>(KEY.jobTypes, []);
-    const idx = rows.findIndex(x => x.id === jt.id);
-    if (idx >= 0) rows[idx] = jt;
-    else rows.push(jt);
-    lsSet(KEY.jobTypes, rows);
-    return jt;
-  },
-
-  async setDefaultJobType(jobTypeId) {
-    ensureSeeded('jobTypes');
-    const rows = lsGet<JobType[]>(KEY.jobTypes, []);
-    const next = rows.map(j => ({ ...j, isDefault: j.id === jobTypeId }));
-    lsSet(KEY.jobTypes, next);
-  },
-
-  async getBrandingSettings() {
-    ensureSeeded('branding');
-    return lsGet<BrandingSettings>(KEY.branding, {});
-  },
-
-  async saveBrandingSettings(s) {
-    ensureSeeded('branding');
-    lsSet(KEY.branding, s);
-    return s;
-  },
-};
