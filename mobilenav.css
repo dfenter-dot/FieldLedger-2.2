@@ -1,0 +1,29 @@
+.mobileNav{
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display:flex;
+  gap: 6px;
+  padding: 10px;
+  border-top: 1px solid rgba(43,54,71,0.7);
+  background: rgba(11,18,32,0.92);
+  backdrop-filter: blur(10px);
+}
+.mNavItem{
+  flex:1;
+  text-align:center;
+  padding: 10px 8px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.mNavItem.active{
+  color: var(--text);
+  border-color: rgba(212,175,55,0.35);
+  background: rgba(17,24,39,0.45);
+}
+
+@media (min-width: 900px){
+  .mobileNav{ display:none; }
+}
