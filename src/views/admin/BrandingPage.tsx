@@ -7,37 +7,55 @@ import type { BrandingSettings } from '../../providers/data/types';
 
 export function BrandingPage() {
   const data = useData();
-  const [s, setS] = useState<BrandingSettings>({});
+  const [s, setS] = useState<BrandingSettings | null>(null);
+  const [status, setStatus] = useState<string>('');
 
   useEffect(() => {
-    data.getBrandingSettings().then(setS).catch(console.error);
+    data.getBrandingSettings()
+      .then(setS)
+      .catch((e) => {
+        console.error(e);
+        setStatus(String((e as any)?.message ?? e));
+      });
   }, [data]);
+
+  async function save() {
+    if (!s) return;
+    try {
+      setStatus('Saving...');
+      const saved = await data.saveBrandingSettings(s);
+      setS(saved);
+      setStatus('Saved.');
+      setTimeout(() => setStatus(''), 1500);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
+  if (!s) return <div className="muted">Loading…</div>;
 
   return (
     <div className="stack">
-      <Card title="Branding & PDF Details" right={<Button variant="primary" onClick={() => data.saveBrandingSettings(s)}>Save</Button>}>
+      <Card title="Branding" right={<Button variant="primary" onClick={save}>Save</Button>}>
         <div className="grid2">
           <div className="stack">
-            <label className="label">Company Name</label>
-            <Input value={s.companyName ?? ''} onChange={(e) => setS({ ...s, companyName: e.target.value })} />
+            <label className="label">Logo URL</label>
+            <Input value={s.logo_url ?? ''} onChange={(e) => setS({ ...s, logo_url: e.target.value || null })} placeholder="https://…" />
           </div>
           <div className="stack">
-            <label className="label">Logo Upload</label>
-            <div className="muted">Upload wiring will use Supabase Storage later. Logo appears on Estimate PDF.</div>
-          </div>
-          <div className="stack">
-            <label className="label">License Information</label>
-            <Input value={s.licenseInfo ?? ''} onChange={(e) => setS({ ...s, licenseInfo: e.target.value })} />
-          </div>
-          <div className="stack">
-            <label className="label">Warranty / Terms (short)</label>
-            <Input value={s.warrantyInfo ?? ''} onChange={(e) => setS({ ...s, warrantyInfo: e.target.value })} />
+            <label className="label">Primary Color</label>
+            <Input value={s.primary_color ?? ''} onChange={(e) => setS({ ...s, primary_color: e.target.value || null })} placeholder="e.g. #0ea5e9" />
           </div>
         </div>
+
+        {status ? <div className="muted small mt">{status}</div> : null}
+
         <div className="muted small mt">
-          Later we can support multi-page terms/warranty PDFs.
+          Logo upload wiring (Supabase Storage) can be added later. These fields map directly to branding_settings columns.
         </div>
       </Card>
     </div>
   );
 }
+
