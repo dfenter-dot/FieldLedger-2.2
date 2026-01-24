@@ -1,21 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
-import { Toggle } from '../../ui/components/Toggle';
 import { Input } from '../../ui/components/Input';
+import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { JobType } from '../../providers/data/types';
 
 function makeNewJobType(): JobType {
   return {
     id: crypto.randomUUID?.() ?? `jt_${Date.now()}`,
+    company_id: '' as any,
     name: 'New Job Type',
-    enabled: true,
-    isDefault: false,
-    mode: 'flat',
-    grossMarginPct: 70,
-    efficiencyPct: 50,
-    allowDiscount: true,
+    description: null,
+    is_default: false,
+    created_at: new Date().toISOString(),
   };
 }
 
@@ -26,19 +24,20 @@ export function JobTypesPage() {
   const [status, setStatus] = useState<string>('');
 
   useEffect(() => {
-    data.listJobTypes().then(setRows).catch((e) => {
-      console.error(e);
-      setStatus(String(e?.message ?? e));
-    });
+    data.listJobTypes()
+      .then(setRows)
+      .catch((e) => {
+        console.error(e);
+        setStatus(String((e as any)?.message ?? e));
+      });
   }, [data]);
 
   const sorted = useMemo(() => {
     const draftOnly = Object.values(editing).filter((d) => !rows.some((r) => r.id === d.id));
     const combined = [...rows, ...draftOnly];
-    // default first, then alpha
     return [...combined].sort((a, b) => {
-      if (a.isDefault && !b.isDefault) return -1;
-      if (!a.isDefault && b.isDefault) return 1;
+      if (a.is_default && !b.is_default) return -1;
+      if (!a.is_default && b.is_default) return 1;
       return a.name.localeCompare(b.name);
     });
   }, [rows, editing]);
@@ -51,12 +50,7 @@ export function JobTypesPage() {
     try {
       setStatus('Saving...');
       const saved = await data.upsertJobType(jt);
-      setRows((prev) => {
-        const next = prev.some((x) => x.id === saved.id)
-          ? prev.map((x) => (x.id === saved.id ? saved : x))
-          : [...prev, saved];
-        return next;
-      });
+      setRows((prev) => (prev.some((x) => x.id === saved.id) ? prev.map((x) => (x.id === saved.id ? saved : x)) : [...prev, saved]));
       setEditing((prev) => {
         const { [saved.id]: _, ...rest } = prev;
         return rest;
@@ -69,12 +63,13 @@ export function JobTypesPage() {
     }
   }
 
-  async function setDefault(id: string) {
+  async function setDefault(jobTypeId: string) {
     try {
-      setStatus('Setting default...');
-      await data.setDefaultJobType(id);
-      setRows((prev) => prev.map((j) => ({ ...j, isDefault: j.id === id })));
-      setStatus('Default updated.');
+      setStatus('Updating default...');
+      await data.setDefaultJobType(jobTypeId);
+      const fresh = await data.listJobTypes();
+      setRows(fresh);
+      setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
       console.error(e);
@@ -90,7 +85,7 @@ export function JobTypesPage() {
   return (
     <div className="stack">
       <Card title="Job Types" right={<Button variant="primary" onClick={create}>Create Job Type</Button>}>
-        <div className="muted">Job types drive margin, efficiency (flat rate), and hourly vs flat-rate mode.</div>
+        <div className="muted small">Edit fields and save. Default job type is used by pricing rules later.</div>
       </Card>
 
       <Card title="List">
@@ -103,23 +98,16 @@ export function JobTypesPage() {
             return (
               <div key={jt.id} className="stack" style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'rgba(31,41,55,0.4)' }}>
                 <div className="rowBetween">
-                  <div className="stack" style={{ flex: 1 }}>
-                    <div className="row">
-                      <strong>{jt.name}</strong>
-                      {jt.isDefault ? <span className="pill gold">Default</span> : null}
-                      {!jt.enabled ? <span className="pill">Disabled</span> : null}
-                    </div>
-                    <div className="row">
-                      <span className="pill">{jt.mode === 'flat' ? 'Flat Rate' : 'Hourly'}</span>
-                      <span className="pill">GM: {jt.grossMarginPct}%</span>
-                      <span className="pill">Eff: {jt.efficiencyPct}%</span>
-                      <span className="pill">{jt.allowDiscount ? 'Discounts allowed' : 'No discounts'}</span>
-                    </div>
+                  <div className="row" style={{ alignItems: 'center' }}>
+                    <strong>{jt.name}</strong>
+                    {jt.is_default ? <span className="pill">Default</span> : null}
                   </div>
                   <div className="row">
-                    <Button onClick={() => setDefault(jt.id)}>Set Default</Button>
                     {!isEditing ? (
-                      <Button onClick={() => startEdit(jt)}>Edit</Button>
+                      <>
+                        <Button onClick={() => startEdit(jt)}>Edit</Button>
+                        {!jt.is_default ? <Button onClick={() => setDefault(jt.id)}>Set Default</Button> : null}
+                      </>
                     ) : (
                       <>
                         <Button variant="primary" onClick={() => save(row)}>Save</Button>
@@ -130,45 +118,26 @@ export function JobTypesPage() {
                 </div>
 
                 {isEditing ? (
-                  <div className="grid2 mt">
+                  <div className="grid2">
                     <div className="stack">
                       <label className="label">Name</label>
                       <Input value={row.name} onChange={(e) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, name: e.target.value } }))} />
                     </div>
 
                     <div className="stack">
-                      <label className="label">Mode</label>
-                      <select className="textarea" value={row.mode} onChange={(e) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, mode: e.target.value as any } }))}>
-                        <option value="flat">Flat Rate</option>
-                        <option value="hourly">Hourly</option>
-                      </select>
+                      <label className="label">Default</label>
+                      <Toggle checked={row.is_default} onChange={(v) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, is_default: v } }))} label={row.is_default ? 'Yes' : 'No'} />
                     </div>
 
-                    <div className="stack">
-                      <label className="label">Gross Margin %</label>
-                      <Input value={String(row.grossMarginPct)} onChange={(e) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, grossMarginPct: Number(e.target.value || 0) } }))} />
-                    </div>
-
-                    <div className="stack">
-                      <label className="label">Efficiency % (flat rate)</label>
-                      <Input value={String(row.efficiencyPct)} onChange={(e) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, efficiencyPct: Number(e.target.value || 0) } }))} />
-                    </div>
-
-                    <div className="stack">
-                      <label className="label">Enabled</label>
-                      <Toggle checked={row.enabled} onChange={(v) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, enabled: v } }))} label={row.enabled ? 'Yes' : 'No'} />
-                    </div>
-
-                    <div className="stack">
-                      <label className="label">Allow Discounts</label>
-                      <Toggle checked={row.allowDiscount} onChange={(v) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, allowDiscount: v } }))} label={row.allowDiscount ? 'Yes' : 'No'} />
+                    <div className="stack" style={{ gridColumn: '1 / -1' }}>
+                      <label className="label">Description</label>
+                      <Input value={row.description ?? ''} onChange={(e) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, description: e.target.value || null } }))} />
                     </div>
                   </div>
                 ) : null}
               </div>
             );
           })}
-
           {sorted.length === 0 ? <div className="muted">No job types yet.</div> : null}
         </div>
 
