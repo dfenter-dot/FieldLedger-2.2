@@ -1,6 +1,5 @@
-// src/providers/data/supabase/SupabaseDataProvider.ts
-
-import type { IDataProvider, LibraryKind } from '../IDataProvider';
+import { nanoid } from 'nanoid';
+import { supabase } from '../../../supabase/client';
 import type {
   AdminRule,
   Assembly,
@@ -12,12 +11,13 @@ import type {
   JobType,
   Material,
 } from '../types';
-
-import { supabase } from '../../../supabase/client';
+import type { IDataProvider, LibraryKind } from '../IDataProvider';
 
 type LibraryType = 'company' | 'personal';
 
 export class SupabaseDataProvider implements IDataProvider {
+  /* ----------------------------- helpers ----------------------------- */
+
   private async requireCompanyId(): Promise<string> {
     const { data, error } = await supabase.auth.getUser();
     if (error) throw error;
@@ -26,7 +26,9 @@ export class SupabaseDataProvider implements IDataProvider {
     if (!user) throw new Error('Not authenticated');
 
     const companyId = user.user_metadata?.company_id as string | undefined;
-    if (!companyId) throw new Error('Missing company_id on user metadata');
+    if (!companyId) {
+      throw new Error('Missing company_id on user metadata');
+    }
 
     return companyId;
   }
@@ -60,17 +62,16 @@ export class SupabaseDataProvider implements IDataProvider {
   }): Promise<Folder> {
     const companyId = await this.requireCompanyId();
 
-    const payload = {
-      company_id: companyId,
-      kind: args.kind,
-      library_type: args.libraryType,
-      parent_id: args.parentId,
-      name: args.name,
-    };
-
     const { data, error } = await supabase
       .from('folders')
-      .insert(payload)
+      .insert({
+        id: nanoid(),
+        company_id: companyId,
+        kind: args.kind,
+        library_type: args.libraryType,
+        parent_id: args.parentId,
+        name: args.name,
+      })
       .select('*')
       .single();
 
@@ -105,30 +106,25 @@ export class SupabaseDataProvider implements IDataProvider {
       .select('*')
       .eq('company_id', companyId)
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
-    // PostgREST "No rows found" commonly surfaces as an error; treat as null.
-    if (error && (error as any).code === 'PGRST116') return null;
     if (error) throw error;
-
     return (data ?? null) as Material | null;
   }
 
   async upsertMaterial(m: Material): Promise<Material> {
     const companyId = await this.requireCompanyId();
-
     const id = m.id ?? nanoid();
-    const payload = {
-      ...m,
-      id,
-      company_id: companyId,
-      folder_id: m.folderId,
-      library_type: m.libraryType,
-    };
 
     const { data, error } = await supabase
       .from('materials')
-      .upsert(payload)
+      .upsert({
+        ...m,
+        id,
+        company_id: companyId,
+        folder_id: m.folderId,
+        library_type: m.libraryType,
+      })
       .select('*')
       .single();
 
@@ -150,22 +146,6 @@ export class SupabaseDataProvider implements IDataProvider {
 
   /* ---------------------------- assemblies --------------------------- */
 
-  async getAssembly(id: string): Promise<Assembly | null> {
-    const companyId = await this.requireCompanyId();
-
-    const { data, error } = await supabase
-      .from('assemblies')
-      .select('*')
-      .eq('company_id', companyId)
-      .eq('id', id)
-      .single();
-
-    if (error && (error as any).code === 'PGRST116') return null;
-    if (error) throw error;
-
-    return (data ?? null) as Assembly | null;
-  }
-
   async listAssemblies(args: {
     libraryType: LibraryType;
     folderId: string | null;
@@ -183,21 +163,33 @@ export class SupabaseDataProvider implements IDataProvider {
     return (data ?? []) as Assembly[];
   }
 
-  async upsertAssembly(a: Assembly): Promise<Assembly> {
+  async getAssembly(id: string): Promise<Assembly | null> {
     const companyId = await this.requireCompanyId();
-
-    const id = a.id ?? nanoid();
-    const payload = {
-      ...a,
-      id,
-      company_id: companyId,
-      folder_id: a.folderId,
-      library_type: a.libraryType,
-    };
 
     const { data, error } = await supabase
       .from('assemblies')
-      .upsert(payload)
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) throw error;
+    return (data ?? null) as Assembly | null;
+  }
+
+  async upsertAssembly(a: Assembly): Promise<Assembly> {
+    const companyId = await this.requireCompanyId();
+    const id = a.id ?? nanoid();
+
+    const { data, error } = await supabase
+      .from('assemblies')
+      .upsert({
+        ...a,
+        id,
+        company_id: companyId,
+        folder_id: a.folderId,
+        library_type: a.libraryType,
+      })
       .select('*')
       .single();
 
@@ -240,23 +232,23 @@ export class SupabaseDataProvider implements IDataProvider {
       .select('*')
       .eq('company_id', companyId)
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
-    if (error && (error as any).code === 'PGRST116') return null;
     if (error) throw error;
-
     return (data ?? null) as Estimate | null;
   }
 
   async upsertEstimate(e: Estimate): Promise<Estimate> {
     const companyId = await this.requireCompanyId();
-
     const id = e.id ?? nanoid();
-    const payload = { ...e, id, company_id: companyId };
 
     const { data, error } = await supabase
       .from('estimates')
-      .upsert(payload)
+      .upsert({
+        ...e,
+        id,
+        company_id: companyId,
+      })
       .select('*')
       .single();
 
@@ -292,13 +284,15 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async upsertJobType(jt: JobType): Promise<JobType> {
     const companyId = await this.requireCompanyId();
-
     const id = jt.id ?? nanoid();
-    const payload = { ...jt, id, company_id: companyId };
 
     const { data, error } = await supabase
       .from('job_types')
-      .upsert(payload)
+      .upsert({
+        ...jt,
+        id,
+        company_id: companyId,
+      })
       .select('*')
       .single();
 
@@ -326,17 +320,22 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('branding_settings')
       .select('*')
       .eq('company_id', companyId)
-      .single();
+      .maybeSingle();
 
-    if (error && (error as any).code === 'PGRST116') {
-      return { companyName: '', logoUrl: '', primaryColor: '#000000' };
-    }
     if (error) throw error;
 
-    return data as BrandingSettings;
+    return (
+      (data as BrandingSettings) ?? {
+        companyName: '',
+        logoUrl: '',
+        primaryColor: '#000000',
+      }
+    );
   }
 
-  async saveBrandingSettings(s: BrandingSettings): Promise<BrandingSettings> {
+  async saveBrandingSettings(
+    s: BrandingSettings
+  ): Promise<BrandingSettings> {
     const companyId = await this.requireCompanyId();
 
     const { data, error } = await supabase
@@ -356,17 +355,23 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('company_settings')
       .select('*')
       .eq('company_id', companyId)
-      .single();
+      .maybeSingle();
 
-    if (error && (error as any).code === 'PGRST116') {
-      return { name: '', address: '', phone: '', email: '' };
-    }
     if (error) throw error;
 
-    return data as CompanySettings;
+    return (
+      (data as CompanySettings) ?? {
+        name: '',
+        address: '',
+        phone: '',
+        email: '',
+      }
+    );
   }
 
-  async saveCompanySettings(s: CompanySettings): Promise<CompanySettings> {
+  async saveCompanySettings(
+    s: CompanySettings
+  ): Promise<CompanySettings> {
     const companyId = await this.requireCompanyId();
 
     const { data, error } = await supabase
@@ -386,14 +391,16 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('csv_settings')
       .select('*')
       .eq('company_id', companyId)
-      .single();
+      .maybeSingle();
 
-    if (error && (error as any).code === 'PGRST116') {
-      return { includeHeaders: true, decimalSeparator: '.' };
-    }
     if (error) throw error;
 
-    return data as CsvSettings;
+    return (
+      (data as CsvSettings) ?? {
+        includeHeaders: true,
+        decimalSeparator: '.',
+      }
+    );
   }
 
   async saveCsvSettings(s: CsvSettings): Promise<CsvSettings> {
@@ -425,13 +432,15 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async upsertAdminRule(r: AdminRule): Promise<AdminRule> {
     const companyId = await this.requireCompanyId();
-
     const id = r.id ?? nanoid();
-    const payload = { ...r, id, company_id: companyId };
 
     const { data, error } = await supabase
       .from('admin_rules')
-      .upsert(payload)
+      .upsert({
+        ...r,
+        id,
+        company_id: companyId,
+      })
       .select('*')
       .single();
 
