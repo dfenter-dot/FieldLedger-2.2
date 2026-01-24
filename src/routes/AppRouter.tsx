@@ -8,6 +8,7 @@ import { EstimatesPage } from '../views/estimates/EstimatesPage';
 import { EstimateEditorPage } from '../views/estimates/EstimateEditorPage';
 import { JobCostingPage } from '../views/admin/JobCostingPage';
 import { AdminLayout } from '../views/admin/AdminLayout';
+import { AdminHomePage } from '../views/admin/AdminHomePage';
 import { CompanySetupPage } from '../views/admin/CompanySetupPage';
 import { JobTypesPage } from '../views/admin/JobTypesPage';
 import { AdminRulesPage } from '../views/admin/AdminRulesPage';
@@ -43,7 +44,7 @@ export function AppRouter() {
 
         {/* Admin */}
         <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<Navigate to="/admin/company-setup" replace />} />
+          <Route index element={<AdminHomePage />} />
           <Route path="company-setup" element={<CompanySetupPage />} />
           <Route path="job-types" element={<JobTypesPage />} />
           <Route path="rules" element={<AdminRulesPage />} />
@@ -57,3 +58,4 @@ export function AppRouter() {
     </AppShell>
   );
 }
+
