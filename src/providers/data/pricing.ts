@@ -1,9 +1,7 @@
 import {
   Assembly,
-  AssemblyItem,
   CompanySettings,
   Estimate,
-  EstimateItem,
   JobType,
   Material,
 } from './types';
@@ -11,18 +9,6 @@ import {
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
-
-export function getAverageTechnicianWage(settings: CompanySettings): number {
-  const wages = settings.technician_wages ?? [];
-  const rates = wages
-    .map(w => Number(w.hourly_rate))
-    .filter(n => Number.isFinite(n) && n > 0);
-
-  if (rates.length === 0) return 0;
-
-  const sum = rates.reduce((a, b) => a + b, 0);
-  return sum / rates.length;
-}
 
 export function minutesToHours(minutes: number): number {
   return minutes / 60;
@@ -49,6 +35,23 @@ export function getMarkupPercent(
 }
 
 /* ------------------------------------------------------------------ */
+/* Technician Wage                                                     */
+/* ------------------------------------------------------------------ */
+
+export function getAverageTechnicianWage(
+  settings: CompanySettings
+): number {
+  const wages = settings.technician_wages ?? [];
+  const valid = wages
+    .map(w => Number(w.hourly_rate))
+    .filter(v => Number.isFinite(v) && v > 0);
+
+  if (valid.length === 0) return 0;
+
+  return valid.reduce((a, b) => a + b, 0) / valid.length;
+}
+
+/* ------------------------------------------------------------------ */
 /* Material Pricing                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -62,9 +65,10 @@ export function computeMaterialCost(
   misc: number;
   total: number;
 } {
-  const cost = material.use_custom_cost && material.custom_cost != null
-    ? material.custom_cost
-    : material.unit_cost;
+  const cost =
+    material.use_custom_cost && material.custom_cost != null
+      ? material.custom_cost
+      : material.unit_cost;
 
   const tax = cost * (settings.material_purchase_tax_percent / 100);
   const markupPercent = getMarkupPercent(cost, settings.material_markup_tiers);
