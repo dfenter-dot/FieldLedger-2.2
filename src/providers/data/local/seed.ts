@@ -1,10 +1,14 @@
-import { v4 as uuid } from 'uuid';
-import {
-  CompanySettings,
-  JobType,
-  Material,
-  Folder,
-} from '../types';
+import { CompanySettings, JobType, Material, Folder } from '../types';
+
+function makeId(): string {
+  // Browser-safe UUID (Vite builds for browsers). Fallback included.
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+
+  // Fallback: not a true UUID, but stable enough for local-only seed usage
+  return `id_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+}
 
 /* ------------------------------------------------------------------ */
 /* Default Job Type                                                    */
@@ -12,7 +16,7 @@ import {
 
 export function seedDefaultJobType(companyId: string): JobType {
   return {
-    id: uuid(),
+    id: makeId(),
     company_id: companyId,
     name: 'Service',
     enabled: true,
@@ -31,7 +35,7 @@ export function seedDefaultJobType(companyId: string): JobType {
 
 export function seedCompanySettings(companyId: string): CompanySettings {
   return {
-    id: uuid(),
+    id: makeId(),
     company_id: companyId,
 
     workdays_per_week: 5,
@@ -91,7 +95,7 @@ export function seedCompanySettings(companyId: string): CompanySettings {
 
 export function seedAppMaterialFolder(): Folder {
   return {
-    id: uuid(),
+    id: makeId(),
     company_id: null,
     kind: 'materials',
     library_type: 'company',
@@ -105,7 +109,7 @@ export function seedAppMaterialFolder(): Folder {
 export function seedAppMaterials(folderId: string): Material[] {
   return [
     {
-      id: uuid(),
+      id: makeId(),
       company_id: null,
       name: 'Standard Outlet',
       sku: 'OUT-STD',
