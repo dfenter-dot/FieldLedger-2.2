@@ -4,6 +4,7 @@ import { DashboardPage } from '../views/dashboard/DashboardPage';
 import { MaterialsHomePage } from '../views/materials/MaterialsHomePage';
 import { LibraryFolderPage } from '../views/library/LibraryFolderPage';
 import { AssembliesHomePage } from '../views/assemblies/AssembliesHomePage';
+import { AssemblyEditorPage } from '../views/assemblies/AssemblyEditorPage';
 import { EstimatesPage } from '../views/estimates/EstimatesPage';
 import { EstimateEditorPage } from '../views/estimates/EstimateEditorPage';
 import { JobCostingPage } from '../views/admin/JobCostingPage';
@@ -36,6 +37,7 @@ export function AppRouter() {
 
         {/* Assemblies */}
         <Route path="/assemblies" element={<AssembliesHomePage />} />
+        <Route path="/assemblies/:libraryType/:assemblyId" element={<AssemblyEditorPage />} />
         <Route path="/assemblies/:libraryType/*" element={<LibraryFolderPage kind="assemblies" />} />
 
         {/* Estimates */}
@@ -58,4 +60,5 @@ export function AppRouter() {
     </AppShell>
   );
 }
+
 
