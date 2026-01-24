@@ -1,84 +1,54 @@
-import type {
-  AdminRule,
+import {
   Assembly,
-  BrandingSettings,
   CompanySettings,
-  CsvSettings,
   Estimate,
   Folder,
   JobType,
   Material,
 } from './types';
 
-export type LibraryKind = 'materials' | 'assemblies' | 'estimates';
-
 export interface IDataProvider {
-  /* ----------------------------- folders ----------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Folders                                                            */
+  /* ------------------------------------------------------------------ */
 
-  listFolders(args: {
-    kind: LibraryKind;
-    libraryType: 'company' | 'personal';
-    parentId: string | null;
-  }): Promise<Folder[]>;
+  getFolders(kind: 'materials' | 'assemblies'): Promise<Folder[]>;
+  saveFolder(folder: Partial<Folder>): Promise<Folder>;
+  deleteFolder(id: string): Promise<void>;
 
-  createFolder(args: {
-    kind: LibraryKind;
-    libraryType: 'company' | 'personal';
-    parentId: string | null;
-    name: string;
-  }): Promise<Folder>;
+  /* ------------------------------------------------------------------ */
+  /* Materials                                                          */
+  /* ------------------------------------------------------------------ */
 
-  /* ---------------------------- materials ---------------------------- */
-
-  listMaterials(args: {
-    libraryType: 'company' | 'personal';
-    folderId: string | null;
-  }): Promise<Material[]>;
-
-  getMaterial(id: string): Promise<Material | null>;
-
-  upsertMaterial(m: Material): Promise<Material>;
+  getMaterials(): Promise<Material[]>;
+  saveMaterial(material: Partial<Material>): Promise<Material>;
   deleteMaterial(id: string): Promise<void>;
 
-  /* ---------------------------- assemblies --------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Assemblies                                                         */
+  /* ------------------------------------------------------------------ */
 
-  getAssembly(id: string): Promise<Assembly | null>;
-
-  listAssemblies(args: {
-    libraryType: 'company' | 'personal';
-    folderId: string | null;
-  }): Promise<Assembly[]>;
-
-  upsertAssembly(a: Assembly): Promise<Assembly>;
+  getAssemblies(): Promise<Assembly[]>;
+  saveAssembly(assembly: Partial<Assembly>): Promise<Assembly>;
   deleteAssembly(id: string): Promise<void>;
 
-  /* ----------------------------- estimates --------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Estimates                                                          */
+  /* ------------------------------------------------------------------ */
 
-  listEstimates(): Promise<Estimate[]>;
-  getEstimate(id: string): Promise<Estimate | null>;
-  upsertEstimate(e: Estimate): Promise<Estimate>;
+  getEstimates(): Promise<Estimate[]>;
+  saveEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
   deleteEstimate(id: string): Promise<void>;
 
-  /* ----------------------------- job types ---------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Admin                                                              */
+  /* ------------------------------------------------------------------ */
 
-  listJobTypes(): Promise<JobType[]>;
-  upsertJobType(jt: JobType): Promise<JobType>;
-  setDefaultJobType(jobTypeId: string): Promise<void>;
-
-  /* --------------------- branding / company / csv --------------------- */
-
-  getBrandingSettings(): Promise<BrandingSettings>;
-  saveBrandingSettings(s: BrandingSettings): Promise<BrandingSettings>;
+  getJobTypes(): Promise<JobType[]>;
+  saveJobType(jobType: Partial<JobType>): Promise<JobType>;
 
   getCompanySettings(): Promise<CompanySettings>;
-  saveCompanySettings(s: CompanySettings): Promise<CompanySettings>;
-
-  getCsvSettings(): Promise<CsvSettings>;
-  saveCsvSettings(s: CsvSettings): Promise<CsvSettings>;
-
-  /* ----------------------------- admin rules -------------------------- */
-
-  listAdminRules(): Promise<AdminRule[]>;
-  upsertAdminRule(r: AdminRule): Promise<AdminRule>;
-  deleteAdminRule(id: string): Promise<void>;
+  saveCompanySettings(
+    settings: Partial<CompanySettings>
+  ): Promise<CompanySettings>;
 }
