@@ -7,7 +7,7 @@ import type { CompanySettings } from '../../providers/data/types';
 
 export function CompanySetupPage() {
   const data = useData();
-  const [s, setS] = useState<CompanySettings>({});
+  const [s, setS] = useState<CompanySettings | null>(null);
   const [status, setStatus] = useState<string>('');
 
   useEffect(() => {
@@ -15,11 +15,12 @@ export function CompanySetupPage() {
       .then(setS)
       .catch((e) => {
         console.error(e);
-        setStatus(String(e?.message ?? e));
+        setStatus(String((e as any)?.message ?? e));
       });
   }, [data]);
 
   async function save() {
+    if (!s) return;
     try {
       setStatus('Saving...');
       const saved = await data.saveCompanySettings(s);
@@ -32,66 +33,31 @@ export function CompanySetupPage() {
     }
   }
 
+  if (!s) return <div className="muted">Loading…</div>;
+
   return (
     <div className="stack">
       <Card title="Company Setup" right={<Button variant="primary" onClick={save}>Save</Button>}>
         <div className="grid2">
           <div className="stack">
-            <label className="label">Company Name</label>
-            <Input value={s.companyName ?? ''} onChange={(e) => setS({ ...s, companyName: e.target.value })} />
-          </div>
-
-          <div className="stack">
             <label className="label">Starting Estimate Number</label>
             <Input
-              value={s.startingEstimateNumber?.toString() ?? ''}
-              onChange={(e) => setS({ ...s, startingEstimateNumber: e.target.value === '' ? null : Number(e.target.value) })}
-              placeholder="e.g. 100"
-            />
-          </div>
-
-          <div className="stack">
-            <label className="label">Purchase Tax % (cost side)</label>
-            <Input
-              value={s.purchaseTaxPct?.toString() ?? ''}
-              onChange={(e) => setS({ ...s, purchaseTaxPct: e.target.value === '' ? null : Number(e.target.value) })}
-              placeholder="e.g. 8.25"
-            />
-          </div>
-
-          <div className="stack">
-            <label className="label">Misc Material %</label>
-            <Input
-              value={s.miscMaterialPct?.toString() ?? ''}
-              onChange={(e) => setS({ ...s, miscMaterialPct: e.target.value === '' ? null : Number(e.target.value) })}
-              placeholder="e.g. 5"
-            />
-          </div>
-
-          <div className="stack">
-            <label className="label">Processing Fee %</label>
-            <Input
-              value={s.processingFeePct?.toString() ?? ''}
-              onChange={(e) => setS({ ...s, processingFeePct: e.target.value === '' ? null : Number(e.target.value) })}
-              placeholder="e.g. 3"
+              type="number"
+              inputMode="decimal"
+              value={String(s.starting_estimate_number ?? '')}
+              onChange={(e) => setS({ ...s, starting_estimate_number: e.target.value === '' ? 0 : Number(e.target.value) })}
+              placeholder="e.g. 1000"
             />
           </div>
 
           <div className="stack">
             <label className="label">Minimum Labor Minutes</label>
             <Input
-              value={s.minLaborMinutes?.toString() ?? ''}
-              onChange={(e) => setS({ ...s, minLaborMinutes: e.target.value === '' ? null : Number(e.target.value) })}
+              type="number"
+              inputMode="decimal"
+              value={String(s.min_labor_minutes ?? '')}
+              onChange={(e) => setS({ ...s, min_labor_minutes: e.target.value === '' ? 0 : Number(e.target.value) })}
               placeholder="e.g. 15"
-            />
-          </div>
-
-          <div className="stack">
-            <label className="label">Estimate Validity (days)</label>
-            <Input
-              value={s.estimateValidityDays?.toString() ?? ''}
-              onChange={(e) => setS({ ...s, estimateValidityDays: e.target.value === '' ? null : Number(e.target.value) })}
-              placeholder="e.g. 30"
             />
           </div>
         </div>
@@ -99,7 +65,7 @@ export function CompanySetupPage() {
         {status ? <div className="muted small mt">{status}</div> : null}
 
         <div className="muted small mt">
-          This page is intentionally minimal scaffolding: it loads and saves company-scoped settings. Pricing behavior is unchanged.
+          Company settings are company-scoped under RLS. This page loads and saves the existing company_settings row.
         </div>
       </Card>
     </div>
