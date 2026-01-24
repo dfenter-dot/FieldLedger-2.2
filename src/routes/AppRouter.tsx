@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '../ui/shell/AppShell';
 import { DashboardPage } from '../views/dashboard/DashboardPage';
 import { MaterialsHomePage } from '../views/materials/MaterialsHomePage';
+import { MaterialEditorPage } from '../views/materials/MaterialEditorPage';
 import { LibraryFolderPage } from '../views/library/LibraryFolderPage';
 import { AssembliesHomePage } from '../views/assemblies/AssembliesHomePage';
 import { AssemblyEditorPage } from '../views/assemblies/AssemblyEditorPage';
@@ -33,6 +34,7 @@ export function AppRouter() {
 
         {/* Materials */}
         <Route path="/materials" element={<MaterialsHomePage />} />
+        <Route path="/materials/:libraryType/:materialId" element={<MaterialEditorPage />} />
         <Route path="/materials/:libraryType/*" element={<LibraryFolderPage kind="materials" />} />
 
         {/* Assemblies */}
