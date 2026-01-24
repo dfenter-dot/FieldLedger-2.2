@@ -23,6 +23,7 @@ export function Sidebar() {
 
         {has('admin.access') && (
           <div className="navGroup">
+            <NavLink to="/admin" className={({ isActive }) => isActive ? 'navItem active' : 'navItem'}>Admin Home</NavLink>
             <div className="navGroupLabel">Admin</div>
             <NavLink to="/admin/company-setup" className={({ isActive }) => isActive ? 'navItem active' : 'navItem'}>Company Setup</NavLink>
             <NavLink to="/admin/job-types" className={({ isActive }) => isActive ? 'navItem active' : 'navItem'}>Job Types</NavLink>
