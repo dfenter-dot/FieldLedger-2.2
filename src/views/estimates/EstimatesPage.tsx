@@ -12,6 +12,7 @@ export function EstimatesPage() {
   const { mode, setMode } = useSelection();
 
   const [rows, setRows] = useState<Estimate[]>([]);
+  const [filter, setFilter] = useState<'active' | 'approved' | 'declined' | 'archived'>('active');
   const [status, setStatus] = useState<string>('');
 
   useEffect(() => {
@@ -42,16 +43,42 @@ export function EstimatesPage() {
         {status ? <div className="muted small mt">{status}</div> : null}
       </Card>
 
+      <Card title="Filters">
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <Button variant={filter === 'active' ? 'primary' : 'secondary'} onClick={() => setFilter('active')}>
+            Active
+          </Button>
+          <Button variant={filter === 'approved' ? 'primary' : 'secondary'} onClick={() => setFilter('approved')}>
+            Approved
+          </Button>
+          <Button variant={filter === 'declined' ? 'primary' : 'secondary'} onClick={() => setFilter('declined')}>
+            Declined
+          </Button>
+          <Button variant={filter === 'archived' ? 'primary' : 'secondary'} onClick={() => setFilter('archived')}>
+            Archived
+          </Button>
+        </div>
+      </Card>
+
       <Card title="List">
         <div className="list">
-          {rows.map((e) => (
+          {rows
+            .filter((r) => {
+              const s = (r.status ?? 'draft') as string;
+              if (filter === 'active') return s === 'draft' || s === 'sent';
+              if (filter === 'approved') return s === 'approved';
+              if (filter === 'declined') return s === 'declined';
+              return s === 'archived';
+            })
+            .map((e) => (
             <div
               key={e.id}
               className="listRow clickable"
               onClick={() => {
                 if (mode.type === 'job-costing-pick-estimate') {
-                  // For now we just exit selection mode and open the estimate.
                   setMode({ type: 'none' });
+                  nav(`/admin/job-costing?estimateId=${encodeURIComponent(e.id)}`);
+                  return;
                 }
                 nav(`/estimates/${e.id}`);
               }}
@@ -65,7 +92,13 @@ export function EstimatesPage() {
               </div>
             </div>
           ))}
-          {rows.length === 0 ? <div className="muted">No estimates yet.</div> : null}
+          {rows.filter((r) => {
+            const s = (r.status ?? 'draft') as string;
+            if (filter === 'active') return s === 'draft' || s === 'sent';
+            if (filter === 'approved') return s === 'approved';
+            if (filter === 'declined') return s === 'declined';
+            return s === 'archived';
+          }).length === 0 ? <div className="muted">No estimates in this view.</div> : null}
         </div>
       </Card>
     </div>
