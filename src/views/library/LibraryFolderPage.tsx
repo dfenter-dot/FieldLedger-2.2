@@ -8,7 +8,7 @@ import { useSelection } from '../../providers/selection/SelectionContext';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
 
 export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }) {
-  const { libraryType } = useParams();
+  const { libraryType, '*': splat } = useParams();
   const nav = useNavigate();
 
   // URL uses app/user; data model uses personal/company.
@@ -20,7 +20,25 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   const dialogs = useDialogs();
 
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+
+  // Folder navigation is encoded in the splat segment so deep links work:
+  // /materials/:libraryType/f/:folderId
+  const activeFolderId = useMemo(() => {
+    const s = (splat ?? '').trim();
+    if (!s) return null;
+    const parts = s.split('/').filter(Boolean);
+    if (parts[0] === 'f' && parts[1]) return parts[1];
+    return null;
+  }, [splat]);
+
+  const [breadcrumbs, setBreadcrumbs] = useState<Array<{ id: string | null; name: string }>>([
+    { id: null, name: 'Root' },
+  ]);
+
+  const parentFolderId = useMemo(() => {
+    if (breadcrumbs.length < 2) return null;
+    return breadcrumbs[breadcrumbs.length - 2]?.id ?? null;
+  }, [breadcrumbs]);
 
   const [materials, setMaterials] = useState<Material[]>([]);
   const [assemblies, setAssemblies] = useState<Assembly[]>([]);
@@ -35,19 +53,27 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   async function refresh() {
     try {
       setStatus('');
-      const f = await data.listFolders({ kind, libraryType: lib, parentId: null });
+      const f = await data.listFolders({ kind, libraryType: lib, parentId: activeFolderId });
       setFolders(f);
 
-      const nextActive = activeFolderId ?? f[0]?.id ?? null;
-      setActiveFolderId(nextActive);
-
       if (kind === 'materials') {
-        const m = await data.listMaterials({ libraryType: lib, folderId: nextActive });
+        const m = await data.listMaterials({ libraryType: lib, folderId: activeFolderId });
         setMaterials(m);
       } else {
-        const a = await data.listAssemblies({ libraryType: lib, folderId: nextActive });
+        const a = await data.listAssemblies({ libraryType: lib, folderId: activeFolderId });
         setAssemblies(a);
       }
+
+      // Breadcrumbs (best-effort, cached in memory)
+      setBreadcrumbs((prev) => {
+        const root = [{ id: null, name: 'Root' }];
+        if (!activeFolderId) return root;
+        // If we already have the path, keep it.
+        const existingIdx = prev.findIndex((b) => b.id === activeFolderId);
+        if (existingIdx >= 0) return prev.slice(0, existingIdx + 1);
+        // Otherwise keep the same (we set readable names on folder click).
+        return prev;
+      });
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
@@ -57,7 +83,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   useEffect(() => {
     refresh().catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, kind, lib]);
+  }, [data, kind, lib, activeFolderId]);
 
   async function handleCreate() {
     try {
@@ -69,7 +95,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
         confirmText: 'Create',
       });
       if (!name) return;
-      await data.createFolder({ kind, libraryType: lib, parentId: null, name });
+      await data.createFolder({ kind, libraryType: lib, parentId: activeFolderId, name });
       await refresh();
     } catch (e: any) {
       console.error(e);
@@ -138,6 +164,26 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     }
   }
 
+  function goToFolder(folderId: string | null, name?: string) {
+    const base = kind === 'materials' ? '/materials' : '/assemblies';
+    const lt = libraryType === 'app' ? 'app' : 'user';
+    if (!folderId) {
+      setBreadcrumbs([{ id: null, name: 'Root' }]);
+      nav(`${base}/${lt}`);
+      return;
+    }
+
+    if (name) {
+      setBreadcrumbs((prev) => {
+        const existingIdx = prev.findIndex((b) => b.id === folderId);
+        if (existingIdx >= 0) return prev.slice(0, existingIdx + 1);
+        return [...prev, { id: folderId, name }];
+      });
+    }
+
+    nav(`${base}/${lt}/f/${folderId}`);
+  }
+
 
   const selectionBanner = (() => {
     if (mode.type === 'add-materials-to-assembly' && kind === 'materials') return 'Selection mode: Add materials to assembly';
@@ -163,8 +209,24 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           )
         }
       >
-        <div className="muted small">
-          Folder navigation is minimal in this build: pick a folder to view items.
+        <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <div className="muted small">Folder:</div>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+            {breadcrumbs.map((b, idx) => (
+              <Button
+                key={`${b.id ?? 'root'}_${idx}`}
+                variant="secondary"
+                onClick={() => goToFolder(b.id)}
+              >
+                {b.name}
+              </Button>
+            ))}
+          </div>
+          {activeFolderId ? (
+            <Button variant="secondary" onClick={() => goToFolder(parentFolderId)}>
+              Up One Level
+            </Button>
+          ) : null}
         </div>
         {status ? <div className="muted small mt">{status}</div> : null}
       </Card>
@@ -174,22 +236,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           {folders.map((f) => (
             <div
               key={f.id}
-              className={'folderRow clickable' + (f.id === activeFolderId ? ' selected' : '')}
-              onClick={async () => {
-                setActiveFolderId(f.id);
-                try {
-                  if (kind === 'materials') {
-                    const m = await data.listMaterials({ libraryType: lib, folderId: f.id });
-                    setMaterials(m);
-                  } else {
-                    const a = await data.listAssemblies({ libraryType: lib, folderId: f.id });
-                    setAssemblies(a);
-                  }
-                } catch (e: any) {
-                  console.error(e);
-                  setStatus(String(e?.message ?? e));
-                }
-              }}
+              className={'folderRow clickable'}
+              onClick={() => goToFolder(f.id, f.name)}
             >
               <div className="folderIcon">📁</div>
               <div className="folderName">{f.name}</div>
@@ -211,9 +259,17 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                   if (mode.type === 'add-materials-to-assembly') {
                     const asm = await data.getAssembly(mode.assemblyId);
                     if (!asm) throw new Error('Assembly not found');
+                    const qtyText = await dialogs.prompt({
+                      title: 'Quantity',
+                      label: `Quantity for “${m.name}”`,
+                      defaultValue: '1',
+                      confirmText: 'Add',
+                    });
+                    if (!qtyText) return;
+                    const qty = Math.max(1, Number(qtyText));
                     const next = {
                       ...asm,
-                      items: [...(asm.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: m.id, quantity: 1 }],
+                      items: [...(asm.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: m.id, quantity: Number.isFinite(qty) ? qty : 1 }],
                     };
                     await data.upsertAssembly(next as any);
                     setMode({ type: 'none' });
@@ -223,9 +279,17 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                   if (mode.type === 'add-materials-to-estimate') {
                     const est = await data.getEstimate(mode.estimateId);
                     if (!est) throw new Error('Estimate not found');
+                    const qtyText = await dialogs.prompt({
+                      title: 'Quantity',
+                      label: `Quantity for “${m.name}”`,
+                      defaultValue: '1',
+                      confirmText: 'Add',
+                    });
+                    if (!qtyText) return;
+                    const qty = Math.max(1, Number(qtyText));
                     const next = {
                       ...est,
-                      items: [...(est.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: m.id, quantity: 1 }],
+                      items: [...(est.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: m.id, quantity: Number.isFinite(qty) ? qty : 1 }],
                     };
                     await data.upsertEstimate(next as any);
                     setMode({ type: 'none' });
@@ -265,9 +329,17 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                     if (mode.type === 'add-assemblies-to-estimate') {
                       const est = await data.getEstimate(mode.estimateId);
                       if (!est) throw new Error('Estimate not found');
+                      const qtyText = await dialogs.prompt({
+                        title: 'Quantity',
+                        label: `Quantity for “${a.name}”`,
+                        defaultValue: '1',
+                        confirmText: 'Add',
+                      });
+                      if (!qtyText) return;
+                      const qty = Math.max(1, Number(qtyText));
                       const next = {
                         ...est,
-                        items: [...(est.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, assembly_id: a.id, quantity: 1 }],
+                        items: [...(est.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, assembly_id: a.id, quantity: Number.isFinite(qty) ? qty : 1 }],
                       };
                       await data.upsertEstimate(next as any);
                       setMode({ type: 'none' });
