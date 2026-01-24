@@ -6,12 +6,14 @@ import { Input } from '../../ui/components/Input';
 import { useData } from '../../providers/data/DataContext';
 import type { Estimate } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
+import { useDialogs } from '../../providers/dialogs/DialogContext';
 
 export function EstimateEditorPage() {
   const { estimateId } = useParams();
   const data = useData();
   const nav = useNavigate();
   const { setMode } = useSelection();
+  const { confirm } = useDialogs();
 
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [status, setStatus] = useState<string>('');
@@ -63,7 +65,13 @@ export function EstimateEditorPage() {
   async function remove() {
     if (!estimate) return;
     // eslint-disable-next-line no-restricted-globals
-    if (!confirm('Delete this estimate?')) return;
+    const ok = await confirm({
+      title: 'Delete Estimate',
+      message: 'Delete this estimate?',
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
 
     try {
       setStatus('Deleting...');
