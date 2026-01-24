@@ -183,6 +183,29 @@ export function AssemblyEditorPage() {
 
   if (!a) return <div className="muted">Loading…</div>;
 
+  async function applyAdminRules() {
+    if (!a || !a.use_admin_rules) return;
+    try {
+      setStatus('Applying rules...');
+      const rules = await data.listAdminRules();
+      const match = rules
+        .filter((r) => r.enabled && r.applies_to === 'assembly' && (r.match_text ?? '').trim().length > 0)
+        .sort((x, y) => x.priority - y.priority)
+        .find((r) => (a.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
+      if (match?.set_job_type_id) {
+        const saved = await data.upsertAssembly({ ...a, job_type_id: match.set_job_type_id } as any);
+        setA(saved as any);
+        setStatus('Rules applied.');
+      } else {
+        setStatus('No matching rules.');
+      }
+      setTimeout(() => setStatus(''), 1500);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
   return (
     <div className="stack">
       <Card
@@ -194,6 +217,7 @@ export function AssemblyEditorPage() {
             <Button variant="danger" onClick={remove}>
               Delete
             </Button>
+            {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll}>
               Save
             </Button>
