@@ -10,9 +10,14 @@ function makeNewJobType(): JobType {
   return {
     id: crypto.randomUUID?.() ?? `jt_${Date.now()}`,
     company_id: '' as any,
-    name: 'New Job Type',
+    name: 'Service',
     description: null,
     is_default: false,
+    enabled: true,
+    profit_margin_percent: 70,
+    efficiency_percent: 50,
+    allow_discounts: true,
+    billing_mode: 'flat',
     created_at: new Date().toISOString(),
   };
 }
@@ -127,6 +132,62 @@ export function JobTypesPage() {
                     <div className="stack">
                       <label className="label">Default</label>
                       <Toggle checked={row.is_default} onChange={(v) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, is_default: v } }))} label={row.is_default ? 'Yes' : 'No'} />
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Enabled</label>
+                      <Toggle
+                        checked={row.enabled !== false}
+                        onChange={(v) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, enabled: v } }))}
+                        label={row.enabled === false ? 'No' : 'Yes'}
+                      />
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Billing Mode</label>
+                      <select
+                        className="input"
+                        value={row.billing_mode ?? 'flat'}
+                        onChange={(ev) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, billing_mode: (ev.target.value as any) } }))}
+                      >
+                        <option value="flat">Flat Rate</option>
+                        <option value="hourly">Hourly</option>
+                      </select>
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Gross Margin Target (%)</label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        value={row.profit_margin_percent == null ? '' : String(row.profit_margin_percent)}
+                        onChange={(e) => {
+                          const v = e.target.value.trim() === '' ? null : Number(e.target.value);
+                          setEditing((prev) => ({ ...prev, [jt.id]: { ...row, profit_margin_percent: Number.isFinite(v as any) ? (v as any) : null } }));
+                        }}
+                      />
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Efficiency (%)</label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        value={row.efficiency_percent == null ? '' : String(row.efficiency_percent)}
+                        onChange={(e) => {
+                          const v = e.target.value.trim() === '' ? null : Number(e.target.value);
+                          setEditing((prev) => ({ ...prev, [jt.id]: { ...row, efficiency_percent: Number.isFinite(v as any) ? (v as any) : null } }));
+                        }}
+                      />
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Allow Discounts</label>
+                      <Toggle
+                        checked={row.allow_discounts !== false}
+                        onChange={(v) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, allow_discounts: v } }))}
+                        label={row.allow_discounts === false ? 'No' : 'Yes'}
+                      />
                     </div>
 
                     <div className="stack" style={{ gridColumn: '1 / -1' }}>
