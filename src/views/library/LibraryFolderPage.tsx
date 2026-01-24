@@ -5,6 +5,7 @@ import { Button } from '../../ui/components/Button';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Folder, LibraryType, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
+import { useDialogs } from '../../providers/dialogs/DialogContext';
 
 export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }) {
   const { libraryType } = useParams();
@@ -15,6 +16,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
 
   const data = useData();
   const { mode, setMode } = useSelection();
+  const { prompt } = useDialogs();
+  const dialogs = useDialogs();
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -59,16 +62,30 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   async function handleCreate() {
     try {
       setStatus('');
-      if (kind === 'materials') {
-        const name = window.prompt('New folder name');
-        if (!name) return;
-        await data.createFolder({ kind, libraryType: lib, parentId: null, name });
-        await refresh();
-        return;
-      }
+      const name = await prompt({
+        title: 'Create Folder',
+        label: 'New folder name',
+        placeholder: 'e.g., Lighting',
+        confirmText: 'Create',
+      });
+      if (!name) return;
+      await data.createFolder({ kind, libraryType: lib, parentId: null, name });
+      await refresh();
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
 
-      // Assemblies: create a new assembly and open editor.
-      const name = window.prompt('New assembly name', 'New Assembly');
+  async function handleCreateAssembly() {
+    try {
+      setStatus('');
+      const name = await prompt({
+        title: 'Create Assembly',
+        label: 'New assembly name',
+        defaultValue: 'New Assembly',
+        confirmText: 'Create',
+      });
       if (!name) return;
 
       const folderId = activeFolderId ?? null;
@@ -94,7 +111,12 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   async function handleCreateMaterial() {
     try {
       setStatus('');
-      const name = window.prompt('New material name', 'New Material');
+      const name = await prompt({
+        title: 'Create Material',
+        label: 'New material name',
+        defaultValue: 'New Material',
+        confirmText: 'Create',
+      });
       if (!name) return;
 
       const created = await data.upsertMaterial({
@@ -131,9 +153,14 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
       <Card
         title={title}
         right={
-          <Button variant="primary" onClick={handleCreate}>
-            {kind === 'materials' ? 'Create Folder' : 'Create Assembly'}
-          </Button>
+          kind === 'assemblies' ? (
+            <div className="row">
+              <Button variant="secondary" onClick={handleCreate}>Create Folder</Button>
+              <Button variant="primary" onClick={handleCreateAssembly}>Create Assembly</Button>
+            </div>
+          ) : (
+            <Button variant="primary" onClick={handleCreate}>Create Folder</Button>
+          )
         }
       >
         <div className="muted small">
