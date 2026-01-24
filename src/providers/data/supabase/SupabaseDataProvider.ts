@@ -25,6 +25,7 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error || !data?.company_id) {
       throw new Error('No company context available');
     }
+
     return data.company_id;
   }
 
@@ -65,7 +66,11 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   async deleteFolder(id: string): Promise<void> {
-    const { error } = await this.supabase.from('folders').delete().eq('id', id);
+    const { error } = await this.supabase
+      .from('folders')
+      .delete()
+      .eq('id', id);
+
     if (error) throw error;
   }
 
@@ -109,6 +114,7 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('materials')
       .delete()
       .eq('id', id);
+
     if (error) throw error;
   }
 
@@ -152,12 +158,18 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('assemblies')
       .delete()
       .eq('id', id);
+
     if (error) throw error;
   }
 
   /* ------------------------------------------------------------------ */
   /* Estimates                                                          */
   /* ------------------------------------------------------------------ */
+
+  // Compatibility alias (older UI code expects this)
+  async listEstimates(): Promise<Estimate[]> {
+    return this.getEstimates();
+  }
 
   async getEstimates(): Promise<Estimate[]> {
     const companyId = await this.currentCompanyId();
@@ -196,6 +208,7 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('estimates')
       .delete()
       .eq('id', id);
+
     if (error) throw error;
   }
 
