@@ -1,462 +1,270 @@
-import { nanoid } from 'nanoid';
-import { supabase } from '../../../supabase/client';
-import type {
-  AdminRule,
+import { SupabaseClient } from '@supabase/supabase-js';
+import {
   Assembly,
-  BrandingSettings,
   CompanySettings,
-  CsvSettings,
   Estimate,
   Folder,
   JobType,
   Material,
 } from '../types';
-import type { IDataProvider, LibraryKind } from '../IDataProvider';
-
-type LibraryType = 'company' | 'personal';
+import { IDataProvider } from '../IDataProvider';
 
 export class SupabaseDataProvider implements IDataProvider {
-  /* ----------------------------- helpers ----------------------------- */
+  constructor(private supabase: SupabaseClient) {}
 
-  private async requireCompanyId(): Promise<string> {
-    const { data, error } = await supabase.auth.getUser();
-    if (error) throw error;
+  /* ------------------------------------------------------------------ */
+  /* Helpers                                                            */
+  /* ------------------------------------------------------------------ */
 
-    const user = data.user;
-    if (!user) throw new Error('Not authenticated');
+  private async currentCompanyId(): Promise<string> {
+    const { data, error } = await this.supabase
+      .from('profiles')
+      .select('company_id')
+      .single();
 
-    const companyId = user.user_metadata?.company_id as string | undefined;
-    if (!companyId) {
-      throw new Error('Missing company_id on user metadata');
+    if (error || !data?.company_id) {
+      throw new Error('No company context available');
     }
-
-    return companyId;
+    return data.company_id;
   }
 
-  /* ----------------------------- folders ----------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Folders                                                            */
+  /* ------------------------------------------------------------------ */
 
-  async listFolders(args: {
-    kind: LibraryKind;
-    libraryType: LibraryType;
-    parentId: string | null;
-  }): Promise<Folder[]> {
-    const companyId = await this.requireCompanyId();
+  async getFolders(kind: 'materials' | 'assemblies'): Promise<Folder[]> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from('folders')
       .select('*')
-      .eq('company_id', companyId)
-      .eq('kind', args.kind)
-      .eq('library_type', args.libraryType)
-      .eq('parent_id', args.parentId);
+      .eq('kind', kind)
+      .or(`company_id.eq.${companyId},company_id.is.null`)
+      .order('order_index');
 
     if (error) throw error;
-    return (data ?? []) as Folder[];
+    return data ?? [];
   }
 
-  async createFolder(args: {
-    kind: LibraryKind;
-    libraryType: LibraryType;
-    parentId: string | null;
-    name: string;
-  }): Promise<Folder> {
-    const companyId = await this.requireCompanyId();
+  async saveFolder(folder: Partial<Folder>): Promise<Folder> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const payload = {
+      ...folder,
+      company_id: folder.company_id ?? companyId,
+    };
+
+    const { data, error } = await this.supabase
       .from('folders')
-      .insert({
-        id: nanoid(),
-        company_id: companyId,
-        kind: args.kind,
-        library_type: args.libraryType,
-        parent_id: args.parentId,
-        name: args.name,
-      })
-      .select('*')
+      .upsert(payload)
+      .select()
       .single();
 
     if (error) throw error;
-    return data as Folder;
+    return data;
   }
 
-  /* ---------------------------- materials ---------------------------- */
+  async deleteFolder(id: string): Promise<void> {
+    const { error } = await this.supabase.from('folders').delete().eq('id', id);
+    if (error) throw error;
+  }
 
-  async listMaterials(args: {
-    libraryType: LibraryType;
-    folderId: string | null;
-  }): Promise<Material[]> {
-    const companyId = await this.requireCompanyId();
+  /* ------------------------------------------------------------------ */
+  /* Materials                                                          */
+  /* ------------------------------------------------------------------ */
 
-    const { data, error } = await supabase
+  async getMaterials(): Promise<Material[]> {
+    const companyId = await this.currentCompanyId();
+
+    const { data, error } = await this.supabase
       .from('materials')
       .select('*')
-      .eq('company_id', companyId)
-      .eq('library_type', args.libraryType)
-      .eq('folder_id', args.folderId);
+      .or(`company_id.eq.${companyId},company_id.is.null`)
+      .order('order_index');
 
     if (error) throw error;
-    return (data ?? []) as Material[];
+    return data ?? [];
   }
 
-  async getMaterial(id: string): Promise<Material | null> {
-    const companyId = await this.requireCompanyId();
+  async saveMaterial(material: Partial<Material>): Promise<Material> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const payload = {
+      ...material,
+      company_id: material.company_id ?? companyId,
+    };
+
+    const { data, error } = await this.supabase
       .from('materials')
-      .select('*')
-      .eq('company_id', companyId)
-      .eq('id', id)
-      .maybeSingle();
-
-    if (error) throw error;
-    return (data ?? null) as Material | null;
-  }
-
-  async upsertMaterial(m: Material): Promise<Material> {
-    const companyId = await this.requireCompanyId();
-    const id = m.id ?? nanoid();
-
-    const { data, error } = await supabase
-      .from('materials')
-      .upsert({
-        ...m,
-        id,
-        company_id: companyId,
-        folder_id: m.folderId,
-        library_type: m.libraryType,
-      })
-      .select('*')
+      .upsert(payload)
+      .select()
       .single();
 
     if (error) throw error;
-    return data as Material;
+    return data;
   }
 
   async deleteMaterial(id: string): Promise<void> {
-    const companyId = await this.requireCompanyId();
-
-    const { error } = await supabase
+    const { error } = await this.supabase
       .from('materials')
       .delete()
-      .eq('company_id', companyId)
       .eq('id', id);
-
     if (error) throw error;
   }
 
-  /* ---------------------------- assemblies --------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Assemblies                                                         */
+  /* ------------------------------------------------------------------ */
 
-  async listAssemblies(args: {
-    libraryType: LibraryType;
-    folderId: string | null;
-  }): Promise<Assembly[]> {
-    const companyId = await this.requireCompanyId();
+  async getAssemblies(): Promise<Assembly[]> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from('assemblies')
       .select('*')
-      .eq('company_id', companyId)
-      .eq('library_type', args.libraryType)
-      .eq('folder_id', args.folderId);
+      .or(`company_id.eq.${companyId},company_id.is.null`)
+      .order('order_index');
 
     if (error) throw error;
-    return (data ?? []) as Assembly[];
+    return data ?? [];
   }
 
-  async getAssembly(id: string): Promise<Assembly | null> {
-    const companyId = await this.requireCompanyId();
+  async saveAssembly(assembly: Partial<Assembly>): Promise<Assembly> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const payload = {
+      ...assembly,
+      company_id: assembly.company_id ?? companyId,
+    };
+
+    const { data, error } = await this.supabase
       .from('assemblies')
-      .select('*')
-      .eq('company_id', companyId)
-      .eq('id', id)
-      .maybeSingle();
-
-    if (error) throw error;
-    return (data ?? null) as Assembly | null;
-  }
-
-  async upsertAssembly(a: Assembly): Promise<Assembly> {
-    const companyId = await this.requireCompanyId();
-    const id = a.id ?? nanoid();
-
-    const { data, error } = await supabase
-      .from('assemblies')
-      .upsert({
-        ...a,
-        id,
-        company_id: companyId,
-        folder_id: a.folderId,
-        library_type: a.libraryType,
-      })
-      .select('*')
+      .upsert(payload)
+      .select()
       .single();
 
     if (error) throw error;
-    return data as Assembly;
+    return data;
   }
 
   async deleteAssembly(id: string): Promise<void> {
-    const companyId = await this.requireCompanyId();
-
-    const { error } = await supabase
+    const { error } = await this.supabase
       .from('assemblies')
       .delete()
-      .eq('company_id', companyId)
       .eq('id', id);
-
     if (error) throw error;
   }
 
-  /* ----------------------------- estimates --------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Estimates                                                          */
+  /* ------------------------------------------------------------------ */
 
-  async listEstimates(): Promise<Estimate[]> {
-    const companyId = await this.requireCompanyId();
+  async getEstimates(): Promise<Estimate[]> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from('estimates')
       .select('*')
       .eq('company_id', companyId)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    return (data ?? []) as Estimate[];
+    return data ?? [];
   }
 
-  async getEstimate(id: string): Promise<Estimate | null> {
-    const companyId = await this.requireCompanyId();
+  async saveEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const payload = {
+      ...estimate,
+      company_id: companyId,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await this.supabase
       .from('estimates')
-      .select('*')
-      .eq('company_id', companyId)
-      .eq('id', id)
-      .maybeSingle();
-
-    if (error) throw error;
-    return (data ?? null) as Estimate | null;
-  }
-
-  async upsertEstimate(e: Estimate): Promise<Estimate> {
-    const companyId = await this.requireCompanyId();
-    const id = e.id ?? nanoid();
-
-    const { data, error } = await supabase
-      .from('estimates')
-      .upsert({
-        ...e,
-        id,
-        company_id: companyId,
-      })
-      .select('*')
+      .upsert(payload)
+      .select()
       .single();
 
     if (error) throw error;
-    return data as Estimate;
+    return data;
   }
 
   async deleteEstimate(id: string): Promise<void> {
-    const companyId = await this.requireCompanyId();
-
-    const { error } = await supabase
+    const { error } = await this.supabase
       .from('estimates')
       .delete()
-      .eq('company_id', companyId)
       .eq('id', id);
-
     if (error) throw error;
   }
 
-  /* ----------------------------- job types ---------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Admin                                                              */
+  /* ------------------------------------------------------------------ */
 
-  async listJobTypes(): Promise<JobType[]> {
-    const companyId = await this.requireCompanyId();
+  async getJobTypes(): Promise<JobType[]> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from('job_types')
-      .select('*')
-      .eq('company_id', companyId);
-
-    if (error) throw error;
-    return (data ?? []) as JobType[];
-  }
-
-  async upsertJobType(jt: JobType): Promise<JobType> {
-    const companyId = await this.requireCompanyId();
-    const id = jt.id ?? nanoid();
-
-    const { data, error } = await supabase
-      .from('job_types')
-      .upsert({
-        ...jt,
-        id,
-        company_id: companyId,
-      })
-      .select('*')
-      .single();
-
-    if (error) throw error;
-    return data as JobType;
-  }
-
-  async setDefaultJobType(jobTypeId: string): Promise<void> {
-    const companyId = await this.requireCompanyId();
-
-    const { error } = await supabase.rpc('set_default_job_type', {
-      p_company_id: companyId,
-      p_job_type_id: jobTypeId,
-    });
-
-    if (error) throw error;
-  }
-
-  /* --------------------- branding / company / csv --------------------- */
-
-  async getBrandingSettings(): Promise<BrandingSettings> {
-    const companyId = await this.requireCompanyId();
-
-    const { data, error } = await supabase
-      .from('branding_settings')
       .select('*')
       .eq('company_id', companyId)
-      .maybeSingle();
+      .order('name');
 
     if (error) throw error;
-
-    return (
-      (data as BrandingSettings) ?? {
-        companyName: '',
-        logoUrl: '',
-        primaryColor: '#000000',
-      }
-    );
+    return data ?? [];
   }
 
-  async saveBrandingSettings(
-    s: BrandingSettings
-  ): Promise<BrandingSettings> {
-    const companyId = await this.requireCompanyId();
+  async saveJobType(jobType: Partial<JobType>): Promise<JobType> {
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
-      .from('branding_settings')
-      .upsert({ ...s, company_id: companyId })
-      .select('*')
+    const payload = {
+      ...jobType,
+      company_id: companyId,
+    };
+
+    const { data, error } = await this.supabase
+      .from('job_types')
+      .upsert(payload)
+      .select()
       .single();
 
     if (error) throw error;
-    return data as BrandingSettings;
+    return data;
   }
 
   async getCompanySettings(): Promise<CompanySettings> {
-    const companyId = await this.requireCompanyId();
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from('company_settings')
       .select('*')
       .eq('company_id', companyId)
-      .maybeSingle();
+      .single();
 
     if (error) throw error;
-
-    return (
-      (data as CompanySettings) ?? {
-        name: '',
-        address: '',
-        phone: '',
-        email: '',
-      }
-    );
+    return data;
   }
 
   async saveCompanySettings(
-    s: CompanySettings
+    settings: Partial<CompanySettings>
   ): Promise<CompanySettings> {
-    const companyId = await this.requireCompanyId();
+    const companyId = await this.currentCompanyId();
 
-    const { data, error } = await supabase
+    const payload = {
+      ...settings,
+      company_id: companyId,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await this.supabase
       .from('company_settings')
-      .upsert({ ...s, company_id: companyId })
-      .select('*')
+      .upsert(payload)
+      .select()
       .single();
 
     if (error) throw error;
-    return data as CompanySettings;
-  }
-
-  async getCsvSettings(): Promise<CsvSettings> {
-    const companyId = await this.requireCompanyId();
-
-    const { data, error } = await supabase
-      .from('csv_settings')
-      .select('*')
-      .eq('company_id', companyId)
-      .maybeSingle();
-
-    if (error) throw error;
-
-    return (
-      (data as CsvSettings) ?? {
-        includeHeaders: true,
-        decimalSeparator: '.',
-      }
-    );
-  }
-
-  async saveCsvSettings(s: CsvSettings): Promise<CsvSettings> {
-    const companyId = await this.requireCompanyId();
-
-    const { data, error } = await supabase
-      .from('csv_settings')
-      .upsert({ ...s, company_id: companyId })
-      .select('*')
-      .single();
-
-    if (error) throw error;
-    return data as CsvSettings;
-  }
-
-  /* ----------------------------- admin rules -------------------------- */
-
-  async listAdminRules(): Promise<AdminRule[]> {
-    const companyId = await this.requireCompanyId();
-
-    const { data, error } = await supabase
-      .from('admin_rules')
-      .select('*')
-      .eq('company_id', companyId);
-
-    if (error) throw error;
-    return (data ?? []) as AdminRule[];
-  }
-
-  async upsertAdminRule(r: AdminRule): Promise<AdminRule> {
-    const companyId = await this.requireCompanyId();
-    const id = r.id ?? nanoid();
-
-    const { data, error } = await supabase
-      .from('admin_rules')
-      .upsert({
-        ...r,
-        id,
-        company_id: companyId,
-      })
-      .select('*')
-      .single();
-
-    if (error) throw error;
-    return data as AdminRule;
-  }
-
-  async deleteAdminRule(id: string): Promise<void> {
-    const companyId = await this.requireCompanyId();
-
-    const { error } = await supabase
-      .from('admin_rules')
-      .delete()
-      .eq('company_id', companyId)
-      .eq('id', id);
-
-    if (error) throw error;
+    return data;
   }
 }
