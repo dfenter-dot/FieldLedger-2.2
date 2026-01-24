@@ -1,286 +1,195 @@
-import { nanoid } from 'nanoid';
-import type {
-  AdminRule,
+import {
   Assembly,
-  BrandingSettings,
   CompanySettings,
-  CsvSettings,
   Estimate,
   Folder,
   JobType,
   Material,
 } from '../types';
-import type { IDataProvider, LibraryKind } from '../IDataProvider';
+import { IDataProvider } from '../IDataProvider';
+import {
+  seedCompanySettings,
+  seedDefaultJobType,
+} from './seed';
 
-const delay = (ms = 150) => new Promise(res => setTimeout(res, ms));
-
-const load = <T>(key: string, fallback: T): T => {
-  const raw = localStorage.getItem(key);
-  return raw ? JSON.parse(raw) : fallback;
-};
-
-const save = (key: string, value: unknown) => {
-  localStorage.setItem(key, JSON.stringify(value));
-};
-
+/**
+ * LocalDataProvider
+ * -----------------
+ * Used ONLY for local/dev/demo contexts.
+ * Live app must use SupabaseDataProvider.
+ */
 export class LocalDataProvider implements IDataProvider {
-  /* ----------------------------- folders ----------------------------- */
+  private folders: Folder[] = [];
+  private materials: Material[] = [];
+  private assemblies: Assembly[] = [];
+  private estimates: Estimate[] = [];
+  private jobTypes: JobType[] = [];
+  private companySettings!: CompanySettings;
 
-  async listFolders(args: {
-    kind: LibraryKind;
-    libraryType: 'company' | 'personal';
-    parentId: string | null;
-  }): Promise<Folder[]> {
-    await delay();
-    const all = load<Folder[]>('folders', []);
-    return all.filter(
-      f =>
-        f.kind === args.kind &&
-        f.libraryType === args.libraryType &&
-        f.parentId === args.parentId
-    );
+  constructor(private companyId: string) {
+    this.bootstrap();
   }
 
-  async createFolder(args: {
-    kind: LibraryKind;
-    libraryType: 'company' | 'personal';
-    parentId: string | null;
-    name: string;
-  }): Promise<Folder> {
-    await delay();
-    const all = load<Folder[]>('folders', []);
-    const folder: Folder = {
-      id: nanoid(),
-      name: args.name,
-      kind: args.kind,
-      libraryType: args.libraryType,
-      parentId: args.parentId,
-    };
-    all.push(folder);
-    save('folders', all);
-    return folder;
+  private bootstrap() {
+    // Seed company settings
+    this.companySettings = seedCompanySettings(this.companyId);
+
+    // Seed default job type
+    const defaultJobType = seedDefaultJobType(this.companyId);
+    this.jobTypes.push(defaultJobType);
   }
 
-  /* ---------------------------- materials ---------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Folders                                                            */
+  /* ------------------------------------------------------------------ */
 
-  async listMaterials(args: {
-    libraryType: 'company' | 'personal';
-    folderId: string | null;
-  }): Promise<Material[]> {
-    await delay();
-    const all = load<Material[]>('materials', []);
-    return all.filter(
-      m =>
-        m.libraryType === args.libraryType &&
-        m.folderId === args.folderId
-    );
+  async getFolders(kind: 'materials' | 'assemblies'): Promise<Folder[]> {
+    return this.folders.filter(f => f.kind === kind);
   }
 
-  async getMaterial(id: string): Promise<Material | null> {
-    await delay();
-    return load<Material[]>('materials', []).find(m => m.id === id) ?? null;
-  }
-
-  async upsertMaterial(m: Material): Promise<Material> {
-    await delay();
-    const all = load<Material[]>('materials', []);
-    const idx = all.findIndex(x => x.id === m.id);
-    if (idx >= 0) {
-      all[idx] = m;
-    } else {
-      all.push({ ...m, id: nanoid() });
+  async saveFolder(folder: Partial<Folder>): Promise<Folder> {
+    if (folder.id) {
+      const idx = this.folders.findIndex(f => f.id === folder.id);
+      if (idx >= 0) {
+        this.folders[idx] = { ...this.folders[idx], ...folder } as Folder;
+        return this.folders[idx];
+      }
     }
-    save('materials', all);
-    return m;
+
+    const newFolder: Folder = {
+      ...(folder as Folder),
+    };
+    this.folders.push(newFolder);
+    return newFolder;
+  }
+
+  async deleteFolder(id: string): Promise<void> {
+    this.folders = this.folders.filter(f => f.id !== id);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Materials                                                          */
+  /* ------------------------------------------------------------------ */
+
+  async getMaterials(): Promise<Material[]> {
+    return this.materials;
+  }
+
+  async saveMaterial(material: Partial<Material>): Promise<Material> {
+    if (material.id) {
+      const idx = this.materials.findIndex(m => m.id === material.id);
+      if (idx >= 0) {
+        this.materials[idx] = {
+          ...this.materials[idx],
+          ...material,
+        } as Material;
+        return this.materials[idx];
+      }
+    }
+
+    const newMaterial = material as Material;
+    this.materials.push(newMaterial);
+    return newMaterial;
   }
 
   async deleteMaterial(id: string): Promise<void> {
-    await delay();
-    save(
-      'materials',
-      load<Material[]>('materials', []).filter(m => m.id !== id)
-    );
+    this.materials = this.materials.filter(m => m.id !== id);
   }
 
-  /* ---------------------------- assemblies --------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Assemblies                                                         */
+  /* ------------------------------------------------------------------ */
 
-  async getAssembly(id: string): Promise<Assembly | null> {
-    await delay();
-    return load<Assembly[]>('assemblies', []).find(a => a.id === id) ?? null;
+  async getAssemblies(): Promise<Assembly[]> {
+    return this.assemblies;
   }
 
-  async listAssemblies(args: {
-    libraryType: 'company' | 'personal';
-    folderId: string | null;
-  }): Promise<Assembly[]> {
-    await delay();
-    const all = load<Assembly[]>('assemblies', []);
-    return all.filter(
-      a =>
-        a.libraryType === args.libraryType &&
-        a.folderId === args.folderId
-    );
-  }
-
-  async upsertAssembly(a: Assembly): Promise<Assembly> {
-    await delay();
-    const all = load<Assembly[]>('assemblies', []);
-    const idx = all.findIndex(x => x.id === a.id);
-    if (idx >= 0) {
-      all[idx] = a;
-    } else {
-      all.push({ ...a, id: nanoid() });
+  async saveAssembly(assembly: Partial<Assembly>): Promise<Assembly> {
+    if (assembly.id) {
+      const idx = this.assemblies.findIndex(a => a.id === assembly.id);
+      if (idx >= 0) {
+        this.assemblies[idx] = {
+          ...this.assemblies[idx],
+          ...assembly,
+        } as Assembly;
+        return this.assemblies[idx];
+      }
     }
-    save('assemblies', all);
-    return a;
+
+    const newAssembly = assembly as Assembly;
+    this.assemblies.push(newAssembly);
+    return newAssembly;
   }
 
   async deleteAssembly(id: string): Promise<void> {
-    await delay();
-    save(
-      'assemblies',
-      load<Assembly[]>('assemblies', []).filter(a => a.id !== id)
-    );
+    this.assemblies = this.assemblies.filter(a => a.id !== id);
   }
 
-  /* ----------------------------- estimates --------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Estimates                                                          */
+  /* ------------------------------------------------------------------ */
 
-  async listEstimates(): Promise<Estimate[]> {
-    await delay();
-    return load<Estimate[]>('estimates', []);
+  async getEstimates(): Promise<Estimate[]> {
+    return this.estimates;
   }
 
-  async getEstimate(id: string): Promise<Estimate | null> {
-    await delay();
-    return load<Estimate[]>('estimates', []).find(e => e.id === id) ?? null;
-  }
-
-  async upsertEstimate(e: Estimate): Promise<Estimate> {
-    await delay();
-    const all = load<Estimate[]>('estimates', []);
-    const idx = all.findIndex(x => x.id === e.id);
-    if (idx >= 0) {
-      all[idx] = e;
-    } else {
-      all.push({ ...e, id: nanoid() });
+  async saveEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
+    if (estimate.id) {
+      const idx = this.estimates.findIndex(e => e.id === estimate.id);
+      if (idx >= 0) {
+        this.estimates[idx] = {
+          ...this.estimates[idx],
+          ...estimate,
+        } as Estimate;
+        return this.estimates[idx];
+      }
     }
-    save('estimates', all);
-    return e;
+
+    const newEstimate = estimate as Estimate;
+    this.estimates.push(newEstimate);
+    return newEstimate;
   }
 
   async deleteEstimate(id: string): Promise<void> {
-    await delay();
-    save(
-      'estimates',
-      load<Estimate[]>('estimates', []).filter(e => e.id !== id)
-    );
+    this.estimates = this.estimates.filter(e => e.id !== id);
   }
 
-  /* ----------------------------- job types ---------------------------- */
+  /* ------------------------------------------------------------------ */
+  /* Admin                                                              */
+  /* ------------------------------------------------------------------ */
 
-  async listJobTypes(): Promise<JobType[]> {
-    await delay();
-    return load<JobType[]>('jobTypes', []);
+  async getJobTypes(): Promise<JobType[]> {
+    return this.jobTypes;
   }
 
-  async upsertJobType(jt: JobType): Promise<JobType> {
-    await delay();
-    const all = load<JobType[]>('jobTypes', []);
-    const idx = all.findIndex(x => x.id === jt.id);
-    if (idx >= 0) {
-      all[idx] = jt;
-    } else {
-      all.push({ ...jt, id: nanoid() });
+  async saveJobType(jobType: Partial<JobType>): Promise<JobType> {
+    if (jobType.id) {
+      const idx = this.jobTypes.findIndex(j => j.id === jobType.id);
+      if (idx >= 0) {
+        this.jobTypes[idx] = {
+          ...this.jobTypes[idx],
+          ...jobType,
+        } as JobType;
+        return this.jobTypes[idx];
+      }
     }
-    save('jobTypes', all);
-    return jt;
-  }
 
-  async setDefaultJobType(jobTypeId: string): Promise<void> {
-    await delay();
-    const all = load<JobType[]>('jobTypes', []).map(jt => ({
-      ...jt,
-      isDefault: jt.id === jobTypeId,
-    }));
-    save('jobTypes', all);
-  }
-
-  /* --------------------- branding / company / csv --------------------- */
-
-  async getBrandingSettings(): Promise<BrandingSettings> {
-    await delay();
-    return load<BrandingSettings>('branding', {
-      companyName: '',
-      logoUrl: '',
-      primaryColor: '#000000',
-    });
-  }
-
-  async saveBrandingSettings(
-    s: BrandingSettings
-  ): Promise<BrandingSettings> {
-    await delay();
-    save('branding', s);
-    return s;
+    const newJobType = jobType as JobType;
+    this.jobTypes.push(newJobType);
+    return newJobType;
   }
 
   async getCompanySettings(): Promise<CompanySettings> {
-    await delay();
-    return load<CompanySettings>('company', {
-      name: '',
-      address: '',
-      phone: '',
-      email: '',
-    });
+    return this.companySettings;
   }
 
   async saveCompanySettings(
-    s: CompanySettings
+    settings: Partial<CompanySettings>
   ): Promise<CompanySettings> {
-    await delay();
-    save('company', s);
-    return s;
-  }
-
-  async getCsvSettings(): Promise<CsvSettings> {
-    await delay();
-    return load<CsvSettings>('csv', {
-      includeHeaders: true,
-      decimalSeparator: '.',
-    });
-  }
-
-  async saveCsvSettings(s: CsvSettings): Promise<CsvSettings> {
-    await delay();
-    save('csv', s);
-    return s;
-  }
-
-  /* ----------------------------- admin rules -------------------------- */
-
-  async listAdminRules(): Promise<AdminRule[]> {
-    await delay();
-    return load<AdminRule[]>('adminRules', []);
-  }
-
-  async upsertAdminRule(r: AdminRule): Promise<AdminRule> {
-    await delay();
-    const all = load<AdminRule[]>('adminRules', []);
-    const idx = all.findIndex(x => x.id === r.id);
-    if (idx >= 0) {
-      all[idx] = r;
-    } else {
-      all.push({ ...r, id: nanoid() });
-    }
-    save('adminRules', all);
-    return r;
-  }
-
-  async deleteAdminRule(id: string): Promise<void> {
-    await delay();
-    save(
-      'adminRules',
-      load<AdminRule[]>('adminRules', []).filter(r => r.id !== id)
-    );
+    this.companySettings = {
+      ...this.companySettings,
+      ...settings,
+    };
+    return this.companySettings;
   }
 }
