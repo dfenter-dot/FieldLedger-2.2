@@ -3,7 +3,7 @@ import { useAuth } from '../../providers/auth/AuthContext';
 import './sidebar.css';
 
 export function Sidebar() {
-  const { user, has } = useAuth();
+  const { user } = useAuth();
 
   return (
     <aside className="sidebar">
@@ -11,9 +11,7 @@ export function Sidebar() {
         <div className="brandMark">FL</div>
         <div className="brandText">
           <div className="brandName">FieldLedger</div>
-          <div className="brandSub">
-            {user?.role === 'admin' ? 'Admin' : 'Technician'}
-          </div>
+          <div className="brandSub">{user?.email ?? 'Not signed in'}</div>
         </div>
       </div>
 
@@ -28,7 +26,7 @@ export function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/materials"
+          to="/materials/user"
           className={({ isActive }) =>
             isActive ? 'navItem active' : 'navItem'
           }
@@ -37,7 +35,7 @@ export function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/assemblies"
+          to="/assemblies/user"
           className={({ isActive }) =>
             isActive ? 'navItem active' : 'navItem'
           }
@@ -54,18 +52,16 @@ export function Sidebar() {
           Estimates
         </NavLink>
 
-        {has('admin.access') && (
-          <div className="navGroup">
-            <NavLink
-              to="/admin"
-              className={({ isActive }) =>
-                isActive ? 'navItem active' : 'navItem'
-              }
-            >
-              Admin Home
-            </NavLink>
-          </div>
-        )}
+        <div className="navGroup">
+          <NavLink
+            to="/admin"
+            className={({ isActive }) =>
+              isActive ? 'navItem active' : 'navItem'
+            }
+          >
+            Admin
+          </NavLink>
+        </div>
       </nav>
 
       <div className="sidebarFooter">
@@ -74,3 +70,4 @@ export function Sidebar() {
     </aside>
   );
 }
+
