@@ -36,6 +36,8 @@ export interface IDataProvider {
   /* Estimates                                                          */
   /* ------------------------------------------------------------------ */
 
+  // Some UI code still calls listEstimates(); keep both for compatibility
+  listEstimates(): Promise<Estimate[]>;
   getEstimates(): Promise<Estimate[]>;
   saveEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
   deleteEstimate(id: string): Promise<void>;
