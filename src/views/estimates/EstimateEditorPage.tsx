@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
@@ -14,40 +14,66 @@ export function EstimateEditorPage() {
   const { setMode } = useSelection();
 
   const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [status, setStatus] = useState<string>('');
 
   useEffect(() => {
     if (!estimateId) return;
+
     if (estimateId === 'new') {
-      const now = new Date().toISOString();
       setEstimate({
-        id: `new_${Date.now()}`,
-        companyId: 'mock-company',
-        number: 0,
+        id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
+        company_id: '' as any,
+        estimate_number: 0,
         name: 'New Estimate',
-        useAdminRules: false,
-        customerSuppliesMaterials: false,
-        applyProcessingFees: true,
-        applyMiscMaterial: true,
-        status: 'draft',
-        createdAt: now,
-        validUntil: null,
-        discountId: null,
-        jobTypeId: null,
+        job_type_id: null,
+        items: [],
+        created_at: new Date().toISOString(),
       });
       return;
     }
-    data.getEstimate(estimateId).then(setEstimate).catch(console.error);
+
+    data.getEstimate(estimateId)
+      .then((e) => {
+        if (!e) {
+          setStatus('Estimate not found.');
+          return;
+        }
+        setEstimate(e);
+      })
+      .catch((err) => {
+        console.error(err);
+        setStatus(String((err as any)?.message ?? err));
+      });
   }, [data, estimateId]);
 
-  const showBreakdown = true; // Admin toggle will control this later.
+  async function save() {
+    if (!estimate) return;
+    try {
+      setStatus('Saving...');
+      const saved = await data.upsertEstimate(estimate);
+      setEstimate(saved);
+      setStatus('Saved.');
+      setTimeout(() => setStatus(''), 1500);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
 
-  const grossMarginIndicator = useMemo(() => {
-    // Placeholder: real calculation comes from pricing engine.
-    const target = 70;
-    const expected = 62;
-    const delta = expected - target;
-    return { target, expected, delta };
-  }, []);
+  async function remove() {
+    if (!estimate) return;
+    // eslint-disable-next-line no-restricted-globals
+    if (!confirm('Delete this estimate?')) return;
+
+    try {
+      setStatus('Deleting...');
+      await data.deleteEstimate(estimate.id);
+      nav('/estimates');
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
 
   if (!estimate) return <div className="muted">Loading…</div>;
 
@@ -58,19 +84,25 @@ export function EstimateEditorPage() {
         right={
           <div className="row">
             <Button onClick={() => nav('/estimates')}>Back</Button>
-            <Button variant="danger">Delete</Button>
-            <Button variant="primary">Save</Button>
+            <Button variant="danger" onClick={remove}>Delete</Button>
+            <Button variant="primary" onClick={save}>Save</Button>
           </div>
         }
       >
         <div className="grid2">
           <div className="stack">
+            <label className="label">Estimate #</label>
+            <Input
+              type="number"
+              inputMode="decimal"
+              value={String(estimate.estimate_number ?? 0)}
+              onChange={(e) => setEstimate({ ...estimate, estimate_number: e.target.value === '' ? 0 : Number(e.target.value) })}
+            />
+          </div>
+
+          <div className="stack">
             <label className="label">Estimate Name</label>
             <Input value={estimate.name} onChange={(e) => setEstimate({ ...estimate, name: e.target.value })} />
-          </div>
-          <div className="stack">
-            <label className="label">Customer Name</label>
-            <Input value={estimate.customerName ?? ''} onChange={(e) => setEstimate({ ...estimate, customerName: e.target.value })} />
           </div>
         </div>
 
@@ -81,39 +113,25 @@ export function EstimateEditorPage() {
           <Button onClick={() => { setMode({ type: 'add-assemblies-to-estimate', estimateId: estimate.id }); nav('/assemblies/user'); }}>
             Add Assemblies
           </Button>
-          <Button>Apply Changes</Button>
-          <Button variant="primary">View Estimate (PDF)</Button>
-          <Button>Save as Assembly</Button>
         </div>
+
+        {status ? <div className="muted small mt">{status}</div> : null}
       </Card>
 
-      {showBreakdown ? (
-        <Card title="Cost Breakdown (Internal)" right={<div className="pill">Based on job type: Service</div>}>
-          <div className="grid2">
-            <div className="stack">
-              <div className="metric"><span>Total Labor (Actual @100%)</span><strong>—</strong></div>
-              <div className="metric"><span>Total Labor (Expected w/ Efficiency)</span><strong>—</strong></div>
-              <div className="metric"><span>Expected Material Cost (Cost+Tax)</span><strong>—</strong></div>
-              <div className="metric"><span>Actual Material (With Markup)</span><strong>—</strong></div>
-              <div className="metric"><span>Misc Material Total</span><strong>—</strong></div>
-            </div>
-
-            <div className="stack">
-              <div className="metric"><span>Gross Margin Target</span><strong>{grossMarginIndicator.target}%</strong></div>
-              <div className="metric"><span>Expected Gross Margin</span><strong>{grossMarginIndicator.expected}%</strong></div>
-              <div className="metric">
-                <span>Status</span>
-                <strong className={grossMarginIndicator.delta >= 0 ? 'good' : 'warn'}>
-                  {grossMarginIndicator.delta >= 0 ? 'Above target' : 'Below target'}
-                </strong>
-              </div>
-              <div className="muted small">
-                (Color indicators + “Based on job type” label are enabled. Final math hooks into the pricing engine.)
+      <Card title="Items">
+        <div className="list">
+          {(estimate.items ?? []).map((it) => (
+            <div key={it.id} className="listRow">
+              <div className="listMain">
+                <div className="listTitle">{it.material_id ? `Material: ${it.material_id}` : `Assembly: ${it.assembly_id}`}</div>
+                <div className="listSub">Qty: {it.quantity}</div>
               </div>
             </div>
-          </div>
-        </Card>
-      ) : null}
+          ))}
+          {(estimate.items ?? []).length === 0 ? <div className="muted">No items yet.</div> : null}
+        </div>
+      </Card>
     </div>
   );
 }
+
