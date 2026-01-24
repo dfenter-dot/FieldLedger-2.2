@@ -8,6 +8,7 @@ import { AssembliesHomePage } from '../views/assemblies/AssembliesHomePage';
 import { AssemblyEditorPage } from '../views/assemblies/AssemblyEditorPage';
 import { EstimatesPage } from '../views/estimates/EstimatesPage';
 import { EstimateEditorPage } from '../views/estimates/EstimateEditorPage';
+import { EstimatePreviewPage } from '../views/estimates/EstimatePreviewPage';
 import { JobCostingPage } from '../views/admin/JobCostingPage';
 import { AdminLayout } from '../views/admin/AdminLayout';
 import { AdminHomePage } from '../views/admin/AdminHomePage';
@@ -47,6 +48,7 @@ export function AppRouter() {
 
         {/* Estimates */}
         <Route path="/estimates" element={<EstimatesPage />} />
+        <Route path="/estimates/:estimateId/preview" element={<EstimatePreviewPage />} />
         <Route path="/estimates/:estimateId" element={<EstimateEditorPage />} />
 
         {/* Admin */}
