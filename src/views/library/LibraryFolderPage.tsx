@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
+import { Input } from '../../ui/components/Input';
+import { Modal } from '../../ui/components/Modal';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Folder, LibraryType, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
@@ -45,6 +47,19 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
 
   const [status, setStatus] = useState<string>('');
 
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<string>>(new Set());
+  const [selectedAssemblyIds, setSelectedAssemblyIds] = useState<Set<string>>(new Set());
+
+  const [searchText, setSearchText] = useState('');
+  const [searchResults, setSearchResults] = useState<Material[]>([]);
+  const [moveTarget, setMoveTarget] = useState<
+    | null
+    | { type: 'material'; id: string; currentFolderId: string | null }
+    | { type: 'assembly'; id: string; currentFolderId: string | null }
+  >(null);
+  const [moveFolders, setMoveFolders] = useState<Array<{ id: string | null; name: string; depth: number }>>([]);
+  const [moveFolderId, setMoveFolderId] = useState<string>('');
+
   const title = useMemo(() => {
     if (kind === 'materials') return lib === 'personal' ? 'App Materials' : 'User Materials';
     return lib === 'personal' ? 'App Assemblies' : 'User Assemblies';
@@ -53,6 +68,25 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   async function refresh() {
     try {
       setStatus('');
+
+      // Selection-mode highlighting (best-effort)
+      if (mode.type === 'add-materials-to-assembly') {
+        const asm = await data.getAssembly(mode.assemblyId);
+        const ids = new Set<string>((asm?.items ?? []).map((it: any) => it.material_id).filter(Boolean));
+        setSelectedMaterialIds(ids);
+      } else if (mode.type === 'add-materials-to-estimate') {
+        const est = await data.getEstimate(mode.estimateId);
+        const ids = new Set<string>((est?.items ?? []).map((it: any) => it.material_id).filter(Boolean));
+        setSelectedMaterialIds(ids);
+      } else if (mode.type === 'add-assemblies-to-estimate') {
+        const est = await data.getEstimate(mode.estimateId);
+        const ids = new Set<string>((est?.items ?? []).map((it: any) => it.assembly_id).filter(Boolean));
+        setSelectedAssemblyIds(ids);
+      } else {
+        setSelectedMaterialIds(new Set());
+        setSelectedAssemblyIds(new Set());
+      }
+
       const f = await data.listFolders({ kind, libraryType: lib, parentId: activeFolderId });
       setFolders(f);
 
@@ -74,6 +108,56 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
         // Otherwise keep the same (we set readable names on folder click).
         return prev;
       });
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
+  async function buildFolderOptions() {
+    // Best-effort: build a flattened folder tree for the current library/kind.
+    const out: Array<{ id: string | null; name: string; depth: number }> = [{ id: null, name: 'Root', depth: 0 }];
+
+    async function walk(parentId: string | null, depth: number) {
+      const kids = await data.listFolders({ kind, libraryType: lib, parentId });
+      for (const f of kids) {
+        out.push({ id: f.id, name: f.name, depth });
+        await walk(f.id, depth + 1);
+      }
+    }
+
+    await walk(null, 1);
+    setMoveFolders(out);
+  }
+
+  async function openMoveModal(target: NonNullable<typeof moveTarget>) {
+    try {
+      setStatus('');
+      await buildFolderOptions();
+      setMoveTarget(target);
+      setMoveFolderId('');
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
+  async function confirmMove() {
+    if (!moveTarget) return;
+    try {
+      setStatus('');
+      const targetFolderId = moveFolderId === '' ? null : moveFolderId;
+      if (moveTarget.type === 'material') {
+        const m = await data.getMaterial(moveTarget.id);
+        if (!m) throw new Error('Material not found');
+        await data.upsertMaterial({ ...m, folder_id: targetFolderId } as any);
+      } else {
+        const a = await data.getAssembly(moveTarget.id);
+        if (!a) throw new Error('Assembly not found');
+        await data.upsertAssembly({ ...a, folder_id: targetFolderId } as any);
+      }
+      setMoveTarget(null);
+      await refresh();
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
@@ -192,9 +276,76 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     return null;
   })();
 
+  const returnLabel = useMemo(() => {
+    if (mode.type === 'add-materials-to-assembly') return 'Return to Assembly';
+    if (mode.type === 'add-materials-to-estimate') return 'Return to Estimate';
+    if (mode.type === 'add-assemblies-to-estimate') return 'Return to Estimate';
+    return null;
+  }, [mode.type]);
+
+  const selectedIds = useMemo(() => {
+    if (kind === 'materials') return selectedMaterialIds;
+    if (kind === 'assemblies') return selectedAssemblyIds;
+    return new Set<string>();
+  }, [kind, selectedAssemblyIds, selectedMaterialIds]);
+
+  useEffect(() => {
+    // Global search (materials only). Runs against current library scope.
+    if (kind !== 'materials') return;
+    const q = searchText.trim();
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        // Best-effort global search: scan root + all folders in this library.
+        const folderIds: Array<string | null> = [null];
+        const seen = new Set<string>();
+        async function walk(parentId: string | null) {
+          const kids = await data.listFolders({ kind: 'materials', libraryType: lib, parentId });
+          for (const f of kids) {
+            if (seen.has(f.id)) continue;
+            seen.add(f.id);
+            folderIds.push(f.id);
+            await walk(f.id);
+          }
+        }
+        await walk(null);
+
+        const lists = await Promise.all(folderIds.map((fid) => data.listMaterials({ libraryType: lib, folderId: fid })));
+        const all = lists.flat();
+        const lower = q.toLowerCase();
+        const hits = all
+          .filter((m) =>
+            (m.name ?? '').toLowerCase().includes(lower) ||
+            (m.sku ?? '').toLowerCase().includes(lower) ||
+            (m.description ?? '').toLowerCase().includes(lower)
+          )
+          .slice(0, 8);
+        if (!cancelled) setSearchResults(hits);
+      } catch {
+        if (!cancelled) setSearchResults([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data, kind, lib, searchText]);
+
   return (
     <div className="stack">
       {selectionBanner ? <div className="banner">{selectionBanner}</div> : null}
+
+      {returnLabel ? (
+        <Card title="Selection" right={<Button onClick={() => { setMode({ type: 'none' }); nav(-1); }}>Cancel</Button>}>
+          <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div className="muted small">Choose an item, enter quantity, then you’ll return automatically.</div>
+            <Button variant="secondary" onClick={() => nav(-1)}>{returnLabel}</Button>
+          </div>
+        </Card>
+      ) : null}
 
       <Card
         title={title}
@@ -209,6 +360,36 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           )
         }
       >
+        {kind === 'materials' ? (
+          <div className="stack" style={{ marginBottom: 10 }}>
+            <label className="label">Search Materials</label>
+            <Input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Search name, SKU, description…"
+            />
+            {searchResults.length ? (
+              <div className="list" style={{ marginTop: 6 }}>
+                {searchResults.map((m) => (
+                  <div
+                    key={`sr_${m.id}`}
+                    className="listRow clickable"
+                    onClick={() => nav(`/materials/${libraryType === 'app' ? 'app' : 'user'}/${m.id}`)}
+                  >
+                    <div className="listMain">
+                      <div className="listTitle">{m.name}</div>
+                      <div className="listSub">{m.sku ?? '—'}</div>
+                    </div>
+                    <div className="listRight">
+                      <div className="pill">${Number(m.unit_cost ?? 0).toFixed(2)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
           <div className="muted small">Folder:</div>
           <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
@@ -253,7 +434,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
             {materials.map((m) => (
               <div
               key={m.id}
-              className={"listRow clickable"}
+              className={"listRow clickable" + (selectedIds.has(m.id) ? ' selected' : '')}
               onClick={async () => {
                 try {
                   if (mode.type === 'add-materials-to-assembly') {
@@ -311,6 +492,15 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                 <div className="listRight">
                   <div className="pill">{m.labor_minutes} min</div>
                   <div className="pill">${Number(m.unit_cost ?? 0).toFixed(2)}</div>
+                  <Button
+                    variant="secondary"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      openMoveModal({ type: 'material', id: m.id, currentFolderId: activeFolderId ?? null });
+                    }}
+                  >
+                    Move…
+                  </Button>
                 </div>
               </div>
             ))}
@@ -323,7 +513,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
             {assemblies.map((a) => (
               <div
                 key={a.id}
-                className="listRow clickable"
+                className={"listRow clickable" + (selectedIds.has(a.id) ? ' selected' : '')}
                 onClick={async () => {
                   try {
                     if (mode.type === 'add-assemblies-to-estimate') {
@@ -359,6 +549,15 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                 </div>
                 <div className="listRight">
                   <div className="pill">{a.labor_minutes} min</div>
+                  <Button
+                    variant="secondary"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      openMoveModal({ type: 'assembly', id: a.id, currentFolderId: activeFolderId ?? null });
+                    }}
+                  >
+                    Move…
+                  </Button>
                 </div>
               </div>
             ))}
@@ -366,6 +565,30 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           </div>
         </Card>
       )}
+
+      {moveTarget ? (
+        <Modal
+          title="Move To…"
+          onClose={() => setMoveTarget(null)}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setMoveTarget(null)}>Cancel</Button>
+              <Button variant="primary" onClick={confirmMove}>Move</Button>
+            </>
+          }
+        >
+          <div className="stack">
+            <div className="muted small">Choose a destination folder.</div>
+            <select className="input" value={moveFolderId} onChange={(e) => setMoveFolderId(e.target.value)}>
+              {moveFolders.map((f) => (
+                <option key={String(f.id)} value={f.id ?? ''}>
+                  {`${'—'.repeat(f.depth)} ${f.name}`}
+                </option>
+              ))}
+            </select>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }
