@@ -6,12 +6,14 @@ import { Input } from '../../ui/components/Input';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
+import { useDialogs } from '../../providers/dialogs/DialogContext';
 
 export function AssemblyEditorPage() {
   const { assemblyId, libraryType } = useParams();
   const data = useData();
   const nav = useNavigate();
   const { setMode } = useSelection();
+  const { confirm } = useDialogs();
 
   const [a, setA] = useState<Assembly | null>(null);
   const [status, setStatus] = useState<string>('');
@@ -44,7 +46,13 @@ export function AssemblyEditorPage() {
     if (!a) return;
     try {
       // eslint-disable-next-line no-restricted-globals
-      if (!confirm('Delete this assembly?')) return;
+      const ok = await confirm({
+        title: 'Delete Assembly',
+        message: 'Delete this assembly?',
+        confirmText: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
       setStatus('Deleting...');
       await data.deleteAssembly(a.id);
       nav('/assemblies');
@@ -94,7 +102,7 @@ export function AssemblyEditorPage() {
           <Button
             onClick={() => {
               setMode({ type: 'add-materials-to-assembly', assemblyId: a.id });
-              nav('/materials/user');
+              nav(`/materials/${libraryType ?? 'user'}`);
             }}
           >
             Add Materials
@@ -123,3 +131,4 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
