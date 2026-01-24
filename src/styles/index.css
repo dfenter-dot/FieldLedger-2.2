@@ -77,6 +77,10 @@ a{ color: inherit; text-decoration: none; }
 }
 .listRow.clickable{ cursor:pointer; }
 .listRow.clickable:hover{ border-color: rgba(212,175,55,0.35); }
+.listRow.selected{
+  border-color: rgba(212,175,55,0.65);
+  box-shadow: 0 0 0 1px rgba(212,175,55,0.25) inset;
+}
 .listMain{ display:flex; flex-direction:column; gap:4px; }
 .listTitle{ font-weight: 650; }
 .listSub{ font-size: 12px; color: var(--muted); }
@@ -117,3 +121,105 @@ a{ color: inherit; text-decoration: none; }
   outline: none;
 }
 .textarea:focus{ border-color: rgba(212,175,55,0.45); }
+
+/* ---------------- Print (Estimate + Job Costing) ---------------- */
+
+.printPage{
+  background: rgba(11,18,32,0.35);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.printHeader{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.printTitle{
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.printMeta{
+  display:flex;
+  flex-direction:column;
+  gap: 4px;
+  text-align:right;
+}
+
+.printSection{
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.printSectionTitle{
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.printTable{
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.printTable th, .printTable td{
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(43,54,71,0.65);
+  vertical-align: top;
+}
+
+.printTable th{
+  text-align:left;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.printTotals{
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.printTotals td{
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(43,54,71,0.4);
+}
+
+.printTotalRow td{
+  padding-top: 10px;
+  font-weight: 800;
+  border-bottom: none;
+}
+
+.printFooter{
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display:grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.printFooterTitle{
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+@media print{
+  body{
+    background: #fff;
+    color: #000;
+  }
+  .sidebar, .mobilenav, .topbar, .noPrint{ display:none !important; }
+  .card{ border: none !important; background: transparent !important; }
+  .printPage{ border: none !important; background: transparent !important; padding: 0 !important; }
+  .printTable th, .printTable td, .printTotals td{ border-color: #ddd !important; }
+}
