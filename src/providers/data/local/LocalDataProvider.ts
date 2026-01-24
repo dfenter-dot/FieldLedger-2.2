@@ -76,12 +76,20 @@ export class LocalDataProvider implements IDataProvider {
     );
   }
 
+  async getMaterial(id: string): Promise<Material | null> {
+    await delay();
+    return load<Material[]>('materials', []).find(m => m.id === id) ?? null;
+  }
+
   async upsertMaterial(m: Material): Promise<Material> {
     await delay();
     const all = load<Material[]>('materials', []);
     const idx = all.findIndex(x => x.id === m.id);
-    if (idx >= 0) all[idx] = m;
-    else all.push({ ...m, id: nanoid() });
+    if (idx >= 0) {
+      all[idx] = m;
+    } else {
+      all.push({ ...m, id: nanoid() });
+    }
     save('materials', all);
     return m;
   }
@@ -118,8 +126,11 @@ export class LocalDataProvider implements IDataProvider {
     await delay();
     const all = load<Assembly[]>('assemblies', []);
     const idx = all.findIndex(x => x.id === a.id);
-    if (idx >= 0) all[idx] = a;
-    else all.push({ ...a, id: nanoid() });
+    if (idx >= 0) {
+      all[idx] = a;
+    } else {
+      all.push({ ...a, id: nanoid() });
+    }
     save('assemblies', all);
     return a;
   }
@@ -148,8 +159,11 @@ export class LocalDataProvider implements IDataProvider {
     await delay();
     const all = load<Estimate[]>('estimates', []);
     const idx = all.findIndex(x => x.id === e.id);
-    if (idx >= 0) all[idx] = e;
-    else all.push({ ...e, id: nanoid() });
+    if (idx >= 0) {
+      all[idx] = e;
+    } else {
+      all.push({ ...e, id: nanoid() });
+    }
     save('estimates', all);
     return e;
   }
@@ -173,8 +187,11 @@ export class LocalDataProvider implements IDataProvider {
     await delay();
     const all = load<JobType[]>('jobTypes', []);
     const idx = all.findIndex(x => x.id === jt.id);
-    if (idx >= 0) all[idx] = jt;
-    else all.push({ ...jt, id: nanoid() });
+    if (idx >= 0) {
+      all[idx] = jt;
+    } else {
+      all.push({ ...jt, id: nanoid() });
+    }
     save('jobTypes', all);
     return jt;
   }
@@ -250,8 +267,11 @@ export class LocalDataProvider implements IDataProvider {
     await delay();
     const all = load<AdminRule[]>('adminRules', []);
     const idx = all.findIndex(x => x.id === r.id);
-    if (idx >= 0) all[idx] = r;
-    else all.push({ ...r, id: nanoid() });
+    if (idx >= 0) {
+      all[idx] = r;
+    } else {
+      all.push({ ...r, id: nanoid() });
+    }
     save('adminRules', all);
     return r;
   }
