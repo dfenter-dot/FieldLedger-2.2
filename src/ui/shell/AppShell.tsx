@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { MobileNav } from './MobileNav';
 import './shell.css';
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -12,7 +13,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="appContent">
           {children}
         </main>
+        <MobileNav />
       </div>
     </div>
   );
 }
+
