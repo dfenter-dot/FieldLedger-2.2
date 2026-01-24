@@ -12,6 +12,18 @@ import {
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
+export function getAverageTechnicianWage(settings: CompanySettings): number {
+  const wages = settings.technician_wages ?? [];
+  const rates = wages
+    .map(w => Number(w.hourly_rate))
+    .filter(n => Number.isFinite(n) && n > 0);
+
+  if (rates.length === 0) return 0;
+
+  const sum = rates.reduce((a, b) => a + b, 0);
+  return sum / rates.length;
+}
+
 export function minutesToHours(minutes: number): number {
   return minutes / 60;
 }
