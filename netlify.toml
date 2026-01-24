@@ -1,6 +1,7 @@
 [build]
-  command = "npm run build"
-  publish = "dist"
+command = "pwd && ls -la && echo '--- SRC ---' && ls -la src && echo '--- SRC FILES (top) ---' && find src -maxdepth 2 -type f -print && npm run build"
+publish = "dist"
+
 
 [[redirects]]
   from = "/*"
