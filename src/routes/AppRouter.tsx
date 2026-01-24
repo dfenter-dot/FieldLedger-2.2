@@ -17,14 +17,17 @@ import { AdminRulesPage } from '../views/admin/AdminRulesPage';
 import { CsvPage } from '../views/admin/CsvPage';
 import { BrandingPage } from '../views/admin/BrandingPage';
 import { useAuth } from '../providers/auth/AuthContext';
+import { LoginPage } from '../views/auth/LoginPage';
 
 export function AppRouter() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
 
-  // In v0.1 we treat "logged out" as a no-op (local mode autologin).
-  // Supabase auth UI can be wired later.
+  if (isLoading) {
+    return null;
+  }
+
   if (!user) {
-    return <Navigate to="/" replace />;
+    return <LoginPage />;
   }
 
   return (
