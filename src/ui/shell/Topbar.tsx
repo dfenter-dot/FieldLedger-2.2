@@ -7,6 +7,7 @@ function titleFromPath(pathname: string): string {
   if (pathname.startsWith('/materials')) return 'Materials';
   if (pathname.startsWith('/assemblies')) return 'Assemblies';
   if (pathname.startsWith('/estimates')) return 'Estimates';
+  if (pathname === '/admin') return 'Admin';
   if (pathname.startsWith('/admin/company-setup')) return 'Company Setup';
   if (pathname.startsWith('/admin/job-types')) return 'Job Types';
   if (pathname.startsWith('/admin/rules')) return 'Admin Rules';
@@ -29,3 +30,4 @@ export function Topbar() {
     </header>
   );
 }
+
