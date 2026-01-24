@@ -56,9 +56,7 @@ export class LocalDataProvider implements IDataProvider {
       }
     }
 
-    const newFolder: Folder = {
-      ...(folder as Folder),
-    };
+    const newFolder: Folder = folder as Folder;
     this.folders.push(newFolder);
     return newFolder;
   }
@@ -128,6 +126,11 @@ export class LocalDataProvider implements IDataProvider {
   /* ------------------------------------------------------------------ */
   /* Estimates                                                          */
   /* ------------------------------------------------------------------ */
+
+  // Compatibility alias (older UI code expects this)
+  async listEstimates(): Promise<Estimate[]> {
+    return this.getEstimates();
+  }
 
   async getEstimates(): Promise<Estimate[]> {
     return this.estimates;
