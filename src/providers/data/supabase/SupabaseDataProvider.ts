@@ -1,5 +1,6 @@
-import { nanoid } from 'nanoid';
-import { supabase } from '../../supabaseClient';
+// src/providers/data/supabase/SupabaseDataProvider.ts
+
+import type { IDataProvider, LibraryKind } from '../IDataProvider';
 import type {
   AdminRule,
   Assembly,
@@ -11,36 +12,34 @@ import type {
   JobType,
   Material,
 } from '../types';
-import type { IDataProvider, LibraryKind } from '../IDataProvider';
 
-const assert = (error: unknown) => {
-  if (error) {
-    console.error(error);
-    throw error;
-  }
-};
+import { supabase } from '../../../supabase/client';
+
+type LibraryType = 'company' | 'personal';
 
 export class SupabaseDataProvider implements IDataProvider {
-  /* ----------------------------- helpers ----------------------------- */
+  private async requireCompanyId(): Promise<string> {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw error;
 
-  private async companyId(): Promise<string> {
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-    assert(error);
+    const user = data.user;
     if (!user) throw new Error('Not authenticated');
-    return user.user_metadata.company_id;
+
+    const companyId = user.user_metadata?.company_id as string | undefined;
+    if (!companyId) throw new Error('Missing company_id on user metadata');
+
+    return companyId;
   }
 
   /* ----------------------------- folders ----------------------------- */
 
   async listFolders(args: {
     kind: LibraryKind;
-    libraryType: 'company' | 'personal';
+    libraryType: LibraryType;
     parentId: string | null;
   }): Promise<Folder[]> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('folders')
       .select('*')
@@ -48,316 +47,407 @@ export class SupabaseDataProvider implements IDataProvider {
       .eq('kind', args.kind)
       .eq('library_type', args.libraryType)
       .eq('parent_id', args.parentId);
-    assert(error);
-    return data ?? [];
+
+    if (error) throw error;
+    return (data ?? []) as Folder[];
   }
 
   async createFolder(args: {
     kind: LibraryKind;
-    libraryType: 'company' | 'personal';
+    libraryType: LibraryType;
     parentId: string | null;
     name: string;
   }): Promise<Folder> {
-    const companyId = await this.companyId();
-    const folder: Folder = {
-      id: nanoid(),
-      name: args.name,
-      kind: args.kind,
-      libraryType: args.libraryType,
-      parentId: args.parentId,
-    };
-    const { error } = await supabase.from('folders').insert({
-      id: folder.id,
+    const companyId = await this.requireCompanyId();
+
+    const payload = {
       company_id: companyId,
-      name: folder.name,
-      kind: folder.kind,
-      library_type: folder.libraryType,
-      parent_id: folder.parentId,
-    });
-    assert(error);
-    return folder;
+      kind: args.kind,
+      library_type: args.libraryType,
+      parent_id: args.parentId,
+      name: args.name,
+    };
+
+    const { data, error } = await supabase
+      .from('folders')
+      .insert(payload)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as Folder;
   }
 
   /* ---------------------------- materials ---------------------------- */
 
   async listMaterials(args: {
-    libraryType: 'company' | 'personal';
+    libraryType: LibraryType;
     folderId: string | null;
   }): Promise<Material[]> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('materials')
       .select('*')
       .eq('company_id', companyId)
       .eq('library_type', args.libraryType)
       .eq('folder_id', args.folderId);
-    assert(error);
-    return data ?? [];
+
+    if (error) throw error;
+    return (data ?? []) as Material[];
   }
 
   async getMaterial(id: string): Promise<Material | null> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('materials')
       .select('*')
       .eq('company_id', companyId)
       .eq('id', id)
       .single();
-    if (error && error.code !== 'PGRST116') assert(error);
-    return data ?? null;
+
+    // PostgREST "No rows found" commonly surfaces as an error; treat as null.
+    if (error && (error as any).code === 'PGRST116') return null;
+    if (error) throw error;
+
+    return (data ?? null) as Material | null;
   }
 
   async upsertMaterial(m: Material): Promise<Material> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const id = m.id ?? nanoid();
-    const { error } = await supabase.from('materials').upsert({
+    const payload = {
       ...m,
       id,
       company_id: companyId,
       folder_id: m.folderId,
       library_type: m.libraryType,
-    });
-    assert(error);
-    return { ...m, id };
+    };
+
+    const { data, error } = await supabase
+      .from('materials')
+      .upsert(payload)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as Material;
   }
 
   async deleteMaterial(id: string): Promise<void> {
-    const { error } = await supabase.from('materials').delete().eq('id', id);
-    assert(error);
+    const companyId = await this.requireCompanyId();
+
+    const { error } = await supabase
+      .from('materials')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', id);
+
+    if (error) throw error;
   }
 
   /* ---------------------------- assemblies --------------------------- */
 
   async getAssembly(id: string): Promise<Assembly | null> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('assemblies')
       .select('*')
       .eq('company_id', companyId)
       .eq('id', id)
       .single();
-    if (error && error.code !== 'PGRST116') assert(error);
-    return data ?? null;
+
+    if (error && (error as any).code === 'PGRST116') return null;
+    if (error) throw error;
+
+    return (data ?? null) as Assembly | null;
   }
 
   async listAssemblies(args: {
-    libraryType: 'company' | 'personal';
+    libraryType: LibraryType;
     folderId: string | null;
   }): Promise<Assembly[]> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('assemblies')
       .select('*')
       .eq('company_id', companyId)
       .eq('library_type', args.libraryType)
       .eq('folder_id', args.folderId);
-    assert(error);
-    return data ?? [];
+
+    if (error) throw error;
+    return (data ?? []) as Assembly[];
   }
 
   async upsertAssembly(a: Assembly): Promise<Assembly> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const id = a.id ?? nanoid();
-    const { error } = await supabase.from('assemblies').upsert({
+    const payload = {
       ...a,
       id,
       company_id: companyId,
       folder_id: a.folderId,
       library_type: a.libraryType,
-    });
-    assert(error);
-    return { ...a, id };
+    };
+
+    const { data, error } = await supabase
+      .from('assemblies')
+      .upsert(payload)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as Assembly;
   }
 
   async deleteAssembly(id: string): Promise<void> {
-    const { error } = await supabase.from('assemblies').delete().eq('id', id);
-    assert(error);
+    const companyId = await this.requireCompanyId();
+
+    const { error } = await supabase
+      .from('assemblies')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', id);
+
+    if (error) throw error;
   }
 
   /* ----------------------------- estimates --------------------------- */
 
   async listEstimates(): Promise<Estimate[]> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('estimates')
       .select('*')
       .eq('company_id', companyId)
       .order('created_at', { ascending: false });
-    assert(error);
-    return data ?? [];
+
+    if (error) throw error;
+    return (data ?? []) as Estimate[];
   }
 
   async getEstimate(id: string): Promise<Estimate | null> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('estimates')
       .select('*')
       .eq('company_id', companyId)
       .eq('id', id)
       .single();
-    if (error && error.code !== 'PGRST116') assert(error);
-    return data ?? null;
+
+    if (error && (error as any).code === 'PGRST116') return null;
+    if (error) throw error;
+
+    return (data ?? null) as Estimate | null;
   }
 
   async upsertEstimate(e: Estimate): Promise<Estimate> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const id = e.id ?? nanoid();
-    const { error } = await supabase.from('estimates').upsert({
-      ...e,
-      id,
-      company_id: companyId,
-    });
-    assert(error);
-    return { ...e, id };
+    const payload = { ...e, id, company_id: companyId };
+
+    const { data, error } = await supabase
+      .from('estimates')
+      .upsert(payload)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as Estimate;
   }
 
   async deleteEstimate(id: string): Promise<void> {
-    const { error } = await supabase.from('estimates').delete().eq('id', id);
-    assert(error);
+    const companyId = await this.requireCompanyId();
+
+    const { error } = await supabase
+      .from('estimates')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', id);
+
+    if (error) throw error;
   }
 
   /* ----------------------------- job types ---------------------------- */
 
   async listJobTypes(): Promise<JobType[]> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('job_types')
       .select('*')
       .eq('company_id', companyId);
-    assert(error);
-    return data ?? [];
+
+    if (error) throw error;
+    return (data ?? []) as JobType[];
   }
 
   async upsertJobType(jt: JobType): Promise<JobType> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const id = jt.id ?? nanoid();
-    const { error } = await supabase.from('job_types').upsert({
-      ...jt,
-      id,
-      company_id: companyId,
-    });
-    assert(error);
-    return { ...jt, id };
+    const payload = { ...jt, id, company_id: companyId };
+
+    const { data, error } = await supabase
+      .from('job_types')
+      .upsert(payload)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as JobType;
   }
 
   async setDefaultJobType(jobTypeId: string): Promise<void> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { error } = await supabase.rpc('set_default_job_type', {
       p_company_id: companyId,
       p_job_type_id: jobTypeId,
     });
-    assert(error);
+
+    if (error) throw error;
   }
 
   /* --------------------- branding / company / csv --------------------- */
 
   async getBrandingSettings(): Promise<BrandingSettings> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('branding_settings')
       .select('*')
       .eq('company_id', companyId)
       .single();
-    if (error && error.code !== 'PGRST116') assert(error);
-    return (
-      data ?? {
-        companyName: '',
-        logoUrl: '',
-        primaryColor: '#000000',
-      }
-    );
+
+    if (error && (error as any).code === 'PGRST116') {
+      return { companyName: '', logoUrl: '', primaryColor: '#000000' };
+    }
+    if (error) throw error;
+
+    return data as BrandingSettings;
   }
 
   async saveBrandingSettings(s: BrandingSettings): Promise<BrandingSettings> {
-    const companyId = await this.companyId();
-    const { error } = await supabase.from('branding_settings').upsert({
-      ...s,
-      company_id: companyId,
-    });
-    assert(error);
-    return s;
+    const companyId = await this.requireCompanyId();
+
+    const { data, error } = await supabase
+      .from('branding_settings')
+      .upsert({ ...s, company_id: companyId })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as BrandingSettings;
   }
 
   async getCompanySettings(): Promise<CompanySettings> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('company_settings')
       .select('*')
       .eq('company_id', companyId)
       .single();
-    if (error && error.code !== 'PGRST116') assert(error);
-    return (
-      data ?? {
-        name: '',
-        address: '',
-        phone: '',
-        email: '',
-      }
-    );
+
+    if (error && (error as any).code === 'PGRST116') {
+      return { name: '', address: '', phone: '', email: '' };
+    }
+    if (error) throw error;
+
+    return data as CompanySettings;
   }
 
   async saveCompanySettings(s: CompanySettings): Promise<CompanySettings> {
-    const companyId = await this.companyId();
-    const { error } = await supabase.from('company_settings').upsert({
-      ...s,
-      company_id: companyId,
-    });
-    assert(error);
-    return s;
+    const companyId = await this.requireCompanyId();
+
+    const { data, error } = await supabase
+      .from('company_settings')
+      .upsert({ ...s, company_id: companyId })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as CompanySettings;
   }
 
   async getCsvSettings(): Promise<CsvSettings> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('csv_settings')
       .select('*')
       .eq('company_id', companyId)
       .single();
-    if (error && error.code !== 'PGRST116') assert(error);
-    return (
-      data ?? {
-        includeHeaders: true,
-        decimalSeparator: '.',
-      }
-    );
+
+    if (error && (error as any).code === 'PGRST116') {
+      return { includeHeaders: true, decimalSeparator: '.' };
+    }
+    if (error) throw error;
+
+    return data as CsvSettings;
   }
 
   async saveCsvSettings(s: CsvSettings): Promise<CsvSettings> {
-    const companyId = await this.companyId();
-    const { error } = await supabase.from('csv_settings').upsert({
-      ...s,
-      company_id: companyId,
-    });
-    assert(error);
-    return s;
+    const companyId = await this.requireCompanyId();
+
+    const { data, error } = await supabase
+      .from('csv_settings')
+      .upsert({ ...s, company_id: companyId })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as CsvSettings;
   }
 
   /* ----------------------------- admin rules -------------------------- */
 
   async listAdminRules(): Promise<AdminRule[]> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const { data, error } = await supabase
       .from('admin_rules')
       .select('*')
       .eq('company_id', companyId);
-    assert(error);
-    return data ?? [];
+
+    if (error) throw error;
+    return (data ?? []) as AdminRule[];
   }
 
   async upsertAdminRule(r: AdminRule): Promise<AdminRule> {
-    const companyId = await this.companyId();
+    const companyId = await this.requireCompanyId();
+
     const id = r.id ?? nanoid();
-    const { error } = await supabase.from('admin_rules').upsert({
-      ...r,
-      id,
-      company_id: companyId,
-    });
-    assert(error);
-    return { ...r, id };
+    const payload = { ...r, id, company_id: companyId };
+
+    const { data, error } = await supabase
+      .from('admin_rules')
+      .upsert(payload)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data as AdminRule;
   }
 
   async deleteAdminRule(id: string): Promise<void> {
-    const { error } = await supabase.from('admin_rules').delete().eq('id', id);
-    assert(error);
+    const companyId = await this.requireCompanyId();
+
+    const { error } = await supabase
+      .from('admin_rules')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', id);
+
+    if (error) throw error;
   }
 }
