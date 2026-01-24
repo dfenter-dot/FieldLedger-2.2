@@ -14,7 +14,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   const lib = (libraryType === 'app' ? 'personal' : 'company') as LibraryType;
 
   const data = useData();
-  const { mode } = useSelection();
+  const { mode, setMode } = useSelection();
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -91,6 +91,32 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     }
   }
 
+  async function handleCreateMaterial() {
+    try {
+      setStatus('');
+      const name = window.prompt('New material name', 'New Material');
+      if (!name) return;
+
+      const created = await data.upsertMaterial({
+        id: crypto.randomUUID?.() ?? `mat_${Date.now()}`,
+        company_id: lib === 'personal' ? null : undefined,
+        name,
+        description: null,
+        unit_cost: 0,
+        taxable: true,
+        labor_minutes: 0,
+        folder_id: activeFolderId ?? null,
+        created_at: new Date().toISOString(),
+      } as any);
+
+      nav(`/materials/${libraryType === 'app' ? 'app' : 'user'}/${created.id}`);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
+
   const selectionBanner = (() => {
     if (mode.type === 'add-materials-to-assembly' && kind === 'materials') return 'Selection mode: Add materials to assembly';
     if (mode.type === 'add-materials-to-estimate' && kind === 'materials') return 'Selection mode: Add materials to estimate';
@@ -147,10 +173,46 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
       </Card>
 
       {kind === 'materials' ? (
-        <Card title="Materials (List View)">
+        <Card title="Materials (List View)" right={<Button variant="primary" onClick={handleCreateMaterial}>Create Material</Button>}>
           <div className="list">
             {materials.map((m) => (
-              <div key={m.id} className="listRow">
+              <div
+              key={m.id}
+              className={"listRow clickable"}
+              onClick={async () => {
+                try {
+                  if (mode.type === 'add-materials-to-assembly') {
+                    const asm = await data.getAssembly(mode.assemblyId);
+                    if (!asm) throw new Error('Assembly not found');
+                    const next = {
+                      ...asm,
+                      items: [...(asm.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: m.id, quantity: 1 }],
+                    };
+                    await data.upsertAssembly(next as any);
+                    setMode({ type: 'none' });
+                    nav(-1);
+                    return;
+                  }
+                  if (mode.type === 'add-materials-to-estimate') {
+                    const est = await data.getEstimate(mode.estimateId);
+                    if (!est) throw new Error('Estimate not found');
+                    const next = {
+                      ...est,
+                      items: [...(est.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: m.id, quantity: 1 }],
+                    };
+                    await data.upsertEstimate(next as any);
+                    setMode({ type: 'none' });
+                    nav(-1);
+                    return;
+                  }
+                  // normal edit
+                  nav(`/materials/${libraryType === 'app' ? 'app' : 'user'}/${m.id}`);
+                } catch (e: any) {
+                  console.error(e);
+                  setStatus(String(e?.message ?? e));
+                }
+              }}
+            >
                 <div className="listMain">
                   <div className="listTitle">{m.name}</div>
                   <div className="listSub">{m.description || '—'} • {m.taxable ? 'Taxable' : 'Non-taxable'}</div>
@@ -171,7 +233,26 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
               <div
                 key={a.id}
                 className="listRow clickable"
-                onClick={() => nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${a.id}`)}
+                onClick={async () => {
+                  try {
+                    if (mode.type === 'add-assemblies-to-estimate') {
+                      const est = await data.getEstimate(mode.estimateId);
+                      if (!est) throw new Error('Estimate not found');
+                      const next = {
+                        ...est,
+                        items: [...(est.items ?? []), { id: crypto.randomUUID?.() ?? `it_${Date.now()}`, assembly_id: a.id, quantity: 1 }],
+                      };
+                      await data.upsertEstimate(next as any);
+                      setMode({ type: 'none' });
+                      nav(-1);
+                      return;
+                    }
+                    nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${a.id}`);
+                  } catch (e: any) {
+                    console.error(e);
+                    setStatus(String(e?.message ?? e));
+                  }
+                }}
               >
                 <div className="listMain">
                   <div className="listTitle">{a.name}</div>
