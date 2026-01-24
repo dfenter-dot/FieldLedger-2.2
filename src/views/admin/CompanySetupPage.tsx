@@ -40,6 +40,26 @@ export function CompanySetupPage() {
       <Card title="Company Setup" right={<Button variant="primary" onClick={save}>Save</Button>}>
         <div className="grid2">
           <div className="stack">
+            <label className="label">Technician Average Wage ($/hr)</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={s.technician_hourly_rate_avg == null ? '' : String(s.technician_hourly_rate_avg)}
+              onChange={(e) => setS({ ...s, technician_hourly_rate_avg: e.target.value === '' ? null : Number(e.target.value) })}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Estimate Validity (Days)</label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={s.estimate_validity_days == null ? '' : String(s.estimate_validity_days)}
+              onChange={(e) => setS({ ...s, estimate_validity_days: e.target.value === '' ? null : Number(e.target.value) })}
+            />
+          </div>
+
+          <div className="stack">
             <label className="label">Starting Estimate Number</label>
             <Input
               type="number"
@@ -58,6 +78,45 @@ export function CompanySetupPage() {
               value={String(s.min_labor_minutes ?? '')}
               onChange={(e) => setS({ ...s, min_labor_minutes: e.target.value === '' ? 0 : Number(e.target.value) })}
               placeholder="e.g. 15"
+            />
+          </div>
+          <div className="stack">
+            <label className="label">Material Purchase Tax (%)</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={s.material_tax_percent == null ? '' : String(s.material_tax_percent)}
+              onChange={(e) => setS({ ...s, material_tax_percent: e.target.value === '' ? null : Number(e.target.value) })}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Material Miscellaneous (%)</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={s.material_misc_percent == null ? '' : String(s.material_misc_percent)}
+              onChange={(e) => setS({ ...s, material_misc_percent: e.target.value === '' ? null : Number(e.target.value) })}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Processing Fee (%)</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={s.processing_fee_percent == null ? '' : String(s.processing_fee_percent)}
+              onChange={(e) => setS({ ...s, processing_fee_percent: e.target.value === '' ? null : Number(e.target.value) })}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Default Discount (%)</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={s.default_discount_percent == null ? '' : String(s.default_discount_percent)}
+              onChange={(e) => setS({ ...s, default_discount_percent: e.target.value === '' ? null : Number(e.target.value) })}
             />
           </div>
         </div>
