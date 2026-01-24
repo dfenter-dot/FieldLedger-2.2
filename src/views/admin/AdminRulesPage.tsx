@@ -7,6 +7,8 @@ import { useData } from '../../providers/data/DataContext';
 import type { AdminRule } from '../../providers/data/types';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
 
+type AppliesTo = 'estimate' | 'assembly';
+
 function makeNewRule(): AdminRule {
   return {
     id: crypto.randomUUID?.() ?? `rule_${Date.now()}`,
@@ -14,6 +16,9 @@ function makeNewRule(): AdminRule {
     name: 'New Rule',
     priority: 1,
     enabled: true,
+    applies_to: 'estimate',
+    match_text: '',
+    set_job_type_id: null,
     created_at: new Date().toISOString(),
   };
 }
@@ -24,10 +29,14 @@ export function AdminRulesPage() {
   const [rules, setRules] = useState<AdminRule[]>([]);
   const [editing, setEditing] = useState<Record<string, AdminRule>>({});
   const [status, setStatus] = useState<string>('');
+  const [jobTypes, setJobTypes] = useState<any[]>([]);
 
   useEffect(() => {
-    data.listAdminRules()
-      .then(setRules)
+    Promise.all([data.listAdminRules(), data.listJobTypes()])
+      .then(([r, jt]) => {
+        setRules(r);
+        setJobTypes(jt as any);
+      })
       .catch((e) => {
         console.error(e);
         setStatus(String((e as any)?.message ?? e));
@@ -139,6 +148,44 @@ export function AdminRulesPage() {
                     <div className="stack">
                       <label className="label">Enabled</label>
                       <Toggle checked={row.enabled} onChange={(v) => setEditing((prev) => ({ ...prev, [r.id]: { ...row, enabled: v } }))} label={row.enabled ? 'Yes' : 'No'} />
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Applies To</label>
+                      <select
+                        className="input"
+                        value={row.applies_to}
+                        onChange={(e) => setEditing((prev) => ({ ...prev, [r.id]: { ...row, applies_to: e.target.value as AppliesTo } }))}
+                      >
+                        <option value="estimate">Estimate</option>
+                        <option value="assembly">Assembly</option>
+                      </select>
+                    </div>
+
+                    <div className="stack" style={{ gridColumn: '1 / -1' }}>
+                      <label className="label">Match Text (in name)</label>
+                      <Input
+                        value={row.match_text ?? ''}
+                        onChange={(e) => setEditing((prev) => ({ ...prev, [r.id]: { ...row, match_text: e.target.value } }))}
+                        placeholder="Example: outlet"
+                      />
+                      <div className="muted small">Case-insensitive substring match against the estimate/assembly name. Rules apply only when you click “Apply Changes”.</div>
+                    </div>
+
+                    <div className="stack" style={{ gridColumn: '1 / -1' }}>
+                      <label className="label">Set Job Type</label>
+                      <select
+                        className="input"
+                        value={row.set_job_type_id ?? ''}
+                        onChange={(e) => setEditing((prev) => ({ ...prev, [r.id]: { ...row, set_job_type_id: e.target.value || null } }))}
+                      >
+                        <option value="">(no change)</option>
+                        {jobTypes.map((jt: any) => (
+                          <option key={jt.id} value={jt.id}>
+                            {jt.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 ) : null}
