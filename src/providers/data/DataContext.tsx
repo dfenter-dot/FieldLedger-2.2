@@ -9,7 +9,7 @@ const DataContext = createContext<IDataProvider | null>(null);
 export function DataProvider({ children }: { children: ReactNode }) {
   const provider = useMemo<IDataProvider>(() => {
     const mode = getDataProviderMode();
-    return mode === 'local' ? LocalDataProvider : SupabaseDataProvider;
+    return mode === 'local' ? new LocalDataProvider() : new SupabaseDataProvider();
   }, []);
 
   return <DataContext.Provider value={provider}>{children}</DataContext.Provider>;
