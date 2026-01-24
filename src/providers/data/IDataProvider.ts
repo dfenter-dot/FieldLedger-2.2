@@ -13,7 +13,8 @@ import type {
 export type LibraryKind = 'materials' | 'assemblies' | 'estimates';
 
 export interface IDataProvider {
-  // folders
+  /* ----------------------------- folders ----------------------------- */
+
   listFolders(args: {
     kind: LibraryKind;
     libraryType: 'company' | 'personal';
@@ -27,16 +28,20 @@ export interface IDataProvider {
     name: string;
   }): Promise<Folder>;
 
-  // materials
+  /* ---------------------------- materials ---------------------------- */
+
   listMaterials(args: {
     libraryType: 'company' | 'personal';
     folderId: string | null;
   }): Promise<Material[]>;
 
+  getMaterial(id: string): Promise<Material | null>;
+
   upsertMaterial(m: Material): Promise<Material>;
   deleteMaterial(id: string): Promise<void>;
 
-  // assemblies
+  /* ---------------------------- assemblies --------------------------- */
+
   getAssembly(id: string): Promise<Assembly | null>;
 
   listAssemblies(args: {
@@ -47,18 +52,21 @@ export interface IDataProvider {
   upsertAssembly(a: Assembly): Promise<Assembly>;
   deleteAssembly(id: string): Promise<void>;
 
-  // estimates
+  /* ----------------------------- estimates --------------------------- */
+
   listEstimates(): Promise<Estimate[]>;
   getEstimate(id: string): Promise<Estimate | null>;
   upsertEstimate(e: Estimate): Promise<Estimate>;
   deleteEstimate(id: string): Promise<void>;
 
-  // job types
+  /* ----------------------------- job types ---------------------------- */
+
   listJobTypes(): Promise<JobType[]>;
   upsertJobType(jt: JobType): Promise<JobType>;
   setDefaultJobType(jobTypeId: string): Promise<void>;
 
-  // branding / company / csv
+  /* --------------------- branding / company / csv --------------------- */
+
   getBrandingSettings(): Promise<BrandingSettings>;
   saveBrandingSettings(s: BrandingSettings): Promise<BrandingSettings>;
 
@@ -68,7 +76,8 @@ export interface IDataProvider {
   getCsvSettings(): Promise<CsvSettings>;
   saveCsvSettings(s: CsvSettings): Promise<CsvSettings>;
 
-  // admin rules
+  /* ----------------------------- admin rules -------------------------- */
+
   listAdminRules(): Promise<AdminRule[]>;
   upsertAdminRule(r: AdminRule): Promise<AdminRule>;
   deleteAdminRule(id: string): Promise<void>;
