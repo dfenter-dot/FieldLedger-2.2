@@ -95,6 +95,18 @@ export class SupabaseDataProvider implements IDataProvider {
     return data ?? [];
   }
 
+  async getMaterial(id: string): Promise<Material | null> {
+    const companyId = await this.companyId();
+    const { data, error } = await supabase
+      .from('materials')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('id', id)
+      .single();
+    if (error && error.code !== 'PGRST116') assert(error);
+    return data ?? null;
+  }
+
   async upsertMaterial(m: Material): Promise<Material> {
     const companyId = await this.companyId();
     const id = m.id ?? nanoid();
@@ -256,9 +268,7 @@ export class SupabaseDataProvider implements IDataProvider {
     );
   }
 
-  async saveBrandingSettings(
-    s: BrandingSettings
-  ): Promise<BrandingSettings> {
+  async saveBrandingSettings(s: BrandingSettings): Promise<BrandingSettings> {
     const companyId = await this.companyId();
     const { error } = await supabase.from('branding_settings').upsert({
       ...s,
@@ -286,9 +296,7 @@ export class SupabaseDataProvider implements IDataProvider {
     );
   }
 
-  async saveCompanySettings(
-    s: CompanySettings
-  ): Promise<CompanySettings> {
+  async saveCompanySettings(s: CompanySettings): Promise<CompanySettings> {
     const companyId = await this.companyId();
     const { error } = await supabase.from('company_settings').upsert({
       ...s,
