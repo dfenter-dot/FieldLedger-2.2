@@ -1,174 +1,124 @@
-// src/providers/data/local/seed.ts
-
-import type {
-  AdminRule,
-  Assembly,
-  BrandingSettings,
+import { v4 as uuid } from 'uuid';
+import {
   CompanySettings,
-  CsvSettings,
-  Estimate,
-  Folder,
   JobType,
   Material,
+  Folder,
 } from '../types';
 
-const now = () => new Date().toISOString();
+/* ------------------------------------------------------------------ */
+/* Default Job Type                                                    */
+/* ------------------------------------------------------------------ */
 
-export const SEED_COMPANY_ID = 'demo-company-id';
-export const SEED_USER_ID = 'demo-user-id';
+export function seedDefaultJobType(companyId: string): JobType {
+  return {
+    id: uuid(),
+    company_id: companyId,
+    name: 'Service',
+    enabled: true,
+    profit_margin_percent: 70,
+    efficiency_percent: 50,
+    allow_discounts: true,
+    billing_mode: 'flat',
+    is_default: true,
+    created_at: new Date().toISOString(),
+  };
+}
 
-/* ---------------- Folders ---------------- */
+/* ------------------------------------------------------------------ */
+/* Company Settings Defaults                                           */
+/* ------------------------------------------------------------------ */
 
-export const seedFolders: Folder[] = [
-  {
-    id: 'folder-materials-root',
-    name: 'Materials',
-    parent_id: null,
+export function seedCompanySettings(companyId: string): CompanySettings {
+  return {
+    id: uuid(),
+    company_id: companyId,
+
+    workdays_per_week: 5,
+    work_hours_per_day: 8,
+    technicians: 1,
+
+    vacation_days_per_year: 10,
+    sick_days_per_year: 5,
+
+    material_purchase_tax_percent: 8.25,
+    misc_material_percent: 10,
+    default_discount_percent: 10,
+    processing_fee_percent: 4,
+
+    min_billable_labor_minutes_per_job: 30,
+    estimate_validity_days: 30,
+    starting_estimate_number: 1,
+
+    material_markup_tiers: [
+      { min: 0, max: 5, markup_percent: 200 },
+      { min: 5.01, max: 50, markup_percent: 125 },
+      { min: 50.01, max: 100, markup_percent: 50 },
+      { min: 100.01, max: 500, markup_percent: 25 },
+      { min: 500.01, max: 99999, markup_percent: 10 },
+    ],
+
+    misc_applies_when_customer_supplies: false,
+
+    technician_wages: [],
+
+    business_expenses_mode: 'lump',
+    business_expenses_lump_sum_monthly: 0,
+    business_expenses_itemized: [],
+    business_apply_itemized: false,
+
+    personal_expenses_mode: 'lump',
+    personal_expenses_lump_sum_monthly: 0,
+    personal_expenses_itemized: [],
+    personal_apply_itemized: false,
+
+    net_profit_goal_mode: 'percent',
+    net_profit_goal_amount_monthly: 0,
+    net_profit_goal_percent_of_revenue: 0,
+    revenue_goal_monthly: 0,
+
+    company_license_text: '',
+    company_warranty_text: '',
+
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Optional: App-Owned Seed Data (materials/folders)                   */
+/* ------------------------------------------------------------------ */
+
+export function seedAppMaterialFolder(): Folder {
+  return {
+    id: uuid(),
+    company_id: null,
     kind: 'materials',
     library_type: 'company',
-    company_id: SEED_COMPANY_ID,
-    created_at: now(),
-  },
-  {
-    id: 'folder-assemblies-root',
-    name: 'Assemblies',
     parent_id: null,
-    kind: 'assemblies',
-    library_type: 'company',
-    company_id: SEED_COMPANY_ID,
-    created_at: now(),
-  },
-  {
-    id: 'folder-estimates-root',
-    name: 'Estimates',
-    parent_id: null,
-    kind: 'estimates',
-    library_type: 'company',
-    company_id: SEED_COMPANY_ID,
-    created_at: now(),
-  },
-];
+    name: 'App Materials',
+    order_index: 0,
+    created_at: new Date().toISOString(),
+  };
+}
 
-/* ---------------- Materials ---------------- */
-
-export const seedMaterials: Material[] = [
-  {
-    id: 'mat-1',
-    company_id: SEED_COMPANY_ID,
-    name: 'TR Duplex Receptacle',
-    description: '15A tamper-resistant duplex',
-    unit_cost: 2.5,
-    taxable: true,
-    labor_minutes: 10,
-    folder_id: 'folder-materials-root',
-    created_at: now(),
-  },
-  {
-    id: 'mat-2',
-    company_id: SEED_COMPANY_ID,
-    name: 'Single Pole Switch',
-    description: '15A single pole',
-    unit_cost: 2.25,
-    taxable: true,
-    labor_minutes: 10,
-    folder_id: 'folder-materials-root',
-    created_at: now(),
-  },
-];
-
-/* ---------------- Assemblies ---------------- */
-
-export const seedAssemblies: Assembly[] = [
-  {
-    id: 'asm-1',
-    company_id: SEED_COMPANY_ID,
-    name: 'Replace Duplex Receptacle',
-    description: 'Replace an existing duplex receptacle',
-    items: [
-      { id: 'asm-1-item-1', material_id: 'mat-1', quantity: 1 },
-    ],
-    labor_minutes: 15,
-    folder_id: 'folder-assemblies-root',
-    created_at: now(),
-  },
-];
-
-/* ---------------- Estimates ---------------- */
-
-export const seedEstimates: Estimate[] = [
-  {
-    id: 'est-1',
-    company_id: SEED_COMPANY_ID,
-    estimate_number: 1000,
-    name: 'Sample Estimate',
-    job_type_id: 'jt-1',
-    items: [
-      { id: 'est-1-item-1', assembly_id: 'asm-1', quantity: 1 },
-      { id: 'est-1-item-2', material_id: 'mat-2', quantity: 2 },
-    ],
-    created_at: now(),
-  },
-];
-
-/* ---------------- Admin: Job Types ---------------- */
-
-export const seedJobTypes: JobType[] = [
-  {
-    id: 'jt-1',
-    company_id: SEED_COMPANY_ID,
-    name: 'Service Call',
-    description: 'General service work',
-    is_default: true,
-    created_at: now(),
-  },
-  {
-    id: 'jt-2',
-    company_id: SEED_COMPANY_ID,
-    name: 'Install',
-    description: 'New installations',
-    is_default: false,
-    created_at: now(),
-  },
-];
-
-/* ---------------- Admin: Rules ---------------- */
-
-export const seedAdminRules: AdminRule[] = [
-  {
-    id: 'rule-1',
-    company_id: SEED_COMPANY_ID,
-    name: 'Minimum Labor Minutes',
-    priority: 1,
-    enabled: true,
-    created_at: now(),
-  },
-];
-
-/* ---------------- Admin: Settings ---------------- */
-
-export const seedCompanySettings: CompanySettings = {
-  id: 'company-settings-1',
-  company_id: SEED_COMPANY_ID,
-  starting_estimate_number: 1000,
-  min_labor_minutes: 15,
-  created_at: now(),
-  updated_at: now(),
-};
-
-export const seedCsvSettings: CsvSettings = {
-  id: 'csv-settings-1',
-  company_id: SEED_COMPANY_ID,
-  allow_material_import: true,
-  allow_assembly_import: true,
-  created_at: now(),
-  updated_at: now(),
-};
-
-export const seedBrandingSettings: BrandingSettings = {
-  id: 'branding-settings-1',
-  company_id: SEED_COMPANY_ID,
-  logo_url: null,
-  primary_color: null,
-  created_at: now(),
-  updated_at: now(),
-};
+export function seedAppMaterials(folderId: string): Material[] {
+  return [
+    {
+      id: uuid(),
+      company_id: null,
+      name: 'Standard Outlet',
+      sku: 'OUT-STD',
+      description: '15A 120V duplex outlet',
+      unit_cost: 2.5,
+      custom_cost: null,
+      use_custom_cost: false,
+      taxable: true,
+      labor_minutes: 15,
+      job_type_id: null,
+      folder_id: folderId,
+      order_index: 0,
+      created_at: new Date().toISOString(),
+    },
+  ];
+}
