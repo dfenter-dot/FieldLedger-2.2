@@ -18,3 +18,7 @@
 @media (min-width: 900px){
   .appContent{ padding: 24px; padding-bottom: 24px; }
 }
+
+@media (max-width: 899px){
+  .sidebar{ display: none; }
+}
