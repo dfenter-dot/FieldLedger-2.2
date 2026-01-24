@@ -16,24 +16,61 @@ export function MaterialEditorPage() {
 
   const [m, setM] = useState<Material | null>(null);
   const [status, setStatus] = useState<string>('');
+  const [unitCostText, setUnitCostText] = useState('');
+  const [customCostText, setCustomCostText] = useState('');
+  const [laborHoursText, setLaborHoursText] = useState('');
+  const [laborMinutesText, setLaborMinutesText] = useState('');
+  const [jobTypes, setJobTypes] = useState<any[]>([]);
 
   useEffect(() => {
     if (!materialId) return;
     data
       .getMaterial(materialId)
-      .then(setM)
+      .then((mat) => {
+        setM(mat);
+        setUnitCostText(mat.unit_cost === null || mat.unit_cost === undefined ? '' : String(mat.unit_cost));
+        setCustomCostText(mat.custom_cost === null || mat.custom_cost === undefined ? '' : String(mat.custom_cost));
+        const lm = Number(mat.labor_minutes ?? 0) || 0;
+        const h = Math.floor(lm / 60);
+        const min = Math.round(lm % 60);
+        setLaborHoursText(mat.labor_minutes == null ? '' : String(h));
+        setLaborMinutesText(mat.labor_minutes == null ? '' : String(min));
+      })
       .catch((e) => {
         console.error(e);
         setStatus(String((e as any)?.message ?? e));
       });
   }, [data, materialId]);
 
+  useEffect(() => {
+    data.listJobTypes().then(setJobTypes).catch(console.error);
+  }, [data]);
+
   async function save() {
     if (!m) return;
     try {
       setStatus('Saving...');
-      const saved = await data.upsertMaterial(m);
+      const unit_cost = unitCostText.trim() === '' ? 0 : Number(unitCostText);
+      const custom_cost = customCostText.trim() === '' ? null : Number(customCostText);
+      const lh = laborHoursText.trim() === '' ? null : Number(laborHoursText);
+      const lm = laborMinutesText.trim() === '' ? null : Number(laborMinutesText);
+      const labor_minutes = (Number.isFinite(lh as any) ? Number(lh) : 0) * 60 + (Number.isFinite(lm as any) ? Number(lm) : 0);
+      const payload: Material = {
+        ...m,
+        unit_cost: Number.isFinite(unit_cost) ? unit_cost : 0,
+        custom_cost: Number.isFinite(custom_cost as any) ? (custom_cost as any) : null,
+        use_custom_cost: Boolean(m.use_custom_cost),
+        labor_minutes: Number.isFinite(labor_minutes) ? labor_minutes : 0,
+      };
+      const saved = await data.upsertMaterial(payload);
       setM(saved);
+      setUnitCostText(saved.unit_cost === null || saved.unit_cost === undefined ? '' : String(saved.unit_cost));
+      setCustomCostText(saved.custom_cost === null || saved.custom_cost === undefined ? '' : String(saved.custom_cost));
+      const savedLm = Number(saved.labor_minutes ?? 0) || 0;
+      const sh = Math.floor(savedLm / 60);
+      const smin = Math.round(savedLm % 60);
+      setLaborHoursText(saved.labor_minutes == null ? '' : String(sh));
+      setLaborMinutesText(saved.labor_minutes == null ? '' : String(smin));
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
@@ -87,27 +124,52 @@ export function MaterialEditorPage() {
           </div>
 
           <div className="stack">
-            <label className="label">Unit Cost</label>
+            <label className="label">SKU / Part #</label>
+            <Input value={m.sku ?? ''} onChange={(e) => setM({ ...m, sku: e.target.value })} />
+          </div>
+
+          <div className="stack">
+            <label className="label">Base Cost ($)</label>
             <Input
-              type="number"
+              type="text"
               inputMode="decimal"
-              value={String(m.unit_cost ?? 0)}
-              onChange={(e) =>
-                setM({ ...m, unit_cost: e.target.value === '' ? 0 : Number(e.target.value) })
-              }
+              value={unitCostText}
+              onChange={(e) => setUnitCostText(e.target.value)}
             />
           </div>
 
           <div className="stack">
-            <label className="label">Labor Minutes</label>
-            <Input
-              type="number"
-              inputMode="decimal"
-              value={String(m.labor_minutes ?? 0)}
-              onChange={(e) =>
-                setM({ ...m, labor_minutes: e.target.value === '' ? 0 : Number(e.target.value) })
-              }
-            />
+            <label className="label">Custom Cost ($)</label>
+            <Input type="text" inputMode="decimal" value={customCostText} onChange={(e) => setCustomCostText(e.target.value)} />
+          </div>
+
+          <div className="stack">
+            <label className="label">Use Custom Cost</label>
+            <Toggle checked={!!m.use_custom_cost} onChange={(v) => setM({ ...m, use_custom_cost: v })} label={m.use_custom_cost ? 'Yes' : 'No'} />
+          </div>
+
+          <div className="stack">
+            <label className="label">Labor Time (Hours)</label>
+            <Input type="text" inputMode="numeric" value={laborHoursText} onChange={(e) => setLaborHoursText(e.target.value)} />
+          </div>
+
+          <div className="stack">
+            <label className="label">Labor Time (Minutes)</label>
+            <Input type="text" inputMode="numeric" value={laborMinutesText} onChange={(e) => setLaborMinutesText(e.target.value)} />
+          </div>
+
+          <div className="stack">
+            <label className="label">Job Type</label>
+            <select className="input" value={m.job_type_id ?? ''} onChange={(ev) => setM({ ...m, job_type_id: ev.target.value || null })}>
+              <option value="">(Select)</option>
+              {jobTypes
+                .filter((j: any) => j.enabled !== false)
+                .map((jt: any) => (
+                  <option key={jt.id} value={jt.id}>
+                    {jt.name}
+                  </option>
+                ))}
+            </select>
           </div>
 
           <div className="stack">
