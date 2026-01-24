@@ -1,41 +1,48 @@
-import type {
-  Assembly,
-  BrandingSettings,
-  Estimate,
-  Folder,
+// src/providers/data/IDataProvider.ts
+
+import {
+  Company,
+  CompanySettings,
   JobType,
-  LibraryType,
-  Material,
-} from './types';
+  AdminRule,
+  CsvSettings,
+  BrandingSettings,
+  UUID,
+} from "./types";
 
-export type LibraryKind = 'materials' | 'assemblies';
+export interface IDataProvider {
+  /* Company */
+  getCompany(companyId: UUID): Promise<Company | null>;
 
-export type IDataProvider = {
-  // Folders
-  listFolders: (args: { kind: LibraryKind; libraryType: LibraryType; parentId: string | null }) => Promise<Folder[]>;
-  createFolder: (args: { kind: LibraryKind; libraryType: LibraryType; parentId: string | null; name: string }) => Promise<Folder>;
+  /* Company Settings */
+  getCompanySettings(companyId: UUID): Promise<CompanySettings | null>;
+  upsertCompanySettings(
+    settings: Partial<CompanySettings> & { company_id: UUID }
+  ): Promise<void>;
 
-  // Materials
-  listMaterials: (args: { libraryType: LibraryType; folderId: string }) => Promise<Material[]>;
-  upsertMaterial: (m: Material) => Promise<Material>;
-  deleteMaterial: (id: string) => Promise<void>;
+  /* Job Types */
+  listJobTypes(companyId: UUID): Promise<JobType[]>;
+  createJobType(
+    jobType: Omit<JobType, "id" | "created_at">
+  ): Promise<JobType>;
+  updateJobType(jobType: JobType): Promise<void>;
+  deleteJobType(id: UUID): Promise<void>;
 
-  // Assemblies
-  listAssemblies: (args: { libraryType: LibraryType; folderId: string }) => Promise<Assembly[]>;
-  upsertAssembly: (a: Assembly) => Promise<Assembly>;
-  deleteAssembly: (id: string) => Promise<void>;
+  /* Admin Rules */
+  listAdminRules(companyId: UUID): Promise<AdminRule[]>;
+  upsertAdminRule(
+    rule: Partial<AdminRule> & { company_id: UUID }
+  ): Promise<void>;
 
-  // Estimates
-  listEstimates: () => Promise<Estimate[]>;
-  getEstimate: (id: string) => Promise<Estimate | null>;
-  upsertEstimate: (e: Estimate) => Promise<Estimate>;
-  deleteEstimate: (id: string) => Promise<void>;
+  /* CSV Settings */
+  getCsvSettings(companyId: UUID): Promise<CsvSettings | null>;
+  upsertCsvSettings(
+    settings: Partial<CsvSettings> & { company_id: UUID }
+  ): Promise<void>;
 
-  // Admin
-  listJobTypes: () => Promise<JobType[]>;
-  upsertJobType: (jt: JobType) => Promise<JobType>;
-  setDefaultJobType: (jobTypeId: string) => Promise<void>;
-
-  getBrandingSettings: () => Promise<BrandingSettings>;
-  saveBrandingSettings: (s: BrandingSettings) => Promise<BrandingSettings>;
-};
+  /* Branding */
+  getBrandingSettings(companyId: UUID): Promise<BrandingSettings | null>;
+  upsertBrandingSettings(
+    settings: Partial<BrandingSettings> & { company_id: UUID }
+  ): Promise<void>;
+}
