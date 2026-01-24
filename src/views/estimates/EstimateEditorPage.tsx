@@ -233,6 +233,33 @@ export function EstimateEditorPage() {
   const isLocked = (e.status ?? 'draft') === 'approved';
   const jobTypeOptions = jobTypes.filter((j: any) => j.enabled !== false);
   const defaultJobTypeId = jobTypes.find((j: any) => j.is_default)?.id ?? null;
+  const activeJobType = jobTypes.find((j: any) => j.id === (e.job_type_id ?? defaultJobTypeId));
+  const allowDiscounts = activeJobType?.allow_discounts !== false;
+
+  async function applyAdminRules() {
+    if (!e || isLocked || !e.use_admin_rules) return;
+    try {
+      setStatus('Applying rules...');
+      const rules = await data.listAdminRules();
+      const match = rules
+        .filter((r) => r.enabled && r.applies_to === 'estimate' && (r.match_text ?? '').trim().length > 0)
+        .sort((a, b) => a.priority - b.priority)
+        .find((r) => (e.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
+
+      if (match?.set_job_type_id) {
+        const next = { ...e, job_type_id: match.set_job_type_id } as any;
+        const saved = await data.upsertEstimate(next);
+        setE(saved as any);
+        setStatus('Rules applied.');
+      } else {
+        setStatus('No matching rules.');
+      }
+      setTimeout(() => setStatus(''), 1500);
+    } catch (err: any) {
+      console.error(err);
+      setStatus(String(err?.message ?? err));
+    }
+  }
 
   return (
     <div className="stack">
@@ -241,9 +268,15 @@ export function EstimateEditorPage() {
         right={
           <div className="row">
             <Button onClick={() => nav('/estimates')}>Back</Button>
+            <Button variant="secondary" onClick={() => nav(`/estimates/${e.id}/preview`)}>
+              Customer View
+            </Button>
             <Button variant="danger" onClick={remove}>
               Delete
             </Button>
+            {e.use_admin_rules && !isLocked ? (
+              <Button onClick={applyAdminRules}>Apply Changes</Button>
+            ) : null}
             <Button variant="primary" onClick={saveAll}>
               Save
             </Button>
@@ -327,7 +360,7 @@ export function EstimateEditorPage() {
           <div className="stack">
             <label className="label">Discount %</label>
             <Input
-              disabled={isLocked}
+              disabled={isLocked || !allowDiscounts}
               type="text"
               inputMode="decimal"
               value={String(e.discount_percent ?? '')}
@@ -337,7 +370,11 @@ export function EstimateEditorPage() {
                 setE({ ...e, discount_percent: raw === '' ? null : Number(raw) } as any);
               }}
             />
-            <div className="muted small">Leave blank to use 0% (or set a default in Company Setup).</div>
+            {!allowDiscounts ? (
+              <div className="muted small">Discounts are disabled for this job type.</div>
+            ) : (
+              <div className="muted small">Leave blank to use 0% (or set a default in Company Setup).</div>
+            )}
           </div>
         </div>
 
@@ -365,6 +402,26 @@ export function EstimateEditorPage() {
         </div>
 
         <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <Button
+            variant="secondary"
+            disabled={!e || isLocked}
+            onClick={async () => {
+              const copy = await data.upsertEstimate({
+                ...e,
+                id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
+                estimate_number: e.estimate_number,
+                name: `${e.name} (Copy Option)`,
+                status: 'draft',
+                sent_at: null,
+                approved_at: null,
+                declined_at: null,
+                created_at: new Date().toISOString(),
+              } as any);
+              nav(`/estimates/${copy.id}`);
+            }}
+          >
+            Copy Option
+          </Button>
           <Button
             variant="primary"
             disabled={isLocked}
