@@ -1,19 +1,49 @@
-import type { AdminRule, Assembly, BrandingSettings, CompanySettings, CsvSettings, Estimate, Folder, JobType, Material } from './types';
+import type {
+  AdminRule,
+  Assembly,
+  BrandingSettings,
+  CompanySettings,
+  CsvSettings,
+  Estimate,
+  Folder,
+  JobType,
+  Material,
+} from './types';
 
 export type LibraryKind = 'materials' | 'assemblies' | 'estimates';
 
 export interface IDataProvider {
   // folders
-  listFolders(args: { kind: LibraryKind; libraryType: 'company' | 'personal'; parentId: string | null }): Promise<Folder[]>;
-  createFolder(args: { kind: LibraryKind; libraryType: 'company' | 'personal'; parentId: string | null; name: string }): Promise<Folder>;
+  listFolders(args: {
+    kind: LibraryKind;
+    libraryType: 'company' | 'personal';
+    parentId: string | null;
+  }): Promise<Folder[]>;
+
+  createFolder(args: {
+    kind: LibraryKind;
+    libraryType: 'company' | 'personal';
+    parentId: string | null;
+    name: string;
+  }): Promise<Folder>;
 
   // materials
-  listMaterials(args: { libraryType: 'company' | 'personal'; folderId: string | null }): Promise<Material[]>;
+  listMaterials(args: {
+    libraryType: 'company' | 'personal';
+    folderId: string | null;
+  }): Promise<Material[]>;
+
   upsertMaterial(m: Material): Promise<Material>;
   deleteMaterial(id: string): Promise<void>;
 
   // assemblies
-  listAssemblies(args: { libraryType: 'company' | 'personal'; folderId: string | null }): Promise<Assembly[]>;
+  getAssembly(id: string): Promise<Assembly | null>;
+
+  listAssemblies(args: {
+    libraryType: 'company' | 'personal';
+    folderId: string | null;
+  }): Promise<Assembly[]>;
+
   upsertAssembly(a: Assembly): Promise<Assembly>;
   deleteAssembly(id: string): Promise<void>;
 
