@@ -1,108 +1,194 @@
-// src/providers/data/types.ts
+/* ------------------------------------------------------------------ */
+/* Shared / Utility                                                    */
+/* ------------------------------------------------------------------ */
 
-export type ID = string;
-
-/* ---------- Core ---------- */
+export type UUID = string;
 
 export interface Folder {
-  id: ID;
-  name: string;
-  parent_id: ID | null;
-  kind: 'materials' | 'assemblies' | 'estimates';
+  id: UUID;
+  company_id: UUID | null;
+  kind: 'materials' | 'assemblies';
   library_type: 'company' | 'personal';
-  company_id: ID | null;
+  parent_id: UUID | null;
+  name: string;
+  order_index: number;
   created_at: string;
 }
+
+/* ------------------------------------------------------------------ */
+/* Materials                                                           */
+/* ------------------------------------------------------------------ */
 
 export interface Material {
-  id: ID;
-  company_id: ID | null;
+  id: UUID;
+  company_id: UUID | null;
   name: string;
+  sku?: string | null;
   description?: string | null;
   unit_cost: number;
+  custom_cost?: number | null;
+  use_custom_cost: boolean;
   taxable: boolean;
   labor_minutes: number;
-  folder_id: ID | null;
+  job_type_id?: UUID | null;
+  folder_id?: UUID | null;
+  order_index: number;
   created_at: string;
 }
 
+/* ------------------------------------------------------------------ */
+/* Assemblies                                                          */
+/* ------------------------------------------------------------------ */
+
+export type AssemblyItemType = 'material' | 'labor' | 'oneoff';
+
 export interface AssemblyItem {
-  id: ID;
-  material_id: ID;
+  id: UUID;
+  type: AssemblyItemType;
+  name: string;
   quantity: number;
+  unit_cost: number;
+  labor_minutes: number;
+  taxable: boolean;
+  job_type_id?: UUID | null;
 }
 
 export interface Assembly {
-  id: ID;
-  company_id: ID | null;
+  id: UUID;
+  company_id: UUID | null;
   name: string;
   description?: string | null;
+  job_type_id?: UUID | null;
+  use_admin_rules: boolean;
+  customer_supplies_materials: boolean;
   items: AssemblyItem[];
   labor_minutes: number;
-  folder_id: ID | null;
+  folder_id?: UUID | null;
+  order_index: number;
   created_at: string;
 }
 
+/* ------------------------------------------------------------------ */
+/* Estimates                                                           */
+/* ------------------------------------------------------------------ */
+
+export type EstimateStatus =
+  | 'draft'
+  | 'sent'
+  | 'approved'
+  | 'declined'
+  | 'archived';
+
 export interface EstimateItem {
-  id: ID;
-  material_id?: ID | null;
-  assembly_id?: ID | null;
+  id: UUID;
+  type: AssemblyItemType | 'assembly';
+  name: string;
   quantity: number;
+  unit_cost: number;
+  labor_minutes: number;
+  taxable: boolean;
+  job_type_id?: UUID | null;
+  assembly_id?: UUID;
 }
 
 export interface Estimate {
-  id: ID;
-  company_id: ID;
+  id: UUID;
+  company_id: UUID;
   estimate_number: number;
   name: string;
-  job_type_id: ID | null;
+  status: EstimateStatus;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  customer_email?: string | null;
+  customer_address?: string | null;
+  private_notes?: string | null;
+  job_type_id?: UUID | null;
+  use_admin_rules: boolean;
+  customer_supplies_materials: boolean;
+  discount_percent?: number | null;
+  apply_processing_fees: boolean;
+  apply_misc_material: boolean;
   items: EstimateItem[];
   created_at: string;
+  updated_at: string;
 }
 
-/* ---------- Admin ---------- */
+/* ------------------------------------------------------------------ */
+/* Admin                                                               */
+/* ------------------------------------------------------------------ */
 
 export interface JobType {
-  id: ID;
-  company_id: ID;
+  id: UUID;
+  company_id: UUID;
   name: string;
-  description?: string | null;
+  enabled: boolean;
+  profit_margin_percent: number;
+  efficiency_percent: number;
+  allow_discounts: boolean;
+  billing_mode: 'flat' | 'hourly';
   is_default: boolean;
   created_at: string;
 }
 
-export interface AdminRule {
-  id: ID;
-  company_id: ID;
-  name: string;
-  priority: number;
-  enabled: boolean;
-  created_at: string;
-}
-
 export interface CompanySettings {
-  id: ID;
-  company_id: ID;
+  id: UUID;
+  company_id: UUID;
+
+  workdays_per_week: number;
+  work_hours_per_day: number;
+  technicians: number;
+
+  vacation_days_per_year: number;
+  sick_days_per_year: number;
+
+  material_purchase_tax_percent: number;
+  misc_material_percent: number;
+  default_discount_percent: number;
+  processing_fee_percent: number;
+
+  min_billable_labor_minutes_per_job: number;
+  estimate_validity_days: number;
   starting_estimate_number: number;
-  min_labor_minutes: number;
-  created_at: string;
-  updated_at: string;
-}
 
-export interface CsvSettings {
-  id: ID;
-  company_id: ID;
-  allow_material_import: boolean;
-  allow_assembly_import: boolean;
-  created_at: string;
-  updated_at: string;
-}
+  material_markup_tiers: {
+    min: number;
+    max: number;
+    markup_percent: number;
+  }[];
 
-export interface BrandingSettings {
-  id: ID;
-  company_id: ID;
-  logo_url: string | null;
-  primary_color: string | null;
+  misc_applies_when_customer_supplies: boolean;
+
+  technician_wages: {
+    name: string;
+    hourly_rate: number;
+  }[];
+
+  business_expenses_mode: 'lump' | 'itemized';
+  business_expenses_lump_sum_monthly: number;
+  business_expenses_itemized: {
+    name: string;
+    amount: number;
+    frequency: 'monthly' | 'quarterly' | 'biannual' | 'annual';
+  }[];
+  business_apply_itemized: boolean;
+
+  personal_expenses_mode: 'lump' | 'itemized';
+  personal_expenses_lump_sum_monthly: number;
+  personal_expenses_itemized: {
+    name: string;
+    amount: number;
+    frequency: 'monthly' | 'quarterly' | 'biannual' | 'annual';
+  }[];
+  personal_apply_itemized: boolean;
+
+  net_profit_goal_mode: 'dollar' | 'percent';
+  net_profit_goal_amount_monthly: number;
+  net_profit_goal_percent_of_revenue: number;
+  revenue_goal_monthly: number;
+
+  company_license_text?: string | null;
+  company_warranty_text?: string | null;
+
   created_at: string;
   updated_at: string;
 }
