@@ -1,56 +1,50 @@
 import {
-  Assembly,
+  AdminRule,
+  BrandingSettings,
   CompanySettings,
-  Estimate,
-  Folder,
+  CsvSettings,
   JobType,
-  Material,
 } from './types';
 
 export interface IDataProvider {
-  /* ------------------------------------------------------------------ */
-  /* Folders                                                            */
-  /* ------------------------------------------------------------------ */
+  /* =========================
+     Company / Context
+     ========================= */
+  getCurrentCompanyId(): Promise<string | null>;
 
-  getFolders(kind: 'materials' | 'assemblies'): Promise<Folder[]>;
-  saveFolder(folder: Partial<Folder>): Promise<Folder>;
-  deleteFolder(id: string): Promise<void>;
+  /* =========================
+     Company Setup / Settings
+     ========================= */
+  getCompanySettings(): Promise<CompanySettings | null>;
+  saveCompanySettings(settings: Partial<CompanySettings>): Promise<void>;
 
-  /* ------------------------------------------------------------------ */
-  /* Materials                                                          */
-  /* ------------------------------------------------------------------ */
-
-  getMaterials(): Promise<Material[]>;
-  saveMaterial(material: Partial<Material>): Promise<Material>;
-  deleteMaterial(id: string): Promise<void>;
-
-  /* ------------------------------------------------------------------ */
-  /* Assemblies                                                         */
-  /* ------------------------------------------------------------------ */
-
-  getAssemblies(): Promise<Assembly[]>;
-  saveAssembly(assembly: Partial<Assembly>): Promise<Assembly>;
-  deleteAssembly(id: string): Promise<void>;
-
-  /* ------------------------------------------------------------------ */
-  /* Estimates                                                          */
-  /* ------------------------------------------------------------------ */
-
-  // Some UI code still calls listEstimates(); keep both for compatibility
-  listEstimates(): Promise<Estimate[]>;
-  getEstimates(): Promise<Estimate[]>;
-  saveEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
-  deleteEstimate(id: string): Promise<void>;
-
-  /* ------------------------------------------------------------------ */
-  /* Admin                                                              */
-  /* ------------------------------------------------------------------ */
-
+  /* =========================
+     Job Types
+     ========================= */
   getJobTypes(): Promise<JobType[]>;
-  saveJobType(jobType: Partial<JobType>): Promise<JobType>;
+  saveJobType(jobType: Partial<JobType>): Promise<void>;
 
-  getCompanySettings(): Promise<CompanySettings>;
-  saveCompanySettings(
-    settings: Partial<CompanySettings>
-  ): Promise<CompanySettings>;
+  // Admin UI compatibility (aliases / required API)
+  listJobTypes(): Promise<JobType[]>;
+  upsertJobType(jobType: Partial<JobType>): Promise<void>;
+  setDefaultJobType(jobTypeId: string): Promise<void>;
+
+  /* =========================
+     Admin Rules
+     ========================= */
+  listAdminRules(): Promise<AdminRule[]>;
+  saveAdminRule(rule: Partial<AdminRule>): Promise<void>;
+  deleteAdminRule(id: string): Promise<void>;
+
+  /* =========================
+     CSV Settings
+     ========================= */
+  getCsvSettings(): Promise<CsvSettings | null>;
+  saveCsvSettings(settings: Partial<CsvSettings>): Promise<void>;
+
+  /* =========================
+     Branding Settings
+     ========================= */
+  getBrandingSettings(): Promise<BrandingSettings | null>;
+  saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<void>;
 }
