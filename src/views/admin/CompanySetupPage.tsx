@@ -24,11 +24,33 @@ export function CompanySetupPage() {
   const data = useData();
   const [s, setS] = useState<CompanySettings | null>(null);
   const [status, setStatus] = useState<string>('');
+  // Allow clean typing (decimals, backspace-to-empty) by storing string drafts while editing.
+  const [draft, setDraft] = useState<Record<string, string>>({});
 
   useEffect(() => {
     data
       .getCompanySettings()
-      .then(setS)
+      .then((cs) => {
+        setS(cs);
+        // Initialize drafts from loaded settings
+        setDraft((prev) => ({
+          ...prev,
+          workdays_per_week: cs.workdays_per_week != null ? String(cs.workdays_per_week) : '',
+          work_hours_per_day: cs.work_hours_per_day != null ? String(cs.work_hours_per_day) : '',
+          technicians: cs.technicians != null ? String(cs.technicians) : '',
+          vacation_days_per_year: cs.vacation_days_per_year != null ? String(cs.vacation_days_per_year) : '',
+          sick_days_per_year: cs.sick_days_per_year != null ? String(cs.sick_days_per_year) : '',
+          estimate_validity_days: cs.estimate_validity_days != null ? String(cs.estimate_validity_days) : '',
+          starting_estimate_number: cs.starting_estimate_number != null ? String(cs.starting_estimate_number) : '',
+          min_billable_labor_minutes_per_job:
+            cs.min_billable_labor_minutes_per_job != null ? String(cs.min_billable_labor_minutes_per_job) : '',
+          material_purchase_tax_percent:
+            cs.material_purchase_tax_percent != null ? String(cs.material_purchase_tax_percent) : '',
+          misc_material_percent: cs.misc_material_percent != null ? String(cs.misc_material_percent) : '',
+          default_discount_percent: cs.default_discount_percent != null ? String(cs.default_discount_percent) : '',
+          processing_fee_percent: cs.processing_fee_percent != null ? String(cs.processing_fee_percent) : '',
+        }));
+      })
       .catch((e) => {
         console.error(e);
         setStatus(String((e as any)?.message ?? e));
@@ -59,9 +81,18 @@ export function CompanySetupPage() {
     }
   }
 
-  function setNum<K extends keyof CompanySettings>(key: K, value: string) {
+  function onDraftChange(key: keyof CompanySettings, value: string) {
+    setDraft((d) => ({ ...d, [key as string]: value }));
+  }
+
+  function commitNum<K extends keyof CompanySettings>(key: K) {
     if (!s) return;
-    setS({ ...s, [key]: value.trim() === '' ? (0 as any) : (Number(value) as any) });
+    const raw = (draft[key as string] ?? '').trim();
+    // Allow empty while editing; commit as 0 when leaving the field.
+    const num = raw === '' ? 0 : Number(raw);
+    setS({ ...s, [key]: (Number.isFinite(num) ? num : 0) as any });
+    // Normalize draft to a clean string after commit.
+    setDraft((d) => ({ ...d, [key as string]: raw === '' ? '' : String(Number.isFinite(num) ? num : 0) }));
   }
 
   if (!s) return <div className="muted">Loading…</div>;
@@ -78,35 +109,95 @@ export function CompanySetupPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Workdays / Week</label>
-            <Input type="text" inputMode="numeric" value={String(s.workdays_per_week ?? '')} onChange={(e) => setNum('workdays_per_week', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={draft.workdays_per_week ?? ''}
+              onChange={(e) => onDraftChange('workdays_per_week', e.target.value)}
+              onBlur={() => commitNum('workdays_per_week')}
+            />
           </div>
           <div className="stack">
             <label className="label">Work Hours / Day</label>
-            <Input type="text" inputMode="numeric" value={String(s.work_hours_per_day ?? '')} onChange={(e) => setNum('work_hours_per_day', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={draft.work_hours_per_day ?? ''}
+              onChange={(e) => onDraftChange('work_hours_per_day', e.target.value)}
+              onBlur={() => commitNum('work_hours_per_day')}
+            />
           </div>
           <div className="stack">
             <label className="label">Technicians</label>
-            <Input type="text" inputMode="numeric" value={String(s.technicians ?? '')} onChange={(e) => setNum('technicians', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={draft.technicians ?? ''}
+              onChange={(e) => onDraftChange('technicians', e.target.value)}
+              onBlur={() => {
+                commitNum('technicians');
+                // Auto-size technician wages rows to match technician count
+                const raw = (draft.technicians ?? '').trim();
+                const target = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)));
+                if (Number.isFinite(target) && target >= 0) {
+                  const cur = Array.isArray(s.technician_wages) ? (s.technician_wages as any as Wage[]) : [];
+                  const next = [...cur];
+                  while (next.length < target) next.push({ name: `Tech ${next.length + 1}`, wage: 0 });
+                  if (next.length > target) next.length = target;
+                  setS({ ...s, technician_wages: next as any });
+                }
+              }}
+            />
           </div>
           <div className="stack">
             <label className="label">Vacation Days / Year</label>
-            <Input type="text" inputMode="numeric" value={String(s.vacation_days_per_year ?? '')} onChange={(e) => setNum('vacation_days_per_year', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={draft.vacation_days_per_year ?? ''}
+              onChange={(e) => onDraftChange('vacation_days_per_year', e.target.value)}
+              onBlur={() => commitNum('vacation_days_per_year')}
+            />
           </div>
           <div className="stack">
             <label className="label">Sick/Personal Days / Year</label>
-            <Input type="text" inputMode="numeric" value={String(s.sick_days_per_year ?? '')} onChange={(e) => setNum('sick_days_per_year', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={draft.sick_days_per_year ?? ''}
+              onChange={(e) => onDraftChange('sick_days_per_year', e.target.value)}
+              onBlur={() => commitNum('sick_days_per_year')}
+            />
           </div>
           <div className="stack">
             <label className="label">Estimate Validity Days</label>
-            <Input type="text" inputMode="numeric" value={String(s.estimate_validity_days ?? '')} onChange={(e) => setNum('estimate_validity_days', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={draft.estimate_validity_days ?? ''}
+              onChange={(e) => onDraftChange('estimate_validity_days', e.target.value)}
+              onBlur={() => commitNum('estimate_validity_days')}
+            />
           </div>
           <div className="stack">
             <label className="label">Starting Estimate Number</label>
-            <Input type="text" inputMode="numeric" value={String(s.starting_estimate_number ?? '')} onChange={(e) => setNum('starting_estimate_number', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={draft.starting_estimate_number ?? ''}
+              onChange={(e) => onDraftChange('starting_estimate_number', e.target.value)}
+              onBlur={() => commitNum('starting_estimate_number')}
+            />
           </div>
           <div className="stack">
             <label className="label">Min Billable Labor Minutes / Job</label>
-            <Input type="text" inputMode="numeric" value={String(s.min_billable_labor_minutes_per_job ?? '')} onChange={(e) => setNum('min_billable_labor_minutes_per_job', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={draft.min_billable_labor_minutes_per_job ?? ''}
+              onChange={(e) => onDraftChange('min_billable_labor_minutes_per_job', e.target.value)}
+              onBlur={() => commitNum('min_billable_labor_minutes_per_job')}
+            />
           </div>
         </div>
       </Card>
@@ -115,11 +206,23 @@ export function CompanySetupPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Material Purchase Tax %</label>
-            <Input type="text" inputMode="decimal" value={String(s.material_purchase_tax_percent ?? '')} onChange={(e) => setNum('material_purchase_tax_percent', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.material_purchase_tax_percent ?? ''}
+              onChange={(e) => onDraftChange('material_purchase_tax_percent', e.target.value)}
+              onBlur={() => commitNum('material_purchase_tax_percent')}
+            />
           </div>
           <div className="stack">
             <label className="label">Misc Material %</label>
-            <Input type="text" inputMode="decimal" value={String(s.misc_material_percent ?? '')} onChange={(e) => setNum('misc_material_percent', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.misc_material_percent ?? ''}
+              onChange={(e) => onDraftChange('misc_material_percent', e.target.value)}
+              onBlur={() => commitNum('misc_material_percent')}
+            />
           </div>
           <div className="stack">
             <label className="label">Misc Applies When Customer Supplies Materials</label>
@@ -189,11 +292,23 @@ export function CompanySetupPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Default Discount %</label>
-            <Input type="text" inputMode="decimal" value={String(s.default_discount_percent ?? '')} onChange={(e) => setNum('default_discount_percent', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.default_discount_percent ?? ''}
+              onChange={(e) => onDraftChange('default_discount_percent', e.target.value)}
+              onBlur={() => commitNum('default_discount_percent')}
+            />
           </div>
           <div className="stack">
             <label className="label">Processing Fee %</label>
-            <Input type="text" inputMode="decimal" value={String(s.processing_fee_percent ?? '')} onChange={(e) => setNum('processing_fee_percent', e.target.value)} />
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.processing_fee_percent ?? ''}
+              onChange={(e) => onDraftChange('processing_fee_percent', e.target.value)}
+              onBlur={() => commitNum('processing_fee_percent')}
+            />
           </div>
         </div>
       </Card>
@@ -265,4 +380,5 @@ export function CompanySetupPage() {
     </div>
   );
 }
+
 
