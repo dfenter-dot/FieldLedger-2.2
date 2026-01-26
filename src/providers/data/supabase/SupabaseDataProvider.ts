@@ -1,181 +1,187 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { IDataProvider } from '../IDataProvider';
-import type {
+import {
   AdminRule,
+  Assembly,
   BrandingSettings,
   CompanySettings,
   CsvSettings,
+  Estimate,
+  Folder,
   JobType,
+  LibraryType,
+  Material,
 } from '../types';
-
-function isNoRows(err: any) {
-  return err?.code === 'PGRST116';
-}
+import { IDataProvider } from '../IDataProvider';
+import { seedCompanySettings } from '../local/seed';
 
 export class SupabaseDataProvider implements IDataProvider {
   constructor(private supabase: SupabaseClient) {}
 
-  /* =========================
-     Company / Context
-     ========================= */
+  /* -------------------------------------------------------
+   * Helpers
+   * ----------------------------------------------------- */
+
+  private async currentUserId(): Promise<string | null> {
+    const { data } = await this.supabase.auth.getUser();
+    return data?.user?.id ?? null;
+  }
 
   async getCurrentCompanyId(): Promise<string | null> {
+    const userId = await this.currentUserId();
+    if (!userId) return null;
+
     const { data, error } = await this.supabase
       .from('profiles')
       .select('company_id')
-      .single();
+      .eq('user_id', userId)
+      .maybeSingle();
 
     if (error) {
       console.error('getCurrentCompanyId error', error);
       return null;
     }
 
-    return data?.company_id ?? null;
+    return (data?.company_id as string | null) ?? null;
   }
 
-  /* =========================
-     Company Settings (Company Setup page)
-     ========================= */
+  /* -------------------------------------------------------
+   * Company Settings (Fix A: auto-create default row)
+   * ----------------------------------------------------- */
 
-  private defaultCompanySettings(companyId: string): Partial<CompanySettings> {
-    // Keep defaults conservative; JSON fields can be empty arrays.
-    return {
-      company_id: companyId,
-
-      workdays_per_week: 5,
-      work_hours_per_day: 8,
-      technicians: 1,
-
-      vacation_days_per_year: 0,
-      sick_days_per_year: 0,
-
-      material_purchase_tax_percent: 0,
-      misc_material_percent: 0,
-      default_discount_percent: 0,
-      processing_fee_percent: 0,
-
-      min_billable_labor_minutes_per_job: 0,
-      estimate_validity_days: 30,
-      starting_estimate_number: 1000,
-
-      material_markup_tiers: [],
-      misc_applies_when_customer_supplies: false,
-
-      technician_wages: [],
-
-      business_expenses_mode: 'lump',
-      business_expenses_lump_sum_monthly: 0,
-      business_expenses_itemized: [],
-      business_apply_itemized: false,
-
-      personal_expenses_mode: 'lump',
-      personal_expenses_lump_sum_monthly: 0,
-      personal_expenses_itemized: [],
-      personal_apply_itemized: false,
-
-      net_profit_goal_mode: 'percent',
-      net_profit_goal_amount_monthly: 0,
-      net_profit_goal_percent_of_revenue: 0,
-      revenue_goal_monthly: 0,
-    } as any;
-  }
-
-  async getCompanySettings(): Promise<CompanySettings> {
+  async getCompanySettings(): Promise<CompanySettings | null> {
     const companyId = await this.getCurrentCompanyId();
-    if (!companyId) throw new Error('No company selected for this user.');
+    if (!companyId) return null;
 
-    // Try company_settings first
-    {
-      const { data, error } = await this.supabase
+    // Try to read existing row (maybeSingle avoids 406 when none exists)
+    const { data, error } = await this.supabase
+      .from('company_settings')
+      .select('*')
+      .eq('company_id', companyId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('getCompanySettings error', error);
+      return null;
+    }
+
+    // If missing, create seeded defaults (Fix A)
+    if (!data) {
+      const seed = seedCompanySettings(companyId) as any;
+
+      const { error: upsertErr } = await this.supabase
+        .from('company_settings')
+        .upsert(seed, { onConflict: 'company_id' });
+
+      if (upsertErr) {
+        console.error('getCompanySettings seed upsert error', upsertErr);
+        return null;
+      }
+
+      const { data: created, error: readErr } = await this.supabase
         .from('company_settings')
         .select('*')
         .eq('company_id', companyId)
-        .single();
+        .maybeSingle();
 
-      if (data) return data as any;
-
-      if (error && !isNoRows(error)) {
-        console.error('getCompanySettings error', error);
-        throw error;
+      if (readErr) {
+        console.error('getCompanySettings read after seed error', readErr);
+        return null;
       }
-    }
 
-    // Fallback: some builds used company_setup
-    {
-      const { data, error } = await this.supabase
-        .from('company_setup')
-        .select('*')
-        .eq('company_id', companyId)
-        .single();
-
-      if (data) return data as any;
-
-      if (error && !isNoRows(error)) {
-        console.error('getCompanySettings fallback(company_setup) error', error);
-        // don't throw yet; we can still create in company_settings
-      }
-    }
-
-    // Create default row in company_settings
-    const createPayload = this.defaultCompanySettings(companyId);
-
-    const { error: upErr } = await this.supabase
-      .from('company_settings')
-      .upsert(createPayload as any, { onConflict: 'company_id' });
-
-    if (upErr) {
-      console.error('getCompanySettings create default error', upErr);
-      throw upErr;
-    }
-
-    const { data: created, error: readErr } = await this.supabase
-      .from('company_settings')
-      .select('*')
-      .eq('company_id', companyId)
-      .single();
-
-    if (readErr) {
-      console.error('getCompanySettings read-after-create error', readErr);
-      throw readErr;
-    }
-
-    return created as any;
-  }
-
-  async saveCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings> {
-    const companyId = await this.getCurrentCompanyId();
-    if (!companyId) throw new Error('No company selected for this user.');
-
-    const payload = { ...settings, company_id: companyId };
-
-    const { error } = await this.supabase
-      .from('company_settings')
-      .upsert(payload as any, { onConflict: 'company_id' });
-
-    if (error) {
-      console.error('saveCompanySettings error', error);
-      throw error;
-    }
-
-    const { data, error: readErr } = await this.supabase
-      .from('company_settings')
-      .select('*')
-      .eq('company_id', companyId)
-      .single();
-
-    if (readErr) {
-      console.error('saveCompanySettings read-back error', readErr);
-      throw readErr;
+      return (created as any) ?? null;
     }
 
     return data as any;
   }
 
-  /* =========================
-     Job Types
-     ========================= */
+  async saveCompanySettings(settings: Partial<CompanySettings>): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
 
-  async getJobTypes(): Promise<JobType[]> {
+    const payload = { ...settings, company_id: companyId } as any;
+
+    const { error } = await this.supabase
+      .from('company_settings')
+      .upsert(payload, { onConflict: 'company_id' });
+
+    if (error) console.error('saveCompanySettings error', error);
+  }
+
+  /* -------------------------------------------------------
+   * Branding Settings
+   * ----------------------------------------------------- */
+
+  async getBrandingSettings(): Promise<BrandingSettings | null> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return null;
+
+    const { data, error } = await this.supabase
+      .from('branding_settings')
+      .select('*')
+      .eq('company_id', companyId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('getBrandingSettings error', error);
+      return null;
+    }
+
+    return (data as any) ?? null;
+  }
+
+  async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const payload = { ...settings, company_id: companyId } as any;
+
+    const { error } = await this.supabase
+      .from('branding_settings')
+      .upsert(payload, { onConflict: 'company_id' });
+
+    if (error) console.error('saveBrandingSettings error', error);
+  }
+
+  /* -------------------------------------------------------
+   * CSV Settings
+   * ----------------------------------------------------- */
+
+  async getCsvSettings(): Promise<CsvSettings | null> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return null;
+
+    const { data, error } = await this.supabase
+      .from('csv_settings')
+      .select('*')
+      .eq('company_id', companyId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('getCsvSettings error', error);
+      return null;
+    }
+
+    return (data as any) ?? null;
+  }
+
+  async saveCsvSettings(settings: Partial<CsvSettings>): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const payload = { ...settings, company_id: companyId } as any;
+
+    const { error } = await this.supabase
+      .from('csv_settings')
+      .upsert(payload, { onConflict: 'company_id' });
+
+    if (error) console.error('saveCsvSettings error', error);
+  }
+
+  /* -------------------------------------------------------
+   * Job Types
+   * ----------------------------------------------------- */
+
+  async listJobTypes(): Promise<JobType[]> {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return [];
 
@@ -186,30 +192,21 @@ export class SupabaseDataProvider implements IDataProvider {
       .order('name');
 
     if (error) {
-      console.error('getJobTypes error', error);
+      console.error('listJobTypes error', error);
       return [];
     }
 
-    return (data ?? []) as any;
-  }
-
-  async saveJobType(jobType: Partial<JobType>): Promise<void> {
-    const companyId = await this.getCurrentCompanyId();
-    if (!companyId) return;
-
-    const { error } = await this.supabase
-      .from('job_types')
-      .upsert({ ...jobType, company_id: companyId } as any);
-
-    if (error) console.error('saveJobType error', error);
-  }
-
-  async listJobTypes(): Promise<JobType[]> {
-    return this.getJobTypes();
+    return (data as any) ?? [];
   }
 
   async upsertJobType(jobType: Partial<JobType>): Promise<void> {
-    return this.saveJobType(jobType);
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const payload = { ...jobType, company_id: companyId } as any;
+    const { error } = await this.supabase.from('job_types').upsert(payload);
+
+    if (error) console.error('upsertJobType error', error);
   }
 
   async setDefaultJobType(jobTypeId: string): Promise<void> {
@@ -224,15 +221,15 @@ export class SupabaseDataProvider implements IDataProvider {
     const { error } = await this.supabase
       .from('job_types')
       .update({ is_default: true })
-      .eq('id', jobTypeId)
-      .eq('company_id', companyId);
+      .eq('company_id', companyId)
+      .eq('id', jobTypeId);
 
     if (error) console.error('setDefaultJobType error', error);
   }
 
-  /* =========================
-     Admin Rules
-     ========================= */
+  /* -------------------------------------------------------
+   * Admin Rules
+   * ----------------------------------------------------- */
 
   async listAdminRules(): Promise<AdminRule[]> {
     const companyId = await this.getCurrentCompanyId();
@@ -242,25 +239,24 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('admin_rules')
       .select('*')
       .eq('company_id', companyId)
-      .order('created_at');
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('listAdminRules error', error);
       return [];
     }
 
-    return (data ?? []) as any;
+    return (data as any) ?? [];
   }
 
-  async saveAdminRule(rule: Partial<AdminRule>): Promise<void> {
+  async upsertAdminRule(rule: Partial<AdminRule>): Promise<void> {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return;
 
-    const { error } = await this.supabase
-      .from('admin_rules')
-      .upsert({ ...rule, company_id: companyId } as any);
+    const payload = { ...rule, company_id: companyId } as any;
+    const { error } = await this.supabase.from('admin_rules').upsert(payload);
 
-    if (error) console.error('saveAdminRule error', error);
+    if (error) console.error('upsertAdminRule error', error);
   }
 
   async deleteAdminRule(id: string): Promise<void> {
@@ -270,134 +266,193 @@ export class SupabaseDataProvider implements IDataProvider {
     const { error } = await this.supabase
       .from('admin_rules')
       .delete()
-      .eq('id', id)
-      .eq('company_id', companyId);
+      .eq('company_id', companyId)
+      .eq('id', id);
 
     if (error) console.error('deleteAdminRule error', error);
   }
 
-  /* =========================
-     CSV Settings
-     ========================= */
+  /* -------------------------------------------------------
+   * Folders
+   * ----------------------------------------------------- */
 
-  async getCsvSettings(): Promise<CsvSettings | null> {
+  async listFolders(type: LibraryType): Promise<Folder[]> {
     const companyId = await this.getCurrentCompanyId();
-    if (!companyId) return null;
+    if (!companyId) return [];
 
     const { data, error } = await this.supabase
-      .from('csv_settings')
+      .from('folders')
       .select('*')
       .eq('company_id', companyId)
-      .single();
+      .eq('type', type)
+      .order('name');
 
-    if (error && !isNoRows(error)) {
-      console.error('getCsvSettings error', error);
-      return null;
+    if (error) {
+      console.error('listFolders error', error);
+      return [];
     }
 
-    return (data ?? null) as any;
+    return (data as any) ?? [];
   }
 
-  async saveCsvSettings(settings: Partial<CsvSettings>): Promise<void> {
+  async upsertFolder(folder: Partial<Folder>): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const payload = { ...folder, company_id: companyId } as any;
+    const { error } = await this.supabase.from('folders').upsert(payload);
+
+    if (error) console.error('upsertFolder error', error);
+  }
+
+  async deleteFolder(id: string): Promise<void> {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return;
 
     const { error } = await this.supabase
-      .from('csv_settings')
-      .upsert({ ...settings, company_id: companyId } as any, { onConflict: 'company_id' });
+      .from('folders')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', id);
 
-    if (error) console.error('saveCsvSettings error', error);
+    if (error) console.error('deleteFolder error', error);
   }
 
-  /* =========================
-     Branding Settings
-     ========================= */
+  /* -------------------------------------------------------
+   * Materials
+   * ----------------------------------------------------- */
 
-  private defaultBrandingSettings(companyId: string): Partial<BrandingSettings> {
-    return {
-      company_id: companyId,
-      company_name: '',
-      logo_url: null,
-      primary_color: null,
-      secondary_color: null,
-    } as any;
-  }
-
-  async getBrandingSettings(): Promise<BrandingSettings> {
+  async listMaterials(type: LibraryType): Promise<Material[]> {
     const companyId = await this.getCurrentCompanyId();
-    if (!companyId) throw new Error('No company selected for this user.');
+    if (!companyId) return [];
 
     const { data, error } = await this.supabase
-      .from('branding_settings')
+      .from('materials')
       .select('*')
       .eq('company_id', companyId)
-      .single();
-
-    if (data) return data as any;
-
-    if (error && !isNoRows(error)) {
-      console.error('getBrandingSettings error', error);
-      throw error;
-    }
-
-    // Create default row
-    const { error: upErr } = await this.supabase
-      .from('branding_settings')
-      .upsert(this.defaultBrandingSettings(companyId) as any, { onConflict: 'company_id' });
-
-    if (upErr) {
-      console.error('getBrandingSettings create default error', upErr);
-      throw upErr;
-    }
-
-    const { data: created, error: readErr } = await this.supabase
-      .from('branding_settings')
-      .select('*')
-      .eq('company_id', companyId)
-      .single();
-
-    if (readErr) {
-      console.error('getBrandingSettings read-after-create error', readErr);
-      throw readErr;
-    }
-
-    return created as any;
-  }
-
-  async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
-    const companyId = await this.getCurrentCompanyId();
-    if (!companyId) throw new Error('No company selected for this user.');
-
-    const payload = { ...settings, company_id: companyId };
-
-    const { error } = await this.supabase
-      .from('branding_settings')
-      .upsert(payload as any, { onConflict: 'company_id' });
+      .eq('library', type)
+      .order('name');
 
     if (error) {
-      console.error('saveBrandingSettings error', error);
-      throw error;
+      console.error('listMaterials error', error);
+      return [];
     }
 
-    const { data, error: readErr } = await this.supabase
-      .from('branding_settings')
-      .select('*')
-      .eq('company_id', companyId)
-      .single();
-
-    if (readErr) {
-      console.error('saveBrandingSettings read-back error', readErr);
-      throw readErr;
-    }
-
-    return data as any;
+    return (data as any) ?? [];
   }
 
-  /* =========================
-     Estimates (so app can load)
-     ========================= */
+  async getMaterial(id: string): Promise<Material | null> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return null;
 
-  async listEstimates(): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('materials')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('getMaterial error', error);
+      return null;
+    }
+
+    return (data as any) ?? null;
+  }
+
+  async upsertMaterial(material: Partial<Material>): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const payload = { ...material, company_id: companyId } as any;
+    const { error } = await this.supabase.from('materials').upsert(payload);
+
+    if (error) console.error('upsertMaterial error', error);
+  }
+
+  async deleteMaterial(id: string): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const { error } = await this.supabase
+      .from('materials')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', id);
+
+    if (error) console.error('deleteMaterial error', error);
+  }
+
+  /* -------------------------------------------------------
+   * Assemblies
+   * ----------------------------------------------------- */
+
+  async listAssemblies(type: LibraryType): Promise<Assembly[]> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return [];
+
+    const { data, error } = await this.supabase
+      .from('assemblies')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('library', type)
+      .order('name');
+
+    if (error) {
+      console.error('listAssemblies error', error);
+      return [];
+    }
+
+    return (data as any) ?? [];
+  }
+
+  async getAssembly(id: string): Promise<Assembly | null> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return null;
+
+    const { data, error } = await this.supabase
+      .from('assemblies')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('getAssembly error', error);
+      return null;
+    }
+
+    return (data as any) ?? null;
+  }
+
+  async upsertAssembly(assembly: Partial<Assembly>): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const payload = { ...assembly, company_id: companyId } as any;
+    const { error } = await this.supabase.from('assemblies').upsert(payload);
+
+    if (error) console.error('upsertAssembly error', error);
+  }
+
+  async deleteAssembly(id: string): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const { error } = await this.supabase
+      .from('assemblies')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', id);
+
+    if (error) console.error('deleteAssembly error', error);
+  }
+
+  /* -------------------------------------------------------
+   * Estimates
+   * ----------------------------------------------------- */
+
+  async listEstimates(): Promise<Estimate[]> {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return [];
 
@@ -412,6 +467,48 @@ export class SupabaseDataProvider implements IDataProvider {
       return [];
     }
 
-    return data ?? [];
+    return (data as any) ?? [];
+  }
+
+  async getEstimate(id: string): Promise<Estimate | null> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return null;
+
+    const { data, error } = await this.supabase
+      .from('estimates')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('getEstimate error', error);
+      return null;
+    }
+
+    return (data as any) ?? null;
+  }
+
+  async upsertEstimate(estimate: Partial<Estimate>): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const payload = { ...estimate, company_id: companyId } as any;
+    const { error } = await this.supabase.from('estimates').upsert(payload);
+
+    if (error) console.error('upsertEstimate error', error);
+  }
+
+  async deleteEstimate(id: string): Promise<void> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return;
+
+    const { error } = await this.supabase
+      .from('estimates')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', id);
+
+    if (error) console.error('deleteEstimate error', error);
   }
 }
