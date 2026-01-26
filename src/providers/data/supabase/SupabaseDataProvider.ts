@@ -51,24 +51,18 @@ export class SupabaseDataProvider implements IDataProvider {
     return data ?? null;
   }
 
-  async saveCompanySettings(
-    settings: Partial<CompanySettings>
-  ): Promise<void> {
+  async saveCompanySettings(settings: Partial<CompanySettings>): Promise<void> {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return;
 
-    const payload = {
-      ...settings,
-      company_id: companyId,
-    };
-
     const { error } = await this.supabase
       .from('company_settings')
-      .upsert(payload, { onConflict: 'company_id' });
+      .upsert(
+        { ...settings, company_id: companyId },
+        { onConflict: 'company_id' }
+      );
 
-    if (error) {
-      console.error('saveCompanySettings error', error);
-    }
+    if (error) console.error('saveCompanySettings error', error);
   }
 
   /* =========================
@@ -97,21 +91,13 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return;
 
-    const payload = {
-      ...jobType,
-      company_id: companyId,
-    };
-
     const { error } = await this.supabase
       .from('job_types')
-      .upsert(payload);
+      .upsert({ ...jobType, company_id: companyId });
 
-    if (error) {
-      console.error('saveJobType error', error);
-    }
+    if (error) console.error('saveJobType error', error);
   }
 
-  // Admin UI compatibility aliases
   async listJobTypes(): Promise<JobType[]> {
     return this.getJobTypes();
   }
@@ -124,22 +110,18 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return;
 
-    // Clear existing default
     await this.supabase
       .from('job_types')
       .update({ is_default: false })
       .eq('company_id', companyId);
 
-    // Set new default
     const { error } = await this.supabase
       .from('job_types')
       .update({ is_default: true })
       .eq('id', jobTypeId)
       .eq('company_id', companyId);
 
-    if (error) {
-      console.error('setDefaultJobType error', error);
-    }
+    if (error) console.error('setDefaultJobType error', error);
   }
 
   /* =========================
@@ -168,18 +150,11 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return;
 
-    const payload = {
-      ...rule,
-      company_id: companyId,
-    };
-
     const { error } = await this.supabase
       .from('admin_rules')
-      .upsert(payload);
+      .upsert({ ...rule, company_id: companyId });
 
-    if (error) {
-      console.error('saveAdminRule error', error);
-    }
+    if (error) console.error('saveAdminRule error', error);
   }
 
   async deleteAdminRule(id: string): Promise<void> {
@@ -192,9 +167,7 @@ export class SupabaseDataProvider implements IDataProvider {
       .eq('id', id)
       .eq('company_id', companyId);
 
-    if (error) {
-      console.error('deleteAdminRule error', error);
-    }
+    if (error) console.error('deleteAdminRule error', error);
   }
 
   /* =========================
@@ -223,18 +196,14 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return;
 
-    const payload = {
-      ...settings,
-      company_id: companyId,
-    };
-
     const { error } = await this.supabase
       .from('csv_settings')
-      .upsert(payload, { onConflict: 'company_id' });
+      .upsert(
+        { ...settings, company_id: companyId },
+        { onConflict: 'company_id' }
+      );
 
-    if (error) {
-      console.error('saveCsvSettings error', error);
-    }
+    if (error) console.error('saveCsvSettings error', error);
   }
 
   /* =========================
@@ -265,17 +234,35 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.getCurrentCompanyId();
     if (!companyId) return;
 
-    const payload = {
-      ...settings,
-      company_id: companyId,
-    };
-
     const { error } = await this.supabase
       .from('branding_settings')
-      .upsert(payload, { onConflict: 'company_id' });
+      .upsert(
+        { ...settings, company_id: companyId },
+        { onConflict: 'company_id' }
+      );
+
+    if (error) console.error('saveBrandingSettings error', error);
+  }
+
+  /* =========================
+     Estimates (CRITICAL)
+     ========================= */
+
+  async listEstimates(): Promise<any[]> {
+    const companyId = await this.getCurrentCompanyId();
+    if (!companyId) return [];
+
+    const { data, error } = await this.supabase
+      .from('estimates')
+      .select('*')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('saveBrandingSettings error', error);
+      console.error('listEstimates error', error);
+      return [];
     }
+
+    return data ?? [];
   }
 }
