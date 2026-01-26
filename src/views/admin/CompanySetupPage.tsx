@@ -4,7 +4,7 @@ import { Button } from '../../ui/components/Button';
 import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
-import type { CompanySettings } from '../../providers/data/types';
+import type { CompanySettings, JobType } from '../../providers/data/types';
 
 type Tier = { min: number; max: number; markup_percent: number };
 type Wage = { name: string; hourly_rate: number };
@@ -58,6 +58,9 @@ export function CompanySetupPage() {
   const data = useData();
   const [s, setS] = useState<CompanySettings | null>(null);
 
+  // Default job type (for efficiency + margin target)
+  const [defaultJobType, setDefaultJobType] = useState<JobType | null>(null);
+
   // status line text (small text at bottom)
   const [status, setStatus] = useState<string>('');
 
@@ -79,16 +82,18 @@ export function CompanySetupPage() {
   const [bizItemDrafts, setBizItemDrafts] = useState<Array<{ name: string; amount: string; frequency: ExpenseItem['frequency'] }>>([]);
   const [perItemDrafts, setPerItemDrafts] = useState<Array<{ name: string; amount: string; frequency: ExpenseItem['frequency'] }>>([]);
 
-  // Goals drafts
-  const [revGoalDraft, setRevGoalDraft] = useState<string>('');
+  // Net profit drafts
   const [netProfitAmtDraft, setNetProfitAmtDraft] = useState<string>('');
   const [netProfitPctDraft, setNetProfitPctDraft] = useState<string>('');
 
   useEffect(() => {
-    data
-      .getCompanySettings()
-      .then((cs) => {
+    // Load settings + job types in parallel
+    Promise.all([data.getCompanySettings(), data.listJobTypes()])
+      .then(([cs, jts]) => {
         setS(cs);
+
+        const def = (jts ?? []).find((x) => x.is_default) ?? null;
+        setDefaultJobType(def);
 
         // core numeric drafts
         setDraft((prev) => ({
@@ -142,8 +147,7 @@ export function CompanySetupPage() {
           }))
         );
 
-        // goals drafts
-        setRevGoalDraft(cs.revenue_goal_monthly != null ? String(cs.revenue_goal_monthly) : '');
+        // net profit drafts
         setNetProfitAmtDraft(cs.net_profit_goal_amount_monthly != null ? String(cs.net_profit_goal_amount_monthly) : '');
         setNetProfitPctDraft(cs.net_profit_goal_percent_of_revenue != null ? String(cs.net_profit_goal_percent_of_revenue) : '');
       })
@@ -193,6 +197,91 @@ export function CompanySetupPage() {
     });
   }
 
+  // --------------------------
+  // Derived totals (use DRAFTS while editing)
+  // --------------------------
+
+  const bizMonthly =
+    s?.business_apply_itemized
+      ? sumItemizedMonthly(
+          bizItemDrafts.map((x) => ({
+            name: x.name,
+            amount: toNum(x.amount, 0),
+            frequency: x.frequency,
+          }))
+        )
+      : toNum(bizLumpDraft, 0);
+
+  const perMonthly =
+    s?.personal_apply_itemized
+      ? sumItemizedMonthly(
+          perItemDrafts.map((x) => ({
+            name: x.name,
+            amount: toNum(x.amount, 0),
+            frequency: x.frequency,
+          }))
+        )
+      : toNum(perLumpDraft, 0);
+
+  const overheadMonthly = bizMonthly + perMonthly;
+  const overheadAnnual = overheadMonthly * 12;
+
+  // Default Job Type inputs (efficiency + margin)
+  const efficiencyPercent = Number(defaultJobType?.efficiency_percent ?? 100);
+  const grossMarginTargetPercent = Number(defaultJobType?.profit_margin_percent ?? 70); // displayed as “Gross Margin Target (%)”
+
+  // Work capacity
+  const workdaysPerYear = Math.max(
+    0,
+    (Number(s?.workdays_per_week) || 0) * 52 - (Number(s?.vacation_days_per_year) || 0) - (Number(s?.sick_days_per_year) || 0)
+  );
+  const hoursPerTechYear = workdaysPerYear * (Number(s?.work_hours_per_day) || 0);
+  const techCount = Math.max(0, Number(s?.technicians) || 0);
+  const totalHoursYear = hoursPerTechYear * techCount;
+
+  // Apply efficiency the way YOU described:
+  // If totalHours = 2000 and efficiency = 50%, effective = 1000
+  const effectiveHoursYear = totalHoursYear * Math.max(0, efficiencyPercent) / 100;
+
+  const overheadPerHour = effectiveHoursYear > 0 ? overheadAnnual / effectiveHoursYear : 0;
+
+  const avgTechWage = avgWage(wages);
+  const loadedLaborRate = avgTechWage + overheadPerHour;
+
+  // --------------------------
+  // Revenue goal derived from Default Job Type (margin target)
+  // --------------------------
+  const margin = Math.max(0, Math.min(100, grossMarginTargetPercent)) / 100;
+
+  // Net profit rules you confirmed:
+  // - percent mode: based on revenue goal
+  // - dollar mode: fixed amount based on overhead
+  const npPct = Math.max(0, Number(s?.net_profit_goal_percent_of_revenue || 0)) / 100;
+  const npDollar = Math.max(0, toNum(netProfitAmtDraft, Number(s?.net_profit_goal_amount_monthly || 0)));
+
+  // Solve revenue goal:
+  // If percent mode: R * margin = overhead + (R * npPct)  => R = overhead / (margin - npPct)
+  // If dollar mode:  R * margin = overhead + npDollar     => R = (overhead + npDollar) / margin
+  const revenueGoalMonthlyDerived = (() => {
+    if (!margin || margin <= 0) return 0;
+    if ((s?.net_profit_goal_mode ?? 'dollar') === 'percent') {
+      const denom = margin - npPct;
+      if (denom <= 0) return 0;
+      return overheadMonthly / denom;
+    }
+    return (overheadMonthly + npDollar) / margin;
+  })();
+
+  const netProfitMonthly =
+    (s?.net_profit_goal_mode ?? 'dollar') === 'percent'
+      ? revenueGoalMonthlyDerived * npPct
+      : npDollar;
+
+  const grossProfitNeededMonthly = overheadMonthly + netProfitMonthly;
+  const grossProfitPercentOfRevenue =
+    revenueGoalMonthlyDerived > 0 ? (grossProfitNeededMonthly / revenueGoalMonthlyDerived) * 100 : 0;
+
+  // commit payload
   function commitAllDraftsIntoSettings(): CompanySettings {
     if (!s) throw new Error('No company settings loaded');
     const next: CompanySettings = { ...s };
@@ -244,10 +333,12 @@ export function CompanySetupPage() {
       frequency: it.frequency ?? 'monthly',
     }));
 
-    // Goals
-    (next as any).revenue_goal_monthly = toNum(revGoalDraft ?? '', next.revenue_goal_monthly ?? 0);
+    // Net profit goals
     (next as any).net_profit_goal_amount_monthly = toNum(netProfitAmtDraft ?? '', next.net_profit_goal_amount_monthly ?? 0);
     (next as any).net_profit_goal_percent_of_revenue = toNum(netProfitPctDraft ?? '', next.net_profit_goal_percent_of_revenue ?? 0);
+
+    // Revenue goal is derived from Default Job Type (margin target), not user-input
+    ;(next as any).revenue_goal_monthly = revenueGoalMonthlyDerived;
 
     return next;
   }
@@ -259,13 +350,14 @@ export function CompanySetupPage() {
       setStatus('');
       setSaveUi('saving');
 
-      // commit any in-progress edits before save
       const payload = commitAllDraftsIntoSettings();
 
       await data.saveCompanySettings(payload);
 
-      const fresh = await data.getCompanySettings();
+      // refresh both settings + job types (in case default changed elsewhere)
+      const [fresh, jts] = await Promise.all([data.getCompanySettings(), data.listJobTypes()]);
       setS(fresh);
+      setDefaultJobType((jts ?? []).find((x) => x.is_default) ?? null);
 
       // re-sync drafts quickly (so UI matches persisted values)
       setDraft((prev) => ({
@@ -318,7 +410,6 @@ export function CompanySetupPage() {
         }))
       );
 
-      setRevGoalDraft(fresh.revenue_goal_monthly != null ? String(fresh.revenue_goal_monthly) : '');
       setNetProfitAmtDraft(fresh.net_profit_goal_amount_monthly != null ? String(fresh.net_profit_goal_amount_monthly) : '');
       setNetProfitPctDraft(fresh.net_profit_goal_percent_of_revenue != null ? String(fresh.net_profit_goal_percent_of_revenue) : '');
 
@@ -334,49 +425,6 @@ export function CompanySetupPage() {
 
   if (!s) return <div className="muted">Loading…</div>;
 
-  // ----- Cost breakdown computations (display only) -----
-  const bizMonthly =
-    s.business_apply_itemized
-      ? sumItemizedMonthly((s.business_expenses_itemized ?? []) as any)
-      : Number(s.business_expenses_lump_sum_monthly || 0);
-
-  const perMonthly =
-    s.personal_apply_itemized
-      ? sumItemizedMonthly((s.personal_expenses_itemized ?? []) as any)
-      : Number(s.personal_expenses_lump_sum_monthly || 0);
-
-  const overheadMonthly = bizMonthly + perMonthly;
-  const overheadAnnual = overheadMonthly * 12;
-
-  const workdaysPerYear = Math.max(0, (Number(s.workdays_per_week) || 0) * 52 - (Number(s.vacation_days_per_year) || 0) - (Number(s.sick_days_per_year) || 0));
-  const hoursPerTechYear = workdaysPerYear * (Number(s.work_hours_per_day) || 0);
-  const techCount = Math.max(0, Number(s.technicians) || 0);
-  const totalHoursYear = hoursPerTechYear * techCount;
-
-  const overheadPerHour = totalHoursYear > 0 ? overheadAnnual / totalHoursYear : 0;
-
-  const avgTechWage = avgWage(wages);
-  const loadedLaborRate = avgTechWage + overheadPerHour;
-
-  // Net profit rules you confirmed:
-  // - If percent: based on revenue goal
-  // - If fixed $: based on overhead (i.e., overhead + fixed profit drives required revenue)
-  const revenueGoalMonthly = Number(s.revenue_goal_monthly || 0);
-  const netProfitMonthly =
-    s.net_profit_goal_mode === 'percent'
-      ? revenueGoalMonthly * (Number(s.net_profit_goal_percent_of_revenue || 0) / 100)
-      : Number(s.net_profit_goal_amount_monthly || 0);
-
-  const grossProfitNeededMonthly = overheadMonthly + netProfitMonthly;
-  const grossProfitPercentOfRevenue =
-    revenueGoalMonthly > 0 ? (grossProfitNeededMonthly / revenueGoalMonthly) * 100 : 0;
-
-  const requiredRevenueIfDollarMode =
-    s.net_profit_goal_mode === 'dollar'
-      ? overheadMonthly + netProfitMonthly
-      : revenueGoalMonthly;
-
-  // ----- Save button label -----
   const saveLabel =
     saveUi === 'saving' ? 'Saving…' : saveUi === 'saved' ? 'Saved ✓' : saveUi === 'error' ? 'Error' : 'Save';
 
@@ -386,7 +434,7 @@ export function CompanySetupPage() {
         title="Company Setup"
         right={
           <Button
-            variant={saveUi === 'saved' ? 'primary' : 'primary'}
+            variant="primary"
             onClick={save}
             disabled={saveUi === 'saving'}
             aria-busy={saveUi === 'saving'}
@@ -396,7 +444,7 @@ export function CompanySetupPage() {
         }
       >
         <div className="muted small">
-          Defaults and pricing knobs used across Materials / Assemblies / Estimates. Technician wage average drives labor COGS.
+          Defaults and pricing knobs used across Materials / Assemblies / Estimates. Job Type Default drives efficiency + margin target.
         </div>
       </Card>
 
@@ -432,7 +480,6 @@ export function CompanySetupPage() {
               value={draft.technicians ?? ''}
               onChange={(e) => onDraftChange('technicians', e.target.value)}
               onBlur={() => {
-                // commit and resize wages
                 const target = Math.max(0, toInt(draft.technicians ?? '', 0));
                 setS({ ...s, technicians: target as any });
                 setDraft((d) => ({ ...d, technicians: (draft.technicians ?? '').trim() === '' ? '' : String(target) }));
@@ -498,262 +545,6 @@ export function CompanySetupPage() {
         </div>
       </Card>
 
-      <Card title="Materials">
-        <div className="grid2">
-          <div className="stack">
-            <label className="label">Material Purchase Tax %</label>
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={draft.material_purchase_tax_percent ?? ''}
-              onChange={(e) => onDraftChange('material_purchase_tax_percent', e.target.value)}
-              onBlur={() => commitNum('material_purchase_tax_percent')}
-            />
-          </div>
-
-          <div className="stack">
-            <label className="label">Misc Material %</label>
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={draft.misc_material_percent ?? ''}
-              onChange={(e) => onDraftChange('misc_material_percent', e.target.value)}
-              onBlur={() => commitNum('misc_material_percent')}
-            />
-          </div>
-
-          <div className="stack">
-            <label className="label">Misc Applies When Customer Supplies Materials</label>
-            <Toggle
-              checked={Boolean(s.misc_applies_when_customer_supplies)}
-              onChange={(v) => setS({ ...s, misc_applies_when_customer_supplies: v })}
-              label={s.misc_applies_when_customer_supplies ? 'Yes' : 'No'}
-            />
-          </div>
-        </div>
-
-        <div className="mt stack">
-          <div className="rowBetween">
-            <strong>Material Markup Tiers</strong>
-            <Button
-              onClick={() => {
-                const nextTiers = [...tiers, { min: 0, max: 0, markup_percent: 0 }];
-                setS({ ...s, material_markup_tiers: nextTiers as any });
-                setTierDrafts((d) => [...d, { min: '', max: '', markup_percent: '' }]);
-              }}
-            >
-              Add Tier
-            </Button>
-          </div>
-          <div className="muted small">Markup applies after purchase tax. Tier match uses cost-with-tax per-unit.</div>
-
-          <div className="stack">
-            {tiers.map((t, idx) => {
-              const d = tierDrafts[idx] ?? { min: String(t.min ?? 0), max: String(t.max ?? 0), markup_percent: String(t.markup_percent ?? 0) };
-              return (
-                <div key={idx} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span className="muted small">Min</span>
-                  <Input
-                    style={{ width: 90 }}
-                    type="text"
-                    inputMode="decimal"
-                    value={d.min}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setTierDrafts((prev) => {
-                        const out = [...prev];
-                        out[idx] = { ...(out[idx] ?? { min: '', max: '', markup_percent: '' }), min: v };
-                        return out;
-                      });
-                    }}
-                    onBlur={() => {
-                      const min = toNum(tierDrafts[idx]?.min ?? d.min, 0);
-                      const next = [...tiers];
-                      next[idx] = { ...t, min };
-                      setS({ ...s, material_markup_tiers: next as any });
-                      setTierDrafts((prev) => {
-                        const out = [...prev];
-                        out[idx] = { ...(out[idx] ?? { min: '', max: '', markup_percent: '' }), min: String(min) };
-                        return out;
-                      });
-                    }}
-                  />
-
-                  <span className="muted small">Max</span>
-                  <Input
-                    style={{ width: 90 }}
-                    type="text"
-                    inputMode="decimal"
-                    value={d.max}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setTierDrafts((prev) => {
-                        const out = [...prev];
-                        out[idx] = { ...(out[idx] ?? { min: '', max: '', markup_percent: '' }), max: v };
-                        return out;
-                      });
-                    }}
-                    onBlur={() => {
-                      const max = toNum(tierDrafts[idx]?.max ?? d.max, 0);
-                      const next = [...tiers];
-                      next[idx] = { ...t, max };
-                      setS({ ...s, material_markup_tiers: next as any });
-                      setTierDrafts((prev) => {
-                        const out = [...prev];
-                        out[idx] = { ...(out[idx] ?? { min: '', max: '', markup_percent: '' }), max: String(max) };
-                        return out;
-                      });
-                    }}
-                  />
-
-                  <span className="muted small">Markup %</span>
-                  <Input
-                    style={{ width: 90 }}
-                    type="text"
-                    inputMode="decimal"
-                    value={d.markup_percent}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setTierDrafts((prev) => {
-                        const out = [...prev];
-                        out[idx] = { ...(out[idx] ?? { min: '', max: '', markup_percent: '' }), markup_percent: v };
-                        return out;
-                      });
-                    }}
-                    onBlur={() => {
-                      const mp = toNum(tierDrafts[idx]?.markup_percent ?? d.markup_percent, 0);
-                      const next = [...tiers];
-                      next[idx] = { ...t, markup_percent: mp };
-                      setS({ ...s, material_markup_tiers: next as any });
-                      setTierDrafts((prev) => {
-                        const out = [...prev];
-                        out[idx] = { ...(out[idx] ?? { min: '', max: '', markup_percent: '' }), markup_percent: String(mp) };
-                        return out;
-                      });
-                    }}
-                  />
-
-                  <Button
-                    onClick={() => {
-                      const next = [...tiers];
-                      next.splice(idx, 1);
-                      setS({ ...s, material_markup_tiers: next as any });
-
-                      setTierDrafts((prev) => {
-                        const out = [...prev];
-                        out.splice(idx, 1);
-                        return out;
-                      });
-                    }}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              );
-            })}
-            {tiers.length === 0 ? <div className="muted">No tiers set.</div> : null}
-          </div>
-        </div>
-      </Card>
-
-      <Card title="Discounts & Fees">
-        <div className="grid2">
-          <div className="stack">
-            <label className="label">Default Discount %</label>
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={draft.default_discount_percent ?? ''}
-              onChange={(e) => onDraftChange('default_discount_percent', e.target.value)}
-              onBlur={() => commitNum('default_discount_percent')}
-            />
-          </div>
-          <div className="stack">
-            <label className="label">Processing Fee %</label>
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={draft.processing_fee_percent ?? ''}
-              onChange={(e) => onDraftChange('processing_fee_percent', e.target.value)}
-              onBlur={() => commitNum('processing_fee_percent')}
-            />
-          </div>
-        </div>
-      </Card>
-
-      <Card title="Technician Wages">
-        <div className="muted small">
-          Average wage used for labor COGS calculations: <strong>${avgTechWage.toFixed(2)}/hr</strong>
-        </div>
-
-        <div className="mt stack">
-          {wages.map((w, idx) => (
-            <div key={idx} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Input
-                style={{ minWidth: 180 }}
-                value={w.name}
-                onChange={(e) => {
-                  const next = [...wages];
-                  next[idx] = { ...w, name: e.target.value };
-                  setS({ ...s, technician_wages: next as any });
-                }}
-                placeholder="Technician name"
-              />
-              <Input
-                style={{ width: 140 }}
-                type="text"
-                inputMode="decimal"
-                value={wageDrafts[idx] ?? ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setWageDrafts((prev) => {
-                    const out = [...prev];
-                    out[idx] = v;
-                    return out;
-                  });
-                }}
-                onBlur={() => {
-                  const val = toNum(wageDrafts[idx] ?? '', 0);
-                  const next = [...wages];
-                  next[idx] = { ...w, hourly_rate: val };
-                  setS({ ...s, technician_wages: next as any });
-                  setWageDrafts((prev) => {
-                    const out = [...prev];
-                    out[idx] = (wageDrafts[idx] ?? '').trim() === '' ? '' : String(val);
-                    return out;
-                  });
-                }}
-                placeholder="$ / hr"
-              />
-              <Button
-                onClick={() => {
-                  const next = [...wages];
-                  next.splice(idx, 1);
-                  setS({ ...s, technician_wages: next as any });
-                  setWageDrafts((prev) => {
-                    const out = [...prev];
-                    out.splice(idx, 1);
-                    return out;
-                  });
-                }}
-              >
-                Remove
-              </Button>
-            </div>
-          ))}
-
-          <Button
-            onClick={() => {
-              const next = [...wages, { name: `Tech ${wages.length + 1}`, hourly_rate: 0 }];
-              setS({ ...s, technician_wages: next as any });
-              setWageDrafts((prev) => [...prev, '']);
-            }}
-          >
-            Add Technician
-          </Button>
-        </div>
-      </Card>
-
       <Card title="Business Expenses">
         <div className="grid2">
           <div className="stack">
@@ -773,18 +564,13 @@ export function CompanySetupPage() {
                 inputMode="decimal"
                 value={bizLumpDraft}
                 onChange={(e) => setBizLumpDraft(e.target.value)}
-                onBlur={() => setS({ ...s, business_expenses_lump_sum_monthly: toNum(bizLumpDraft, 0) })}
               />
             </div>
           ) : (
             <div className="stack" style={{ gridColumn: '1 / -1' }}>
               <div className="rowBetween">
                 <strong>Itemized</strong>
-                <Button
-                  onClick={() =>
-                    setBizItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])
-                  }
-                >
+                <Button onClick={() => setBizItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])}>
                   Add Expense
                 </Button>
               </div>
@@ -821,14 +607,6 @@ export function CompanySetupPage() {
                             return out;
                           });
                         }}
-                        onBlur={() => {
-                          const amt = toNum(bizItemDrafts[idx]?.amount ?? '', 0);
-                          setBizItemDrafts((prev) => {
-                            const out = [...prev];
-                            out[idx] = { ...out[idx], amount: (bizItemDrafts[idx]?.amount ?? '').trim() === '' ? '' : String(amt) };
-                            return out;
-                          });
-                        }}
                         placeholder="$"
                       />
                       <select
@@ -865,7 +643,7 @@ export function CompanySetupPage() {
               </div>
 
               <div className="muted small">
-                Monthly equivalent: <strong>${sumItemizedMonthly(bizItemDrafts.map((x) => ({ name: x.name, amount: toNum(x.amount, 0), frequency: x.frequency }))).toFixed(2)}</strong>
+                Monthly equivalent: <strong>${bizMonthly.toFixed(2)}</strong>
               </div>
             </div>
           )}
@@ -891,18 +669,13 @@ export function CompanySetupPage() {
                 inputMode="decimal"
                 value={perLumpDraft}
                 onChange={(e) => setPerLumpDraft(e.target.value)}
-                onBlur={() => setS({ ...s, personal_expenses_lump_sum_monthly: toNum(perLumpDraft, 0) })}
               />
             </div>
           ) : (
             <div className="stack" style={{ gridColumn: '1 / -1' }}>
               <div className="rowBetween">
                 <strong>Itemized</strong>
-                <Button
-                  onClick={() =>
-                    setPerItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])
-                  }
-                >
+                <Button onClick={() => setPerItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])}>
                   Add Expense
                 </Button>
               </div>
@@ -939,14 +712,6 @@ export function CompanySetupPage() {
                             return out;
                           });
                         }}
-                        onBlur={() => {
-                          const amt = toNum(perItemDrafts[idx]?.amount ?? '', 0);
-                          setPerItemDrafts((prev) => {
-                            const out = [...prev];
-                            out[idx] = { ...out[idx], amount: (perItemDrafts[idx]?.amount ?? '').trim() === '' ? '' : String(amt) };
-                            return out;
-                          });
-                        }}
                         placeholder="$"
                       />
                       <select
@@ -983,27 +748,15 @@ export function CompanySetupPage() {
               </div>
 
               <div className="muted small">
-                Monthly equivalent: <strong>${sumItemizedMonthly(perItemDrafts.map((x) => ({ name: x.name, amount: toNum(x.amount, 0), frequency: x.frequency }))).toFixed(2)}</strong>
+                Monthly equivalent: <strong>${perMonthly.toFixed(2)}</strong>
               </div>
             </div>
           )}
         </div>
       </Card>
 
-      <Card title="Revenue & Net Profit Goals">
+      <Card title="Net Profit Goals">
         <div className="grid2">
-          <div className="stack">
-            <label className="label">Revenue Goal (Monthly)</label>
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={revGoalDraft}
-              onChange={(e) => setRevGoalDraft(e.target.value)}
-              onBlur={() => setS({ ...s, revenue_goal_monthly: toNum(revGoalDraft, 0) })}
-              placeholder="$"
-            />
-          </div>
-
           <div className="stack">
             <label className="label">Net Profit Goal Mode</label>
             <Toggle
@@ -1014,55 +767,58 @@ export function CompanySetupPage() {
           </div>
 
           {s.net_profit_goal_mode === 'percent' ? (
-            <>
-              <div className="stack">
-                <label className="label">Net Profit % of Revenue</label>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  value={netProfitPctDraft}
-                  onChange={(e) => setNetProfitPctDraft(e.target.value)}
-                  onBlur={() => setS({ ...s, net_profit_goal_percent_of_revenue: toNum(netProfitPctDraft, 0) })}
-                  placeholder="%"
-                />
-              </div>
-              <div className="stack">
-                <label className="label">Net Profit (Monthly)</label>
-                <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-                  ${netProfitMonthly.toFixed(2)}
-                </div>
-              </div>
-            </>
+            <div className="stack">
+              <label className="label">Net Profit % of Revenue</label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={netProfitPctDraft}
+                onChange={(e) => setNetProfitPctDraft(e.target.value)}
+                placeholder="%"
+              />
+            </div>
           ) : (
-            <>
-              <div className="stack">
-                <label className="label">Net Profit (Fixed $ / Month)</label>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  value={netProfitAmtDraft}
-                  onChange={(e) => setNetProfitAmtDraft(e.target.value)}
-                  onBlur={() => setS({ ...s, net_profit_goal_amount_monthly: toNum(netProfitAmtDraft, 0) })}
-                  placeholder="$"
-                />
-              </div>
-              <div className="stack">
-                <label className="label">Required Revenue (Overhead + Profit)</label>
-                <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-                  ${requiredRevenueIfDollarMode.toFixed(2)}
-                </div>
-              </div>
-            </>
+            <div className="stack">
+              <label className="label">Net Profit (Fixed $ / Month)</label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={netProfitAmtDraft}
+                onChange={(e) => setNetProfitAmtDraft(e.target.value)}
+                placeholder="$"
+              />
+            </div>
           )}
         </div>
 
         <div className="muted small">
-          Rules: percent profit is based on revenue goal. Fixed profit is treated as an overhead-based monthly target.
+          Revenue goal is derived from the Default Job Type margin target. Net profit % mode uses that derived revenue.
         </div>
       </Card>
 
       <Card title="Cost Breakdown (Computed)">
         <div className="grid2">
+          <div className="stack">
+            <label className="label">Default Job Type</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              {defaultJobType ? defaultJobType.name : 'None set'}
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Efficiency (Default Job Type)</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              {efficiencyPercent.toFixed(0)}%
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Gross Margin Target (Default Job Type)</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              {grossMarginTargetPercent.toFixed(0)}%
+            </div>
+          </div>
+
           <div className="stack">
             <label className="label">Overhead (Monthly)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
@@ -1092,6 +848,13 @@ export function CompanySetupPage() {
           </div>
 
           <div className="stack">
+            <label className="label">Effective Hours / Year (Efficiency Applied)</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              {effectiveHoursYear.toFixed(0)}
+            </div>
+          </div>
+
+          <div className="stack">
             <label className="label">Overhead / Labor Hour</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
               ${overheadPerHour.toFixed(2)}
@@ -1113,6 +876,13 @@ export function CompanySetupPage() {
           </div>
 
           <div className="stack">
+            <label className="label">Revenue Goal (Monthly, Derived)</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              ${revenueGoalMonthlyDerived.toFixed(2)}
+            </div>
+          </div>
+
+          <div className="stack">
             <label className="label">Gross Profit Needed (Monthly)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
               ${grossProfitNeededMonthly.toFixed(2)}
@@ -1120,7 +890,7 @@ export function CompanySetupPage() {
           </div>
 
           <div className="stack">
-            <label className="label">Gross Profit % of Revenue Goal</label>
+            <label className="label">Gross Profit % of Derived Revenue</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
               {grossProfitPercentOfRevenue.toFixed(2)}%
             </div>
@@ -1128,32 +898,7 @@ export function CompanySetupPage() {
         </div>
 
         <div className="muted small">
-          Note: This card is informational/computed. It’s intended to drive your downstream pricing logic once we wire it into Estimates.
-        </div>
-      </Card>
-
-      <Card title="Estimate Footer Blocks">
-        <div className="grid2">
-          <div className="stack" style={{ gridColumn: '1 / -1' }}>
-            <label className="label">License / Credentials Block</label>
-            <textarea
-              className="input"
-              rows={4}
-              value={s.company_license_text ?? ''}
-              onChange={(e) => setS({ ...s, company_license_text: e.target.value || null })}
-              placeholder="Example: Licensed & insured. License #..."
-            />
-          </div>
-          <div className="stack" style={{ gridColumn: '1 / -1' }}>
-            <label className="label">Warranty / Terms Block</label>
-            <textarea
-              className="input"
-              rows={4}
-              value={s.company_warranty_text ?? ''}
-              onChange={(e) => setS({ ...s, company_warranty_text: e.target.value || null })}
-              placeholder="Example: 1-year workmanship warranty..."
-            />
-          </div>
+          Revenue goal is computed from overhead + net profit goal, using the Default Job Type gross margin target.
         </div>
       </Card>
 
