@@ -7,7 +7,13 @@ import { useData } from '../../providers/data/DataContext';
 import type { CompanySettings } from '../../providers/data/types';
 
 type Tier = { min: number; max: number; markup_percent: number };
-type Wage = { name: string; wage: number };
+type Wage = { name: string; hourly_rate: number };
+
+type ExpenseItem = {
+  name: string;
+  amount: number;
+  frequency: 'monthly' | 'quarterly' | 'biannual' | 'annual';
+};
 
 function toNum(raw: string, fallback = 0) {
   const s = (raw ?? '').trim();
@@ -16,25 +22,67 @@ function toNum(raw: string, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function toInt(raw: string, fallback = 0) {
+  const s = (raw ?? '').trim();
+  if (s === '') return fallback;
+  const n = Math.floor(toNum(s, fallback));
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function avgWage(wages: Wage[]) {
-  const w = wages.map((x) => Number(x.wage)).filter((x) => Number.isFinite(x) && x > 0);
+  const w = wages.map((x) => Number(x.hourly_rate)).filter((x) => Number.isFinite(x) && x > 0);
   if (w.length === 0) return 0;
   return w.reduce((a, b) => a + b, 0) / w.length;
+}
+
+function freqToMonthlyMultiplier(freq: ExpenseItem['frequency']) {
+  switch (freq) {
+    case 'monthly':
+      return 1;
+    case 'quarterly':
+      return 1 / 3;
+    case 'biannual':
+      return 1 / 6;
+    case 'annual':
+      return 1 / 12;
+    default:
+      return 1;
+  }
+}
+
+function sumItemizedMonthly(items: ExpenseItem[]) {
+  return (items ?? []).reduce((sum, it) => sum + (Number(it.amount) || 0) * freqToMonthlyMultiplier(it.frequency), 0);
 }
 
 export function CompanySetupPage() {
   const data = useData();
   const [s, setS] = useState<CompanySettings | null>(null);
+
+  // status line text (small text at bottom)
   const [status, setStatus] = useState<string>('');
 
-  // CompanySettings numeric drafts (string while typing)
+  // Save button feedback
+  const [saveUi, setSaveUi] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  // Numeric drafts (strings while typing) so decimals + backspace-to-empty work
   const [draft, setDraft] = useState<Record<string, string>>({});
 
-  // Tier drafts (array aligned to tiers)
+  // Tier drafts (aligned by index)
   const [tierDrafts, setTierDrafts] = useState<Array<{ min: string; max: string; markup_percent: string }>>([]);
 
-  // Wage drafts (array aligned to wages)
+  // Wage drafts (aligned by index)
   const [wageDrafts, setWageDrafts] = useState<string[]>([]);
+
+  // Expense drafts (aligned by index)
+  const [bizLumpDraft, setBizLumpDraft] = useState<string>('');
+  const [perLumpDraft, setPerLumpDraft] = useState<string>('');
+  const [bizItemDrafts, setBizItemDrafts] = useState<Array<{ name: string; amount: string; frequency: ExpenseItem['frequency'] }>>([]);
+  const [perItemDrafts, setPerItemDrafts] = useState<Array<{ name: string; amount: string; frequency: ExpenseItem['frequency'] }>>([]);
+
+  // Goals drafts
+  const [revGoalDraft, setRevGoalDraft] = useState<string>('');
+  const [netProfitAmtDraft, setNetProfitAmtDraft] = useState<string>('');
+  const [netProfitPctDraft, setNetProfitPctDraft] = useState<string>('');
 
   useEffect(() => {
     data
@@ -42,7 +90,7 @@ export function CompanySetupPage() {
       .then((cs) => {
         setS(cs);
 
-        // Initialize numeric drafts from loaded settings
+        // core numeric drafts
         setDraft((prev) => ({
           ...prev,
           workdays_per_week: cs.workdays_per_week != null ? String(cs.workdays_per_week) : '',
@@ -71,7 +119,33 @@ export function CompanySetupPage() {
         );
 
         const wages = Array.isArray(cs.technician_wages) ? (cs.technician_wages as any as Wage[]) : [];
-        setWageDrafts(wages.map((w) => (w.wage != null ? String(w.wage) : '')));
+        setWageDrafts(wages.map((w) => (w.hourly_rate != null ? String(w.hourly_rate) : '')));
+
+        // expenses drafts
+        setBizLumpDraft(cs.business_expenses_lump_sum_monthly != null ? String(cs.business_expenses_lump_sum_monthly) : '');
+        setPerLumpDraft(cs.personal_expenses_lump_sum_monthly != null ? String(cs.personal_expenses_lump_sum_monthly) : '');
+
+        const bizItems = Array.isArray(cs.business_expenses_itemized) ? (cs.business_expenses_itemized as any as ExpenseItem[]) : [];
+        const perItems = Array.isArray(cs.personal_expenses_itemized) ? (cs.personal_expenses_itemized as any as ExpenseItem[]) : [];
+        setBizItemDrafts(
+          bizItems.map((it) => ({
+            name: it.name ?? '',
+            amount: it.amount != null ? String(it.amount) : '',
+            frequency: it.frequency ?? 'monthly',
+          }))
+        );
+        setPerItemDrafts(
+          perItems.map((it) => ({
+            name: it.name ?? '',
+            amount: it.amount != null ? String(it.amount) : '',
+            frequency: it.frequency ?? 'monthly',
+          }))
+        );
+
+        // goals drafts
+        setRevGoalDraft(cs.revenue_goal_monthly != null ? String(cs.revenue_goal_monthly) : '');
+        setNetProfitAmtDraft(cs.net_profit_goal_amount_monthly != null ? String(cs.net_profit_goal_amount_monthly) : '');
+        setNetProfitPctDraft(cs.net_profit_goal_percent_of_revenue != null ? String(cs.net_profit_goal_percent_of_revenue) : '');
       })
       .catch((e) => {
         console.error(e);
@@ -79,15 +153,8 @@ export function CompanySetupPage() {
       });
   }, [data]);
 
-  const tiers = useMemo<Tier[]>(
-    () => (Array.isArray(s?.material_markup_tiers) ? (s!.material_markup_tiers as any) : []),
-    [s]
-  );
-
-  const wages = useMemo<Wage[]>(
-    () => (Array.isArray(s?.technician_wages) ? (s!.technician_wages as any) : []),
-    [s]
-  );
+  const tiers = useMemo<Tier[]>(() => (Array.isArray(s?.material_markup_tiers) ? (s!.material_markup_tiers as any) : []), [s]);
+  const wages = useMemo<Wage[]>(() => (Array.isArray(s?.technician_wages) ? (s!.technician_wages as any) : []), [s]);
 
   function onDraftChange(key: keyof CompanySettings, value: string) {
     setDraft((d) => ({ ...d, [key as string]: value }));
@@ -98,7 +165,14 @@ export function CompanySetupPage() {
     const raw = (draft[key as string] ?? '').trim();
     const num = toNum(raw, fallback);
     setS({ ...s, [key]: num as any });
-    // keep draft as typed, but normalize if it's a clean number
+    setDraft((d) => ({ ...d, [key as string]: raw === '' ? '' : String(num) }));
+  }
+
+  function commitInt<K extends keyof CompanySettings>(key: K, fallback = 0) {
+    if (!s) return;
+    const raw = (draft[key as string] ?? '').trim();
+    const num = raw === '' ? fallback : Math.max(0, toInt(raw, fallback));
+    setS({ ...s, [key]: num as any });
     setDraft((d) => ({ ...d, [key as string]: raw === '' ? '' : String(num) }));
   }
 
@@ -107,12 +181,10 @@ export function CompanySetupPage() {
     const cur = Array.isArray(s.technician_wages) ? (s.technician_wages as any as Wage[]) : [];
     const next = [...cur];
 
-    while (next.length < targetCount) next.push({ name: `Tech ${next.length + 1}`, wage: 0 });
+    while (next.length < targetCount) next.push({ name: `Tech ${next.length + 1}`, hourly_rate: 0 });
     if (next.length > targetCount) next.length = targetCount;
 
     setS({ ...s, technician_wages: next as any });
-
-    // keep wageDrafts aligned
     setWageDrafts((prev) => {
       const out = [...prev];
       while (out.length < targetCount) out.push('');
@@ -123,42 +195,26 @@ export function CompanySetupPage() {
 
   function commitAllDraftsIntoSettings(): CompanySettings {
     if (!s) throw new Error('No company settings loaded');
-
-    // Start from existing settings, then override numeric keys from drafts
     const next: CompanySettings = { ...s };
 
-    // Commit the known numeric fields
-    const numericKeys: Array<keyof CompanySettings> = [
-      'workdays_per_week',
-      'work_hours_per_day',
-      'technicians',
-      'vacation_days_per_year',
-      'sick_days_per_year',
-      'estimate_validity_days',
-      'starting_estimate_number',
-      'min_billable_labor_minutes_per_job',
-      'material_purchase_tax_percent',
-      'misc_material_percent',
-      'default_discount_percent',
-      'processing_fee_percent',
-    ];
+    // Integers
+    (next as any).workdays_per_week = Math.max(0, toInt(draft.workdays_per_week ?? '', next.workdays_per_week ?? 0));
+    (next as any).technicians = Math.max(0, toInt(draft.technicians ?? '', next.technicians ?? 0));
+    (next as any).vacation_days_per_year = Math.max(0, toInt(draft.vacation_days_per_year ?? '', next.vacation_days_per_year ?? 0));
+    (next as any).sick_days_per_year = Math.max(0, toInt(draft.sick_days_per_year ?? '', next.sick_days_per_year ?? 0));
+    (next as any).estimate_validity_days = Math.max(0, toInt(draft.estimate_validity_days ?? '', next.estimate_validity_days ?? 0));
+    (next as any).starting_estimate_number = Math.max(0, toInt(draft.starting_estimate_number ?? '', next.starting_estimate_number ?? 0));
+    (next as any).min_billable_labor_minutes_per_job = Math.max(0, toInt(draft.min_billable_labor_minutes_per_job ?? '', next.min_billable_labor_minutes_per_job ?? 0));
 
-    for (const k of numericKeys) {
-      const raw = (draft[k as string] ?? '').trim();
-      // integers vs decimals: we keep decimals where it makes sense. For count fields, floor.
-      if (k === 'technicians' || k === 'workdays_per_week' || k === 'vacation_days_per_year' || k === 'sick_days_per_year' || k === 'estimate_validity_days' || k === 'starting_estimate_number' || k === 'min_billable_labor_minutes_per_job') {
-        const val = raw === '' ? 0 : Math.max(0, Math.floor(toNum(raw, 0)));
-        (next as any)[k] = val;
-        setDraft((d) => ({ ...d, [k as string]: raw === '' ? '' : String(val) }));
-      } else {
-        const val = toNum(raw, 0);
-        (next as any)[k] = val;
-        setDraft((d) => ({ ...d, [k as string]: raw === '' ? '' : String(val) }));
-      }
-    }
+    // Decimals
+    (next as any).work_hours_per_day = toNum(draft.work_hours_per_day ?? '', next.work_hours_per_day ?? 0);
+    (next as any).material_purchase_tax_percent = toNum(draft.material_purchase_tax_percent ?? '', next.material_purchase_tax_percent ?? 0);
+    (next as any).misc_material_percent = toNum(draft.misc_material_percent ?? '', next.misc_material_percent ?? 0);
+    (next as any).default_discount_percent = toNum(draft.default_discount_percent ?? '', next.default_discount_percent ?? 0);
+    (next as any).processing_fee_percent = toNum(draft.processing_fee_percent ?? '', next.processing_fee_percent ?? 0);
 
-    // Commit tier drafts
-    const nextTiers: Tier[] = tiers.map((t, idx) => {
+    // Tiers
+    (next as any).material_markup_tiers = tiers.map((t, idx) => {
       const d = tierDrafts[idx] ?? { min: String(t.min ?? 0), max: String(t.max ?? 0), markup_percent: String(t.markup_percent ?? 0) };
       return {
         min: toNum(d.min, 0),
@@ -166,34 +222,52 @@ export function CompanySetupPage() {
         markup_percent: toNum(d.markup_percent, 0),
       };
     });
-    (next as any).material_markup_tiers = nextTiers;
 
-    // Commit wage drafts
-    const nextWages: Wage[] = wages.map((w, idx) => ({
+    // Wages
+    (next as any).technician_wages = wages.map((w, idx) => ({
       ...w,
-      wage: toNum(wageDrafts[idx] ?? String(w.wage ?? 0), 0),
+      hourly_rate: toNum(wageDrafts[idx] ?? String(w.hourly_rate ?? 0), 0),
     }));
-    (next as any).technician_wages = nextWages;
+
+    // Expenses
+    (next as any).business_expenses_lump_sum_monthly = toNum(bizLumpDraft ?? '', next.business_expenses_lump_sum_monthly ?? 0);
+    (next as any).personal_expenses_lump_sum_monthly = toNum(perLumpDraft ?? '', next.personal_expenses_lump_sum_monthly ?? 0);
+
+    (next as any).business_expenses_itemized = (bizItemDrafts ?? []).map((it) => ({
+      name: it.name ?? '',
+      amount: toNum(it.amount ?? '', 0),
+      frequency: it.frequency ?? 'monthly',
+    }));
+    (next as any).personal_expenses_itemized = (perItemDrafts ?? []).map((it) => ({
+      name: it.name ?? '',
+      amount: toNum(it.amount ?? '', 0),
+      frequency: it.frequency ?? 'monthly',
+    }));
+
+    // Goals
+    (next as any).revenue_goal_monthly = toNum(revGoalDraft ?? '', next.revenue_goal_monthly ?? 0);
+    (next as any).net_profit_goal_amount_monthly = toNum(netProfitAmtDraft ?? '', next.net_profit_goal_amount_monthly ?? 0);
+    (next as any).net_profit_goal_percent_of_revenue = toNum(netProfitPctDraft ?? '', next.net_profit_goal_percent_of_revenue ?? 0);
 
     return next;
   }
 
   async function save() {
     if (!s) return;
-    try {
-      setStatus('Saving...');
 
-      // Commit any in-progress typing into the settings object before save
+    try {
+      setStatus('');
+      setSaveUi('saving');
+
+      // commit any in-progress edits before save
       const payload = commitAllDraftsIntoSettings();
 
-      // IMPORTANT: do not rely on saveCompanySettings return value
       await data.saveCompanySettings(payload);
 
-      // Re-fetch from server so UI always reflects persisted data
       const fresh = await data.getCompanySettings();
       setS(fresh);
 
-      // Re-sync drafts to the persisted values
+      // re-sync drafts quickly (so UI matches persisted values)
       setDraft((prev) => ({
         ...prev,
         workdays_per_week: fresh.workdays_per_week != null ? String(fresh.workdays_per_week) : '',
@@ -222,21 +296,105 @@ export function CompanySetupPage() {
       );
 
       const fw = Array.isArray(fresh.technician_wages) ? (fresh.technician_wages as any as Wage[]) : [];
-      setWageDrafts(fw.map((w) => (w.wage != null ? String(w.wage) : '')));
+      setWageDrafts(fw.map((w) => (w.hourly_rate != null ? String(w.hourly_rate) : '')));
 
-      setStatus('Saved.');
-      setTimeout(() => setStatus(''), 1500);
+      setBizLumpDraft(fresh.business_expenses_lump_sum_monthly != null ? String(fresh.business_expenses_lump_sum_monthly) : '');
+      setPerLumpDraft(fresh.personal_expenses_lump_sum_monthly != null ? String(fresh.personal_expenses_lump_sum_monthly) : '');
+
+      const bizItems = Array.isArray(fresh.business_expenses_itemized) ? (fresh.business_expenses_itemized as any as ExpenseItem[]) : [];
+      const perItems = Array.isArray(fresh.personal_expenses_itemized) ? (fresh.personal_expenses_itemized as any as ExpenseItem[]) : [];
+      setBizItemDrafts(
+        bizItems.map((it) => ({
+          name: it.name ?? '',
+          amount: it.amount != null ? String(it.amount) : '',
+          frequency: it.frequency ?? 'monthly',
+        }))
+      );
+      setPerItemDrafts(
+        perItems.map((it) => ({
+          name: it.name ?? '',
+          amount: it.amount != null ? String(it.amount) : '',
+          frequency: it.frequency ?? 'monthly',
+        }))
+      );
+
+      setRevGoalDraft(fresh.revenue_goal_monthly != null ? String(fresh.revenue_goal_monthly) : '');
+      setNetProfitAmtDraft(fresh.net_profit_goal_amount_monthly != null ? String(fresh.net_profit_goal_amount_monthly) : '');
+      setNetProfitPctDraft(fresh.net_profit_goal_percent_of_revenue != null ? String(fresh.net_profit_goal_percent_of_revenue) : '');
+
+      setSaveUi('saved');
+      setTimeout(() => setSaveUi('idle'), 1200);
     } catch (e: any) {
       console.error(e);
+      setSaveUi('error');
       setStatus(String(e?.message ?? e));
+      setTimeout(() => setSaveUi('idle'), 1500);
     }
   }
 
   if (!s) return <div className="muted">Loading…</div>;
 
+  // ----- Cost breakdown computations (display only) -----
+  const bizMonthly =
+    s.business_apply_itemized
+      ? sumItemizedMonthly((s.business_expenses_itemized ?? []) as any)
+      : Number(s.business_expenses_lump_sum_monthly || 0);
+
+  const perMonthly =
+    s.personal_apply_itemized
+      ? sumItemizedMonthly((s.personal_expenses_itemized ?? []) as any)
+      : Number(s.personal_expenses_lump_sum_monthly || 0);
+
+  const overheadMonthly = bizMonthly + perMonthly;
+  const overheadAnnual = overheadMonthly * 12;
+
+  const workdaysPerYear = Math.max(0, (Number(s.workdays_per_week) || 0) * 52 - (Number(s.vacation_days_per_year) || 0) - (Number(s.sick_days_per_year) || 0));
+  const hoursPerTechYear = workdaysPerYear * (Number(s.work_hours_per_day) || 0);
+  const techCount = Math.max(0, Number(s.technicians) || 0);
+  const totalHoursYear = hoursPerTechYear * techCount;
+
+  const overheadPerHour = totalHoursYear > 0 ? overheadAnnual / totalHoursYear : 0;
+
+  const avgTechWage = avgWage(wages);
+  const loadedLaborRate = avgTechWage + overheadPerHour;
+
+  // Net profit rules you confirmed:
+  // - If percent: based on revenue goal
+  // - If fixed $: based on overhead (i.e., overhead + fixed profit drives required revenue)
+  const revenueGoalMonthly = Number(s.revenue_goal_monthly || 0);
+  const netProfitMonthly =
+    s.net_profit_goal_mode === 'percent'
+      ? revenueGoalMonthly * (Number(s.net_profit_goal_percent_of_revenue || 0) / 100)
+      : Number(s.net_profit_goal_amount_monthly || 0);
+
+  const grossProfitNeededMonthly = overheadMonthly + netProfitMonthly;
+  const grossProfitPercentOfRevenue =
+    revenueGoalMonthly > 0 ? (grossProfitNeededMonthly / revenueGoalMonthly) * 100 : 0;
+
+  const requiredRevenueIfDollarMode =
+    s.net_profit_goal_mode === 'dollar'
+      ? overheadMonthly + netProfitMonthly
+      : revenueGoalMonthly;
+
+  // ----- Save button label -----
+  const saveLabel =
+    saveUi === 'saving' ? 'Saving…' : saveUi === 'saved' ? 'Saved ✓' : saveUi === 'error' ? 'Error' : 'Save';
+
   return (
     <div className="stack">
-      <Card title="Company Setup" right={<Button variant="primary" onClick={save}>Save</Button>}>
+      <Card
+        title="Company Setup"
+        right={
+          <Button
+            variant={saveUi === 'saved' ? 'primary' : 'primary'}
+            onClick={save}
+            disabled={saveUi === 'saving'}
+            aria-busy={saveUi === 'saving'}
+          >
+            {saveLabel}
+          </Button>
+        }
+      >
         <div className="muted small">
           Defaults and pricing knobs used across Materials / Assemblies / Estimates. Technician wage average drives labor COGS.
         </div>
@@ -251,7 +409,7 @@ export function CompanySetupPage() {
               inputMode="numeric"
               value={draft.workdays_per_week ?? ''}
               onChange={(e) => onDraftChange('workdays_per_week', e.target.value)}
-              onBlur={() => commitNum('workdays_per_week')}
+              onBlur={() => commitInt('workdays_per_week')}
             />
           </div>
 
@@ -275,10 +433,9 @@ export function CompanySetupPage() {
               onChange={(e) => onDraftChange('technicians', e.target.value)}
               onBlur={() => {
                 // commit and resize wages
-                const raw = (draft.technicians ?? '').trim();
-                const target = raw === '' ? 0 : Math.max(0, Math.floor(toNum(raw, 0)));
+                const target = Math.max(0, toInt(draft.technicians ?? '', 0));
                 setS({ ...s, technicians: target as any });
-                setDraft((d) => ({ ...d, technicians: raw === '' ? '' : String(target) }));
+                setDraft((d) => ({ ...d, technicians: (draft.technicians ?? '').trim() === '' ? '' : String(target) }));
                 ensureWagesRowCount(target);
               }}
             />
@@ -291,7 +448,7 @@ export function CompanySetupPage() {
               inputMode="numeric"
               value={draft.vacation_days_per_year ?? ''}
               onChange={(e) => onDraftChange('vacation_days_per_year', e.target.value)}
-              onBlur={() => commitNum('vacation_days_per_year')}
+              onBlur={() => commitInt('vacation_days_per_year')}
             />
           </div>
 
@@ -302,7 +459,7 @@ export function CompanySetupPage() {
               inputMode="numeric"
               value={draft.sick_days_per_year ?? ''}
               onChange={(e) => onDraftChange('sick_days_per_year', e.target.value)}
-              onBlur={() => commitNum('sick_days_per_year')}
+              onBlur={() => commitInt('sick_days_per_year')}
             />
           </div>
 
@@ -313,7 +470,7 @@ export function CompanySetupPage() {
               inputMode="numeric"
               value={draft.estimate_validity_days ?? ''}
               onChange={(e) => onDraftChange('estimate_validity_days', e.target.value)}
-              onBlur={() => commitNum('estimate_validity_days')}
+              onBlur={() => commitInt('estimate_validity_days')}
             />
           </div>
 
@@ -324,7 +481,7 @@ export function CompanySetupPage() {
               inputMode="numeric"
               value={draft.starting_estimate_number ?? ''}
               onChange={(e) => onDraftChange('starting_estimate_number', e.target.value)}
-              onBlur={() => commitNum('starting_estimate_number')}
+              onBlur={() => commitInt('starting_estimate_number')}
             />
           </div>
 
@@ -335,7 +492,7 @@ export function CompanySetupPage() {
               inputMode="numeric"
               value={draft.min_billable_labor_minutes_per_job ?? ''}
               onChange={(e) => onDraftChange('min_billable_labor_minutes_per_job', e.target.value)}
-              onBlur={() => commitNum('min_billable_labor_minutes_per_job')}
+              onBlur={() => commitInt('min_billable_labor_minutes_per_job')}
             />
           </div>
         </div>
@@ -410,7 +567,7 @@ export function CompanySetupPage() {
                       });
                     }}
                     onBlur={() => {
-                      const min = toNum((tierDrafts[idx]?.min ?? d.min) || '', 0);
+                      const min = toNum(tierDrafts[idx]?.min ?? d.min, 0);
                       const next = [...tiers];
                       next[idx] = { ...t, min };
                       setS({ ...s, material_markup_tiers: next as any });
@@ -437,7 +594,7 @@ export function CompanySetupPage() {
                       });
                     }}
                     onBlur={() => {
-                      const max = toNum((tierDrafts[idx]?.max ?? d.max) || '', 0);
+                      const max = toNum(tierDrafts[idx]?.max ?? d.max, 0);
                       const next = [...tiers];
                       next[idx] = { ...t, max };
                       setS({ ...s, material_markup_tiers: next as any });
@@ -464,7 +621,7 @@ export function CompanySetupPage() {
                       });
                     }}
                     onBlur={() => {
-                      const mp = toNum((tierDrafts[idx]?.markup_percent ?? d.markup_percent) || '', 0);
+                      const mp = toNum(tierDrafts[idx]?.markup_percent ?? d.markup_percent, 0);
                       const next = [...tiers];
                       next[idx] = { ...t, markup_percent: mp };
                       setS({ ...s, material_markup_tiers: next as any });
@@ -526,8 +683,9 @@ export function CompanySetupPage() {
 
       <Card title="Technician Wages">
         <div className="muted small">
-          Average wage used for labor COGS calculations: <strong>${avgWage(wages).toFixed(2)}/hr</strong>
+          Average wage used for labor COGS calculations: <strong>${avgTechWage.toFixed(2)}/hr</strong>
         </div>
+
         <div className="mt stack">
           {wages.map((w, idx) => (
             <div key={idx} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -557,7 +715,7 @@ export function CompanySetupPage() {
                 onBlur={() => {
                   const val = toNum(wageDrafts[idx] ?? '', 0);
                   const next = [...wages];
-                  next[idx] = { ...w, wage: val };
+                  next[idx] = { ...w, hourly_rate: val };
                   setS({ ...s, technician_wages: next as any });
                   setWageDrafts((prev) => {
                     const out = [...prev];
@@ -583,15 +741,394 @@ export function CompanySetupPage() {
               </Button>
             </div>
           ))}
+
           <Button
             onClick={() => {
-              const next = [...wages, { name: `Tech ${wages.length + 1}`, wage: 0 }];
+              const next = [...wages, { name: `Tech ${wages.length + 1}`, hourly_rate: 0 }];
               setS({ ...s, technician_wages: next as any });
               setWageDrafts((prev) => [...prev, '']);
             }}
           >
             Add Technician
           </Button>
+        </div>
+      </Card>
+
+      <Card title="Business Expenses">
+        <div className="grid2">
+          <div className="stack">
+            <label className="label">Use Itemized Expenses</label>
+            <Toggle
+              checked={Boolean(s.business_apply_itemized)}
+              onChange={(v) => setS({ ...s, business_apply_itemized: v })}
+              label={s.business_apply_itemized ? 'Itemized' : 'Lump Sum'}
+            />
+          </div>
+
+          {!s.business_apply_itemized ? (
+            <div className="stack">
+              <label className="label">Business Expenses (Monthly Lump Sum)</label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={bizLumpDraft}
+                onChange={(e) => setBizLumpDraft(e.target.value)}
+                onBlur={() => setS({ ...s, business_expenses_lump_sum_monthly: toNum(bizLumpDraft, 0) })}
+              />
+            </div>
+          ) : (
+            <div className="stack" style={{ gridColumn: '1 / -1' }}>
+              <div className="rowBetween">
+                <strong>Itemized</strong>
+                <Button
+                  onClick={() =>
+                    setBizItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])
+                  }
+                >
+                  Add Expense
+                </Button>
+              </div>
+
+              <div className="stack">
+                {bizItemDrafts.length === 0 ? (
+                  <div className="muted">No business expenses added.</div>
+                ) : (
+                  bizItemDrafts.map((it, idx) => (
+                    <div key={idx} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Input
+                        style={{ minWidth: 220 }}
+                        value={it.name}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBizItemDrafts((prev) => {
+                            const out = [...prev];
+                            out[idx] = { ...out[idx], name: v };
+                            return out;
+                          });
+                        }}
+                        placeholder="Expense name"
+                      />
+                      <Input
+                        style={{ width: 140 }}
+                        type="text"
+                        inputMode="decimal"
+                        value={it.amount}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBizItemDrafts((prev) => {
+                            const out = [...prev];
+                            out[idx] = { ...out[idx], amount: v };
+                            return out;
+                          });
+                        }}
+                        onBlur={() => {
+                          const amt = toNum(bizItemDrafts[idx]?.amount ?? '', 0);
+                          setBizItemDrafts((prev) => {
+                            const out = [...prev];
+                            out[idx] = { ...out[idx], amount: (bizItemDrafts[idx]?.amount ?? '').trim() === '' ? '' : String(amt) };
+                            return out;
+                          });
+                        }}
+                        placeholder="$"
+                      />
+                      <select
+                        className="input"
+                        value={it.frequency}
+                        onChange={(e) => {
+                          const v = e.target.value as ExpenseItem['frequency'];
+                          setBizItemDrafts((prev) => {
+                            const out = [...prev];
+                            out[idx] = { ...out[idx], frequency: v };
+                            return out;
+                          });
+                        }}
+                      >
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="biannual">Biannual</option>
+                        <option value="annual">Annual</option>
+                      </select>
+                      <Button
+                        onClick={() => {
+                          setBizItemDrafts((prev) => {
+                            const out = [...prev];
+                            out.splice(idx, 1);
+                            return out;
+                          });
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="muted small">
+                Monthly equivalent: <strong>${sumItemizedMonthly(bizItemDrafts.map((x) => ({ name: x.name, amount: toNum(x.amount, 0), frequency: x.frequency }))).toFixed(2)}</strong>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card title="Personal Expenses">
+        <div className="grid2">
+          <div className="stack">
+            <label className="label">Use Itemized Expenses</label>
+            <Toggle
+              checked={Boolean(s.personal_apply_itemized)}
+              onChange={(v) => setS({ ...s, personal_apply_itemized: v })}
+              label={s.personal_apply_itemized ? 'Itemized' : 'Lump Sum'}
+            />
+          </div>
+
+          {!s.personal_apply_itemized ? (
+            <div className="stack">
+              <label className="label">Personal Expenses (Monthly Lump Sum)</label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={perLumpDraft}
+                onChange={(e) => setPerLumpDraft(e.target.value)}
+                onBlur={() => setS({ ...s, personal_expenses_lump_sum_monthly: toNum(perLumpDraft, 0) })}
+              />
+            </div>
+          ) : (
+            <div className="stack" style={{ gridColumn: '1 / -1' }}>
+              <div className="rowBetween">
+                <strong>Itemized</strong>
+                <Button
+                  onClick={() =>
+                    setPerItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])
+                  }
+                >
+                  Add Expense
+                </Button>
+              </div>
+
+              <div className="stack">
+                {perItemDrafts.length === 0 ? (
+                  <div className="muted">No personal expenses added.</div>
+                ) : (
+                  perItemDrafts.map((it, idx) => (
+                    <div key={idx} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Input
+                        style={{ minWidth: 220 }}
+                        value={it.name}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setPerItemDrafts((prev) => {
+                            const out = [...prev];
+                            out[idx] = { ...out[idx], name: v };
+                            return out;
+                          });
+                        }}
+                        placeholder="Expense name"
+                      />
+                      <Input
+                        style={{ width: 140 }}
+                        type="text"
+                        inputMode="decimal"
+                        value={it.amount}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setPerItemDrafts((prev) => {
+                            const out = [...prev];
+                            out[idx] = { ...out[idx], amount: v };
+                            return out;
+                          });
+                        }}
+                        onBlur={() => {
+                          const amt = toNum(perItemDrafts[idx]?.amount ?? '', 0);
+                          setPerItemDrafts((prev) => {
+                            const out = [...prev];
+                            out[idx] = { ...out[idx], amount: (perItemDrafts[idx]?.amount ?? '').trim() === '' ? '' : String(amt) };
+                            return out;
+                          });
+                        }}
+                        placeholder="$"
+                      />
+                      <select
+                        className="input"
+                        value={it.frequency}
+                        onChange={(e) => {
+                          const v = e.target.value as ExpenseItem['frequency'];
+                          setPerItemDrafts((prev) => {
+                            const out = [...prev];
+                            out[idx] = { ...out[idx], frequency: v };
+                            return out;
+                          });
+                        }}
+                      >
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="biannual">Biannual</option>
+                        <option value="annual">Annual</option>
+                      </select>
+                      <Button
+                        onClick={() => {
+                          setPerItemDrafts((prev) => {
+                            const out = [...prev];
+                            out.splice(idx, 1);
+                            return out;
+                          });
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="muted small">
+                Monthly equivalent: <strong>${sumItemizedMonthly(perItemDrafts.map((x) => ({ name: x.name, amount: toNum(x.amount, 0), frequency: x.frequency }))).toFixed(2)}</strong>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card title="Revenue & Net Profit Goals">
+        <div className="grid2">
+          <div className="stack">
+            <label className="label">Revenue Goal (Monthly)</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={revGoalDraft}
+              onChange={(e) => setRevGoalDraft(e.target.value)}
+              onBlur={() => setS({ ...s, revenue_goal_monthly: toNum(revGoalDraft, 0) })}
+              placeholder="$"
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Net Profit Goal Mode</label>
+            <Toggle
+              checked={s.net_profit_goal_mode === 'percent'}
+              onChange={(v) => setS({ ...s, net_profit_goal_mode: v ? 'percent' : 'dollar' })}
+              label={s.net_profit_goal_mode === 'percent' ? 'Percent of Revenue' : 'Fixed $ / Month'}
+            />
+          </div>
+
+          {s.net_profit_goal_mode === 'percent' ? (
+            <>
+              <div className="stack">
+                <label className="label">Net Profit % of Revenue</label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={netProfitPctDraft}
+                  onChange={(e) => setNetProfitPctDraft(e.target.value)}
+                  onBlur={() => setS({ ...s, net_profit_goal_percent_of_revenue: toNum(netProfitPctDraft, 0) })}
+                  placeholder="%"
+                />
+              </div>
+              <div className="stack">
+                <label className="label">Net Profit (Monthly)</label>
+                <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+                  ${netProfitMonthly.toFixed(2)}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="stack">
+                <label className="label">Net Profit (Fixed $ / Month)</label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={netProfitAmtDraft}
+                  onChange={(e) => setNetProfitAmtDraft(e.target.value)}
+                  onBlur={() => setS({ ...s, net_profit_goal_amount_monthly: toNum(netProfitAmtDraft, 0) })}
+                  placeholder="$"
+                />
+              </div>
+              <div className="stack">
+                <label className="label">Required Revenue (Overhead + Profit)</label>
+                <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+                  ${requiredRevenueIfDollarMode.toFixed(2)}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="muted small">
+          Rules: percent profit is based on revenue goal. Fixed profit is treated as an overhead-based monthly target.
+        </div>
+      </Card>
+
+      <Card title="Cost Breakdown (Computed)">
+        <div className="grid2">
+          <div className="stack">
+            <label className="label">Overhead (Monthly)</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              ${overheadMonthly.toFixed(2)}
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Overhead (Annual)</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              ${overheadAnnual.toFixed(2)}
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Workdays / Year</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              {workdaysPerYear}
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Total Hours / Year</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              {totalHoursYear.toFixed(0)}
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Overhead / Labor Hour</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              ${overheadPerHour.toFixed(2)}
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Avg Tech Wage</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              ${avgTechWage.toFixed(2)}/hr
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Loaded Labor Rate (Wage + Overhead)</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              ${loadedLaborRate.toFixed(2)}/hr
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Gross Profit Needed (Monthly)</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              ${grossProfitNeededMonthly.toFixed(2)}
+            </div>
+          </div>
+
+          <div className="stack">
+            <label className="label">Gross Profit % of Revenue Goal</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              {grossProfitPercentOfRevenue.toFixed(2)}%
+            </div>
+          </div>
+        </div>
+
+        <div className="muted small">
+          Note: This card is informational/computed. It’s intended to drive your downstream pricing logic once we wire it into Estimates.
         </div>
       </Card>
 
