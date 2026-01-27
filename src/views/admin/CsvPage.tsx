@@ -251,15 +251,18 @@ export function CsvPage() {
       const text = await file.text();
       const rows = parseCsv(text);
 
-      const folders = await collectAllFolders(data, 'materials', 'company');
+      const isOwner = await (data as any).isAppOwner?.().catch?.(() => false) ?? false;
+      const libraryType: 'company' | 'personal' = isOwner ? 'personal' : 'company';
+
+      const folders = await collectAllFolders(data, 'materials', libraryType);
       for (const r of rows) {
         const folderPath = r.path ?? '';
-        const folderId = await ensureFolderPath(data, 'materials', 'company', folderPath, folders);
+        const folderId = await ensureFolderPath(data, 'materials', libraryType, folderPath, folders);
         const laborDecimal = Number(r.labor_decimal_hours ?? 0);
         const laborMinutes = Number.isFinite(laborDecimal) ? Math.round(laborDecimal * 60) : 0;
         const mat: Material = {
           id: crypto.randomUUID?.() ?? `mat_${Date.now()}`,
-          company_id: null as any, // provider fills
+          company_id: libraryType === 'personal' ? null : (undefined as any), // provider fills
           name: r.name ?? '',
           sku: r.sku ?? null,
           description: r.description ?? null,
@@ -379,4 +382,5 @@ export function CsvPage() {
     </div>
   );
 }
+
 
