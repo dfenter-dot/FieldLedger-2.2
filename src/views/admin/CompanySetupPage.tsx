@@ -182,17 +182,21 @@ export function CompanySetupPage() {
 
   function ensureWagesRowCount(targetCount: number) {
     if (!s) return;
+
+    // Keep at least 1 wage row so the Technicians details card never disappears
+    const effectiveTargetCount = Math.max(1, targetCount);
+
     const cur = Array.isArray(s.technician_wages) ? (s.technician_wages as any as Wage[]) : [];
     const next = [...cur];
 
-    while (next.length < targetCount) next.push({ name: `Tech ${next.length + 1}`, hourly_rate: 0 });
-    if (next.length > targetCount) next.length = targetCount;
+    while (next.length < effectiveTargetCount) next.push({ name: `Tech ${next.length + 1}`, hourly_rate: 0 });
+    if (next.length > effectiveTargetCount) next.length = effectiveTargetCount;
 
     setS({ ...s, technician_wages: next as any });
     setWageDrafts((prev) => {
       const out = [...prev];
-      while (out.length < targetCount) out.push('');
-      if (out.length > targetCount) out.length = targetCount;
+      while (out.length < effectiveTargetCount) out.push('');
+      if (out.length > effectiveTargetCount) out.length = effectiveTargetCount;
       return out;
     });
   }
