@@ -148,11 +148,34 @@ export interface AdminRule {
   id: string;
   company_id: string;
 
+  /** Human-friendly name shown in Admin → Rules */
   name: string;
   description?: string;
 
-  rule_type: string;
-  rule_value: any;
+  /** Enabled rules are eligible for Apply Changes */
+  enabled: boolean;
+
+  /** Lower numbers run first; first match wins */
+  priority: number;
+
+  /** Which entities this rule can target */
+  scope: 'estimate' | 'assembly' | 'both';
+
+  /** What to test */
+  condition_type:
+    | 'expected_labor_hours'
+    | 'material_cost'
+    | 'line_item_count'
+    | 'any_line_item_qty';
+
+  /** Comparison operator */
+  operator: '>=' | '>' | '<=' | '<' | '==' | '!=';
+
+  /** Numeric threshold to compare against */
+  threshold_value: number;
+
+  /** Job type to apply when matched */
+  target_job_type_id: string | null;
 
   created_at?: string;
   updated_at?: string;
