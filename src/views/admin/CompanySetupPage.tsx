@@ -66,6 +66,7 @@ export function CompanySetupPage() {
 
   // Save button feedback
   const [saveUi, setSaveUi] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Numeric drafts (strings while typing) so decimals + backspace-to-empty work
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -101,6 +102,7 @@ export function CompanySetupPage() {
           workdays_per_week: cs.workdays_per_week != null ? String(cs.workdays_per_week) : '',
           work_hours_per_day: cs.work_hours_per_day != null ? String(cs.work_hours_per_day) : '',
           technicians: cs.technicians != null ? String(cs.technicians) : '',
+          avg_jobs_per_tech_per_day: cs.avg_jobs_per_tech_per_day != null ? String(cs.avg_jobs_per_tech_per_day) : '',
           vacation_days_per_year: cs.vacation_days_per_year != null ? String(cs.vacation_days_per_year) : '',
           sick_days_per_year: cs.sick_days_per_year != null ? String(cs.sick_days_per_year) : '',
           estimate_validity_days: cs.estimate_validity_days != null ? String(cs.estimate_validity_days) : '',
@@ -317,6 +319,15 @@ const netProfitMonthly =
   const grossProfitNeededMonthly = overheadMonthly + netProfitMonthly;
   const grossProfitPercentOfRevenue = revenueGoalMonthlyDerived > 0 ? (grossProfitNeededMonthly / revenueGoalMonthlyDerived) * 100 : 0;
 
+  const jobsPerTechPerDay = toNum(
+    (draft as any).avg_jobs_per_tech_per_day ?? '',
+    Number((s as any)?.avg_jobs_per_tech_per_day) || 0
+  );
+  const workdaysPerMonth = workdaysPerYear / 12;
+  const jobsPerMonth = techCountDraft * jobsPerTechPerDay * workdaysPerMonth;
+  const avgJobGoal = jobsPerMonth > 0 ? revenueGoalMonthlyDerived / jobsPerMonth : 0;
+
+
   // commit payload
   function commitAllDraftsIntoSettings(): CompanySettings {
     if (!s) throw new Error('No company settings loaded');
@@ -471,9 +482,18 @@ const netProfitMonthly =
   if (!s) return <div className="muted">Loading…</div>;
 
   const saveLabel = saveUi === 'saving' ? 'Saving…' : saveUi === 'saved' ? 'Saved ✓' : saveUi === 'error' ? 'Error' : 'Save';
+  const fmtInt = useMemo(() => new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }), []);
+  const fmt2 = useMemo(() => new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), []);
+  const fmtMoney = useMemo(() => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }), []);
+
+  const money = (n: number) => fmtMoney.format(Number.isFinite(n) ? n : 0);
+  const num0 = (n: number) => fmtInt.format(Number.isFinite(n) ? n : 0);
+  const num2 = (n: number) => fmt2.format(Number.isFinite(n) ? n : 0);
+
 
   // UI row count: NEVER below 1
-  const techRowsUi = Math.max(1, Math.max(0, Number(s.technicians) || 0));
+  const techCountDraft = Math.max(0, toInt(draft.technicians ?? '', Number(s.technicians) || 0));
+  const techRowsUi = Math.max(1, techCountDraft);
 
   return (
     <div className="stack">
@@ -498,6 +518,17 @@ const netProfitMonthly =
               value={draft.workdays_per_week ?? ''}
               onChange={(e) => onDraftChange('workdays_per_week', e.target.value)}
               onBlur={() => commitInt('workdays_per_week')}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Avg Jobs / Tech / Day</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.avg_jobs_per_tech_per_day ?? ''}
+              onChange={(e) => onDraftChange('avg_jobs_per_tech_per_day', e.target.value)}
+              onBlur={() => commitNum('avg_jobs_per_tech_per_day')}
             />
           </div>
 
@@ -937,21 +968,21 @@ const netProfitMonthly =
           <div className="stack">
             <label className="label">Overhead (Monthly)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              ${overheadMonthly.toFixed(2)}
+              {money(overheadMonthly)}
             </div>
           </div>
 
           <div className="stack">
             <label className="label">Overhead (Annual)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              ${overheadAnnual.toFixed(2)}
+              {money(overheadAnnual)}
             </div>
           </div>
 
           <div className="stack">
             <label className="label">Workdays / Year</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              {workdaysPerYear}
+              {num0(workdaysPerYear)}
             </div>
           </div>
 
@@ -979,43 +1010,67 @@ const netProfitMonthly =
           <div className="stack">
             <label className="label">Avg Tech Wage</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              ${avgTechWage.toFixed(2)}/hr
+              {money(avgTechWage)}/hr
             </div>
           </div>
 
           <div className="stack">
             <label className="label">Loaded Labor Rate (Wage + Overhead)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              ${loadedLaborRate.toFixed(2)}/hr
+              {money(loadedLaborRate)}/hr
             </div>
           </div>
 
           <div className="stack">
-            <label className="label">Required Revenue / Billable Hour</label>
+            <label className="label">Average Job Goal (Derived)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              ${requiredRevenuePerBillableHour.toFixed(2)}/hr
+              {money(avgJobGoal)}
+            </div>
+            <div className="muted small">
+              Based on {num2(jobsPerMonth)} jobs/month (Techs × Jobs/Tech/Day × Workdays/Month)
             </div>
           </div>
 
+
+
+          <div className="stack" style={{ gridColumn: '1 / -1' }}>
+            <div className="rowBetween" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div className="muted">Advanced</div>
+              <Button variant="secondary" onClick={() => setShowAdvanced((v) => !v)}>
+                {showAdvanced ? 'Hide advanced' : 'Show advanced'}
+              </Button>
+            </div>
+
+            {showAdvanced ? (
+              <div className="grid2" style={{ marginTop: 8 }}>
+                <div className="stack">
+                  <label className="label">Required Revenue / Billable Hour (Labor-only baseline)</label>
+                  <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+                    {money(requiredRevenuePerBillableHour)}/hr
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <div className="stack">
             <label className="label">Revenue Goal (Monthly, Derived)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              ${revenueGoalMonthlyDerived.toFixed(2)}
+              {money(revenueGoalMonthlyDerived)}
             </div>
           </div>
 
           <div className="stack">
             <label className="label">Gross Profit Needed (Monthly)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              ${grossProfitNeededMonthly.toFixed(2)}
+              {money(grossProfitNeededMonthly)}
             </div>
           </div>
 
           <div className="stack">
             <label className="label">Gross Profit % of Derived Revenue</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-              {grossProfitPercentOfRevenue.toFixed(2)}%
+              {num2(grossProfitPercentOfRevenue)}%
             </div>
           </div>
         </div>
