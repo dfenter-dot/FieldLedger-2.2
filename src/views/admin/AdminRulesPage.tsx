@@ -1,242 +1,357 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useAuth } from '../../providers/auth/AuthContext';
-import { useData } from '../../providers/data/DataContext';
-import { AdminRule, JobType } from '../../providers/data/types';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
 import { Input } from '../../ui/components/Input';
-import { Select } from '../../ui/components/Select';
-import { Switch } from '../../ui/components/Switch';
+import { Toggle } from '../../ui/components/Toggle';
+import { useData } from '../../providers/data/DataContext';
+import type { AdminRule, JobType } from '../../providers/data/types';
+import { useDialogs } from '../../providers/dialogs/DialogContext';
 
-const CONDITION_OPTIONS = [
-  { value: 'expected_labor_hours', label: 'Expected Labor Hours ≥' },
-  { value: 'material_cost', label: 'Material Cost ≥' },
-  { value: 'line_item_count', label: 'Line Item Count ≥' },
-  { value: 'any_line_item_qty', label: 'Any Line Item Qty ≥' },
-];
+type Operator = AdminRule['operator'];
+type ConditionType = AdminRule['condition_type'];
+
+const CONDITION_LABELS: Record<ConditionType, string> = {
+  expected_labor_hours: 'Expected labor hours (after efficiency)',
+  material_cost: 'Material cost (cost + tax, no markup)',
+  line_item_count: 'Line item count',
+  any_line_item_qty: 'Any line item quantity (max qty)',
+};
+
+const OPERATORS: Operator[] = ['>=', '>', '<=', '<', '==', '!='];
+
+function newRule(nextPriority: number): AdminRule {
+  const id = crypto.randomUUID?.() ?? `rule_${Date.now()}`;
+  return {
+    id,
+    company_id: '' as any,
+    name: 'New Rule',
+    description: '',
+    enabled: true,
+    priority: nextPriority,
+    scope: 'both',
+    condition_type: 'expected_labor_hours',
+    operator: '>=',
+    threshold_value: 0,
+    target_job_type_id: null,
+  };
+}
+
+function toNumberOr(value: string, fallback: number) {
+  if (value.trim() === '') return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
 
 export function AdminRulesPage() {
-  const { user } = useAuth();
-  const { dataProvider } = useData();
-
-  const [companyId, setCompanyId] = useState<string | null>(null);
-
+  const data = useData();
+  const { confirm } = useDialogs();
   const [rules, setRules] = useState<AdminRule[]>([]);
   const [jobTypes, setJobTypes] = useState<JobType[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<Record<string, AdminRule>>({});
+  const [status, setStatus] = useState<string>('');
 
-  // Resolve companyId robustly (do NOT rely on AuthContext shape)
+  const enabledJobTypes = useMemo(() => jobTypes.filter(j => j.enabled), [jobTypes]);
+
   useEffect(() => {
-    let alive = true;
+    Promise.all([data.listAdminRules(), data.listJobTypes()])
+      .then(([r, jt]) => {
+        setRules((r ?? []).slice().sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)));
+        setJobTypes(jt ?? []);
+      })
+      .catch((e) => {
+        console.error(e);
+        setStatus(String((e as any)?.message ?? e));
+      });
+  }, [data]);
 
-    (async () => {
-      const fromUser =
-        (user as any)?.company_id ??
-        (user as any)?.companyId ??
-        (user as any)?.companyID ??
-        null;
-
-      if (fromUser) {
-        if (alive) setCompanyId(fromUser);
-        return;
-      }
-
-      // Fallback: ask provider (Supabase provider can derive from profiles)
-      const dp: any = dataProvider as any;
-      if (typeof dp.getCurrentCompanyId === 'function') {
-        try {
-          const id = await dp.getCurrentCompanyId();
-          if (alive) setCompanyId(id);
-          return;
-        } catch {
-          // silent; we’ll stay null
-        }
-      }
-
-      // If we can't resolve it, leave null (UI will show message below)
-      if (alive) setCompanyId(null);
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [user, dataProvider]);
-
-  // Load rules + job types once companyId is known
-  useEffect(() => {
-    if (!companyId) {
-      setLoading(false);
-      return;
-    }
-
-    let alive = true;
-
-    (async () => {
-      setLoading(true);
-      try {
-        const [rulesRes, jobTypesRes] = await Promise.all([
-          (dataProvider as any).getAdminRules
-            ? (dataProvider as any).getAdminRules(companyId)
-            : (dataProvider as any).listAdminRules?.(),
-          (dataProvider as any).getJobTypes
-            ? (dataProvider as any).getJobTypes(companyId)
-            : (dataProvider as any).listJobTypes?.(),
-        ]);
-
-        if (!alive) return;
-
-        setRules((rulesRes ?? []) as AdminRule[]);
-        setJobTypes(((jobTypesRes ?? []) as JobType[]).filter(j => j.enabled));
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [companyId, dataProvider]);
-
-  const sortedRules = useMemo(
-    () => [...rules].sort((a, b) => a.priority - b.priority),
-    [rules]
-  );
-
-  const updateRule = async (rule: Partial<AdminRule>) => {
-    if (!companyId) return;
-
-    const saved: AdminRule = (dataProvider as any).upsertAdminRule
-      ? await (dataProvider as any).upsertAdminRule(companyId, rule)
-      : await (dataProvider as any).saveAdminRule(rule);
-
-    setRules(prev =>
-      prev.some(r => r.id === saved.id)
-        ? prev.map(r => (r.id === saved.id ? saved : r))
-        : [...prev, saved]
-    );
-  };
-
-  const deleteRule = async (id: string) => {
-    if (!companyId) return;
-    if (!confirm('Delete this rule?')) return;
-
-    if ((dataProvider as any).deleteAdminRule) {
-      await (dataProvider as any).deleteAdminRule(companyId, id);
-    } else if ((dataProvider as any).deleteAdminRuleById) {
-      await (dataProvider as any).deleteAdminRuleById(id);
-    } else {
-      await (dataProvider as any).deleteAdminRule?.(id);
-    }
-
-    setRules(prev => prev.filter(r => r.id !== id));
-  };
-
-  if (loading) {
-    return <div className="muted">Loading rules…</div>;
+  function startEdit(rule: AdminRule) {
+    setEditing((prev) => ({ ...prev, [rule.id]: { ...rule } }));
   }
 
-  if (!companyId) {
-    return (
-      <Card title="Admin Rules">
-        <div className="muted">
-          Could not determine your company context. (This usually means the app
-          user object doesn’t include company_id and the provider can’t resolve it.)
-        </div>
-      </Card>
-    );
+  function cancelEdit(id: string) {
+    setEditing((prev) => {
+      const { [id]: _, ...rest } = prev;
+      return rest;
+    });
+  }
+
+  async function save(rule: AdminRule) {
+    try {
+      setStatus('Saving...');
+      const saved = await data.upsertAdminRule({
+        ...rule,
+        // normalize
+        description: rule.description?.trim() ? rule.description : null,
+        threshold_value: Number(rule.threshold_value ?? 0),
+      });
+
+      setRules((prev) => {
+        const exists = prev.some((x) => x.id === saved.id);
+        const next = exists ? prev.map((x) => (x.id === saved.id ? (saved as any) : x)) : [...prev, (saved as any)];
+        return [...next].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+      });
+      cancelEdit(rule.id);
+      setStatus('Saved.');
+      setTimeout(() => setStatus(''), 1200);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
+  async function remove(id: string) {
+    const ok = await confirm({
+      title: 'Delete Rule',
+      message: 'Delete this rule?',
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+
+    try {
+      setStatus('Deleting...');
+      await data.deleteAdminRule(id);
+      setRules((prev) => prev.filter((x) => x.id !== id));
+      cancelEdit(id);
+      setStatus('Deleted.');
+      setTimeout(() => setStatus(''), 1200);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
+  function create() {
+    const nextPriority = (rules.reduce((m, r) => Math.max(m, r.priority ?? 0), 0) || 0) + 1;
+    const r = newRule(nextPriority);
+
+    // Add a local draft row so it renders immediately (even before saving)
+    setRules((prev) => {
+      const next = [...prev, r];
+      return next.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+    });
+
+    setEditing((prev) => ({ ...prev, [r.id]: r }));
+  }
+
+  function explain(rule: AdminRule): string {
+    const cond = CONDITION_LABELS[rule.condition_type];
+    const op = rule.operator;
+    const thr = rule.threshold_value;
+    const jt = enabledJobTypes.find(j => j.id === rule.target_job_type_id) ?? jobTypes.find(j => j.id === rule.target_job_type_id);
+    const jtName = jt?.name ?? '(no job type selected)';
+    return `IF ${cond} ${op} ${thr} → set Job Type = ${jtName}`;
   }
 
   return (
     <div className="stack">
-      <Card title="Admin Rules">
+      <Card
+        title="Admin Rules"
+        right={<Button variant="primary" onClick={create}>Create Rule</Button>}
+      >
         <div className="muted small">
-          Rules are evaluated only when “Apply Changes” is clicked on an Estimate or
-          Assembly. Lower priority numbers run first; first match wins.
+          Rules run only when a user clicks <strong>Apply Changes</strong> in an Estimate or Assembly. Rules are evaluated by priority (lowest number wins). First match wins.
+        </div>
+        <div className="muted small">
+          Note: Scope is stored for future use, but Phase 1 treats rules as <strong>both</strong>.
         </div>
       </Card>
 
-      {sortedRules.map(rule => (
-        <Card key={rule.id}>
-          <div className="grid4">
-            <Input
-              value={rule.name}
-              placeholder="Rule name"
-              onChange={e => updateRule({ ...rule, name: e.target.value })}
-            />
+      <Card title="Rules">
+        <div className="stack">
+          {rules.length === 0 ? <div className="muted">No rules yet.</div> : null}
 
-            <Select
-              value={rule.condition_type}
-              options={CONDITION_OPTIONS}
-              onChange={v => updateRule({ ...rule, condition_type: v as any })}
-            />
+          {rules.map((r) => {
+            const draft = editing[r.id];
+            const row = draft ?? r;
+            const isEditing = Boolean(draft);
+            const targetDisabled = row.target_job_type_id
+              ? Boolean(jobTypes.find(j => j.id === row.target_job_type_id && !j.enabled))
+              : false;
 
-            <Input
-              type="number"
-              value={rule.threshold_value}
-              onChange={e =>
-                updateRule({
-                  ...rule,
-                  threshold_value: Number(e.target.value),
-                })
-              }
-            />
+            return (
+              <div
+                key={r.id}
+                className="stack"
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 12,
+                  padding: 12,
+                  background: 'rgba(31,41,55,0.4)',
+                }}
+              >
+                <div className="rowBetween">
+                  <div className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <strong>{r.name}</strong>
+                    {!r.enabled ? <span className="pill">Disabled</span> : null}
+                    <span className="pill">Priority: {r.priority}</span>
+                    {targetDisabled ? <span className="pill">Target job type disabled</span> : null}
+                  </div>
 
-            <Select
-              value={rule.target_job_type_id ?? ''}
-              options={[
-                { value: '', label: 'Select Job Type' },
-                ...jobTypes.map(j => ({ value: j.id, label: j.name })),
-              ]}
-              onChange={v =>
-                updateRule({
-                  ...rule,
-                  target_job_type_id: v || null,
-                })
-              }
-            />
+                  <div className="row">
+                    {!isEditing ? (
+                      <>
+                        <Button onClick={() => startEdit(r)}>Edit</Button>
+                        <Button onClick={() => remove(r.id)}>Delete</Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button variant="primary" onClick={() => save(row)}>Save</Button>
+                        <Button onClick={() => cancelEdit(r.id)}>Cancel</Button>
+                      </>
+                    )}
+                  </div>
+                </div>
 
-            <Input
-              type="number"
-              value={rule.priority}
-              onChange={e =>
-                updateRule({
-                  ...rule,
-                  priority: Number(e.target.value),
-                })
-              }
-            />
+                <div className="muted small">{explain(row)}</div>
 
-            <div className="inline gap">
-              <Switch
-                checked={rule.enabled}
-                onChange={checked => updateRule({ ...rule, enabled: checked })}
-              />
-              <span className="muted small">Enabled</span>
-            </div>
+                {isEditing ? (
+                  <div className="grid2" style={{ marginTop: 8 }}>
+                    <div className="stack">
+                      <label className="label">Name</label>
+                      <Input
+                        value={row.name}
+                        onChange={(e) =>
+                          setEditing((prev) => ({
+                            ...prev,
+                            [r.id]: { ...row, name: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
 
-            <Button variant="danger" onClick={() => deleteRule(rule.id)}>
-              Delete
-            </Button>
-          </div>
-        </Card>
-      ))}
+                    <div className="stack">
+                      <label className="label">Priority (lowest wins)</label>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        value={String(row.priority)}
+                        onChange={(e) =>
+                          setEditing((prev) => ({
+                            ...prev,
+                            [r.id]: {
+                              ...row,
+                              priority: toNumberOr(e.target.value, row.priority ?? 0),
+                            },
+                          }))
+                        }
+                      />
+                    </div>
 
-      <Button
-        onClick={() =>
-          updateRule({
-            name: 'New Rule',
-            enabled: true,
-            priority: sortedRules.length + 1,
-            scope: 'both',
-            condition_type: 'expected_labor_hours',
-            operator: '>=',
-            threshold_value: 0,
-            target_job_type_id: null,
-          })
-        }
-      >
-        Add Rule
-      </Button>
+                    <div className="stack">
+                      <label className="label">Enabled</label>
+                      <Toggle
+                        checked={row.enabled}
+                        onChange={(v) =>
+                          setEditing((prev) => ({ ...prev, [r.id]: { ...row, enabled: v } }))
+                        }
+                        label={row.enabled ? 'Yes' : 'No'}
+                      />
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Condition</label>
+                      <select
+                        className="input"
+                        value={row.condition_type}
+                        onChange={(e) =>
+                          setEditing((prev) => ({
+                            ...prev,
+                            [r.id]: { ...row, condition_type: e.target.value as ConditionType },
+                          }))
+                        }
+                      >
+                        {Object.entries(CONDITION_LABELS).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Operator</label>
+                      <select
+                        className="input"
+                        value={row.operator}
+                        onChange={(e) =>
+                          setEditing((prev) => ({
+                            ...prev,
+                            [r.id]: { ...row, operator: e.target.value as Operator },
+                          }))
+                        }
+                      >
+                        {OPERATORS.map((op) => (
+                          <option key={op} value={op}>
+                            {op}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="stack">
+                      <label className="label">Threshold</label>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        value={String(row.threshold_value ?? 0)}
+                        onChange={(e) =>
+                          setEditing((prev) => ({
+                            ...prev,
+                            [r.id]: { ...row, threshold_value: toNumberOr(e.target.value, row.threshold_value ?? 0) },
+                          }))
+                        }
+                      />
+                      <div className="muted small">
+                        Use hours for labor rules (e.g., 8). Use dollars for material cost rules (e.g., 2500).
+                      </div>
+                    </div>
+
+                    <div className="stack" style={{ gridColumn: '1 / -1' }}>
+                      <label className="label">Target Job Type</label>
+                      <select
+                        className="input"
+                        value={row.target_job_type_id ?? ''}
+                        onChange={(e) =>
+                          setEditing((prev) => ({
+                            ...prev,
+                            [r.id]: { ...row, target_job_type_id: e.target.value || null },
+                          }))
+                        }
+                      >
+                        <option value="">(select job type)</option>
+                        {enabledJobTypes.map((jt) => (
+                          <option key={jt.id} value={jt.id}>
+                            {jt.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="muted small">Only enabled job types are available as targets.</div>
+                    </div>
+
+                    <div className="stack" style={{ gridColumn: '1 / -1' }}>
+                      <label className="label">Description (optional)</label>
+                      <Input
+                        value={row.description ?? ''}
+                        onChange={(e) =>
+                          setEditing((prev) => ({
+                            ...prev,
+                            [r.id]: { ...row, description: e.target.value },
+                          }))
+                        }
+                        placeholder="Example: Long jobs should use Install pricing."
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+
+        {status ? <div className="muted small mt">{status}</div> : null}
+      </Card>
     </div>
   );
 }
+
