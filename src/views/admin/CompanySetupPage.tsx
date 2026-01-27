@@ -274,50 +274,63 @@ export function CompanySetupPage() {
 
   // --------------------------
   // Revenue / pricing math derived from Default Job Type (margin + efficiency)
-// --------------------------
-const grossMargin = Math.max(0, Math.min(100, grossMarginTargetPercent)) / 100;
+  // --------------------------
+  // IMPORTANT: We are using TRUE gross margin math:
+  //   Gross Margin = (Revenue - COGS) / Revenue
+  //   => Revenue needed for GM target is based on COGS only (NOT overhead).
+  // Overhead + Net Profit are handled separately.
 
-// Net profit rules you confirmed:
-// - percent mode: percent of FINAL revenue (company + personal)
-// - dollar mode: fixed monthly net profit target (converted to per-hour)
-const npPct = Math.max(0, toNum(netProfitPctDraft, Number(s?.net_profit_goal_percent_of_revenue || 0))) / 100;
-const npDollar = Math.max(0, toNum(netProfitAmtDraft, Number(s?.net_profit_goal_amount_monthly || 0)));
+  const grossMargin = Math.max(0, Math.min(100, grossMarginTargetPercent)) / 100;
 
-// Wage cost MUST be converted to cost per BILLABLE hour (efficiency applied).
-// You pay for total hours, but you only recover through effective/billable hours.
-const laborCostPerBillableHour = effectiveHoursYear > 0 ? (avgTechWage * totalHoursYear) / effectiveHoursYear : 0;
+  // Net profit rules you confirmed:
+  // - percent mode: percent of FINAL revenue (company + personal)
+  // - dollar mode: fixed monthly net profit target (converted to per-hour)
+  const npPct = Math.max(0, toNum(netProfitPctDraft, Number(s?.net_profit_goal_percent_of_revenue || 0))) / 100;
+  const npDollar = Math.max(0, toNum(netProfitAmtDraft, Number(s?.net_profit_goal_amount_monthly || 0)));
 
-// Total cost per billable hour (allocated)
-const totalCostPerBillableHour = overheadPerHour + laborCostPerBillableHour;
+  // Hours (effective/billable) per month
+  const billableHoursPerMonth = effectiveHoursYear / 12;
 
-// Apply gross margin: Revenue = Cost / (1 - GrossMargin)
-const revenuePerBillableHourBeforeNetProfit =
-  grossMargin < 1 ? (1 - grossMargin) > 0 ? totalCostPerBillableHour / (1 - grossMargin) : 0 : 0;
+  // COGS per billable hour (materials not modeled yet in Company Setup; labor only for now)
+  // Wage cost MUST be converted to cost per BILLABLE hour (efficiency applied).
+  // You pay for total hours, but you only recover through effective/billable hours.
+  const cogsLaborPerBillableHour = effectiveHoursYear > 0 ? (avgTechWage * totalHoursYear) / effectiveHoursYear : 0;
+  const cogsPerBillableHour = cogsLaborPerBillableHour;
 
-// Apply net profit:
-// - percent mode: divide by (1 - npPct)
-// - dollar mode: add fixed profit/hour
-const billableHoursPerMonth = effectiveHoursYear / 12;
-
-const requiredRevenuePerBillableHour = (() => {
-  if (!revenuePerBillableHourBeforeNetProfit || revenuePerBillableHourBeforeNetProfit <= 0) return 0;
-
-  if ((s?.net_profit_goal_mode ?? 'percent') === 'percent') {
-    const denom = 1 - npPct;
+  // Revenue required to satisfy gross margin target (COGS capped to (1-GM) of revenue)
+  const revenuePerBillableHourForGrossMargin = (() => {
+    const denom = 1 - grossMargin;
     if (denom <= 0) return 0;
-    return revenuePerBillableHourBeforeNetProfit / denom;
-  }
+    return cogsPerBillableHour / denom;
+  })();
 
-  const profitPerHour = billableHoursPerMonth > 0 ? npDollar / billableHoursPerMonth : 0;
-  return revenuePerBillableHourBeforeNetProfit + profitPerHour;
-})();
+  // Revenue required to satisfy net profit goal
+  // Percent mode: (Revenue - COGS - Overhead) / Revenue = NP%
+  // => Revenue = (COGS + Overhead) / (1 - NP%)
+  // Dollar mode: Revenue = COGS + Overhead + Profit$/hour
+  const revenuePerBillableHourForNetProfit = (() => {
+    const costPlusOverhead = cogsPerBillableHour + overheadPerHour;
+    if ((s?.net_profit_goal_mode ?? 'percent') === 'percent') {
+      const denom = 1 - npPct;
+      if (denom <= 0) return 0;
+      return costPlusOverhead / denom;
+    }
 
-// Monthly revenue goal derived from capacity
-const revenueGoalMonthlyDerived = billableHoursPerMonth * requiredRevenuePerBillableHour;
+    const profitPerHour = billableHoursPerMonth > 0 ? npDollar / billableHoursPerMonth : 0;
+    return costPlusOverhead + profitPerHour;
+  })();
 
-// Net profit monthly (derived)
-const netProfitMonthly =
-  (s?.net_profit_goal_mode ?? 'percent') === 'percent' ? revenueGoalMonthlyDerived * npPct : npDollar;
+  // Final required revenue per billable hour must satisfy BOTH:
+  // - gross margin target (COGS-based)
+  // - net profit goal (after overhead)
+  const requiredRevenuePerBillableHour = Math.max(revenuePerBillableHourForGrossMargin, revenuePerBillableHourForNetProfit);
+
+  // Monthly revenue goal derived from capacity
+  const revenueGoalMonthlyDerived = billableHoursPerMonth * requiredRevenuePerBillableHour;
+
+  // Net profit monthly (derived)
+  const netProfitMonthly =
+    (s?.net_profit_goal_mode ?? 'percent') === 'percent' ? revenueGoalMonthlyDerived * npPct : npDollar;
 
 
   const grossProfitNeededMonthly = overheadMonthly + netProfitMonthly;
