@@ -201,14 +201,15 @@ export function CompanySetupPage() {
     });
   }
 
-  // Keep wages array aligned any time technicians changes (but never below 1 row)
+  // Keep wages array aligned any time technicians changes (use drafts so it reacts immediately)
   useEffect(() => {
     if (!s) return;
-    const target = Math.max(1, Math.max(0, Number(s.technicians) || 0));
+    const targetDraft = toInt(draft.technicians ?? '', Number(s.technicians) || 0);
+    const target = Math.max(1, Math.max(0, targetDraft));
     const cur = Array.isArray(s.technician_wages) ? (s.technician_wages as any as Wage[]) : [];
     if (cur.length !== target) ensureWagesRowCount(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s?.technicians]);
+  }, [draft.technicians, s?.technicians]);
 
   // --------------------------
   // Derived totals (use DRAFTS while editing)
@@ -243,13 +244,16 @@ export function CompanySetupPage() {
   const efficiencyPercent = Number(defaultJobType?.efficiency_percent ?? 100);
   const grossMarginTargetPercent = Number(defaultJobType?.profit_margin_percent ?? 70); // displayed as “Gross Margin Target (%)”
 
-  // Work capacity
-  const workdaysPerYear = Math.max(
-    0,
-    (Number(s?.workdays_per_week) || 0) * 52 - (Number(s?.vacation_days_per_year) || 0) - (Number(s?.sick_days_per_year) || 0)
-  );
-  const hoursPerTechYear = workdaysPerYear * (Number(s?.work_hours_per_day) || 0);
-  const techCount = Math.max(0, Number(s?.technicians) || 0);
+  // Work capacity (use drafts so breakdown updates immediately while typing)
+  const workdaysPerWeekDraft = toInt(draft.workdays_per_week ?? '', Number(s?.workdays_per_week) || 0);
+  const hoursPerDayDraft = toNum(draft.work_hours_per_day ?? '', Number(s?.work_hours_per_day) || 0);
+  const vacationDaysDraft = toInt(draft.vacation_days_per_year ?? '', Number(s?.vacation_days_per_year) || 0);
+  const sickDaysDraft = toInt(draft.sick_days_per_year ?? '', Number(s?.sick_days_per_year) || 0);
+  const techCountDraft = Math.max(0, toInt(draft.technicians ?? '', Number(s?.technicians) || 0));
+
+  const workdaysPerYear = Math.max(0, workdaysPerWeekDraft * 52 - vacationDaysDraft - sickDaysDraft);
+  const hoursPerTechYear = workdaysPerYear * hoursPerDayDraft;
+  const techCount = techCountDraft;
   const totalHoursYear = hoursPerTechYear * techCount;
 
   // Apply efficiency the way YOU described:
@@ -270,7 +274,7 @@ const grossMargin = Math.max(0, Math.min(100, grossMarginTargetPercent)) / 100;
 // Net profit rules you confirmed:
 // - percent mode: percent of FINAL revenue (company + personal)
 // - dollar mode: fixed monthly net profit target (converted to per-hour)
-const npPct = Math.max(0, Number(s?.net_profit_goal_percent_of_revenue || 0)) / 100;
+const npPct = Math.max(0, toNum(netProfitPctDraft, Number(s?.net_profit_goal_percent_of_revenue || 0))) / 100;
 const npDollar = Math.max(0, toNum(netProfitAmtDraft, Number(s?.net_profit_goal_amount_monthly || 0)));
 
 // Wage cost MUST be converted to cost per BILLABLE hour (efficiency applied).
@@ -586,6 +590,38 @@ const netProfitMonthly =
         <div className="stack">
           <div className="muted small">
             This card always shows at least 1 technician entry, even if Technicians is set to 0.
+          </div>
+
+          <div className="rowBetween" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="muted">
+              Wage rows follow the <strong>Technicians</strong> count.
+            </div>
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button
+                onClick={() => {
+                  if (!s) return;
+                  const curCount = Math.max(0, toInt(draft.technicians ?? '', Number(s.technicians) || 0));
+                  const nextCount = Math.max(0, curCount - 1);
+                  setS({ ...s, technicians: nextCount });
+                  setDraft((d) => ({ ...d, technicians: String(nextCount) }));
+                  ensureWagesRowCount(Math.max(1, nextCount));
+                }}
+              >
+                Remove Technician
+              </Button>
+              <Button
+                onClick={() => {
+                  if (!s) return;
+                  const curCount = Math.max(0, toInt(draft.technicians ?? '', Number(s.technicians) || 0));
+                  const nextCount = curCount + 1;
+                  setS({ ...s, technicians: nextCount });
+                  setDraft((d) => ({ ...d, technicians: String(nextCount) }));
+                  ensureWagesRowCount(nextCount);
+                }}
+              >
+                Add Technician
+              </Button>
+            </div>
           </div>
 
           <div className="stack">
