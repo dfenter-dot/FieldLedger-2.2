@@ -1,50 +1,71 @@
 import {
-  AdminRule,
-  BrandingSettings,
   CompanySettings,
-  CsvSettings,
   JobType,
+  AdminRule,
+  CsvSettings,
+  BrandingSettings,
 } from './types';
 
+/**
+ * IDataProvider
+ *
+ * This interface defines the contract used by the app
+ * to talk to either LocalDataProvider or SupabaseDataProvider.
+ *
+ * Phase 1 Rules work only requires READ / WRITE of Admin Rules.
+ */
 export interface IDataProvider {
   /* =========================
-     Company / Context
+     Company
      ========================= */
-  getCurrentCompanyId(): Promise<string | null>;
 
-  /* =========================
-     Company Setup / Settings
-     ========================= */
-  getCompanySettings(): Promise<CompanySettings | null>;
-  saveCompanySettings(settings: Partial<CompanySettings>): Promise<void>;
+  getCompanySettings(companyId: string): Promise<CompanySettings | null>;
+  upsertCompanySettings(
+    companyId: string,
+    settings: Partial<CompanySettings>
+  ): Promise<CompanySettings>;
 
   /* =========================
      Job Types
      ========================= */
-  getJobTypes(): Promise<JobType[]>;
-  saveJobType(jobType: Partial<JobType>): Promise<void>;
 
-  // Admin UI compatibility (aliases / required API)
-  listJobTypes(): Promise<JobType[]>;
-  upsertJobType(jobType: Partial<JobType>): Promise<void>;
-  setDefaultJobType(jobTypeId: string): Promise<void>;
+  getJobTypes(companyId: string): Promise<JobType[]>;
+  upsertJobType(
+    companyId: string,
+    jobType: Partial<JobType>
+  ): Promise<JobType>;
+  deleteJobType(companyId: string, jobTypeId: string): Promise<void>;
 
   /* =========================
      Admin Rules
      ========================= */
-  listAdminRules(): Promise<AdminRule[]>;
-  saveAdminRule(rule: Partial<AdminRule>): Promise<void>;
-  deleteAdminRule(id: string): Promise<void>;
+
+  getAdminRules(companyId: string): Promise<AdminRule[]>;
+
+  upsertAdminRule(
+    companyId: string,
+    rule: Partial<AdminRule>
+  ): Promise<AdminRule>;
+
+  deleteAdminRule(companyId: string, ruleId: string): Promise<void>;
 
   /* =========================
      CSV Settings
      ========================= */
-  getCsvSettings(): Promise<CsvSettings | null>;
-  saveCsvSettings(settings: Partial<CsvSettings>): Promise<void>;
+
+  getCsvSettings(companyId: string): Promise<CsvSettings | null>;
+  upsertCsvSettings(
+    companyId: string,
+    settings: Partial<CsvSettings>
+  ): Promise<CsvSettings>;
 
   /* =========================
-     Branding Settings
+     Branding
      ========================= */
-  getBrandingSettings(): Promise<BrandingSettings | null>;
-  saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<void>;
+
+  getBrandingSettings(companyId: string): Promise<BrandingSettings | null>;
+  upsertBrandingSettings(
+    companyId: string,
+    settings: Partial<BrandingSettings>
+  ): Promise<BrandingSettings>;
 }
