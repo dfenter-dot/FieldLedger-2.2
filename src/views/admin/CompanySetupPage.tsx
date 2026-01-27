@@ -183,7 +183,7 @@ export function CompanySetupPage() {
   function ensureWagesRowCount(targetCount: number) {
     if (!s) return;
 
-    // Keep at least 1 wage row so the Technicians details card never disappears
+    // Always keep at least 1 row (even if Technicians is 0)
     const effectiveTargetCount = Math.max(1, targetCount);
 
     const cur = Array.isArray(s.technician_wages) ? (s.technician_wages as any as Wage[]) : [];
@@ -200,6 +200,15 @@ export function CompanySetupPage() {
       return out;
     });
   }
+
+  // Keep wages array aligned any time technicians changes (but never below 1 row)
+  useEffect(() => {
+    if (!s) return;
+    const target = Math.max(1, Math.max(0, Number(s.technicians) || 0));
+    const cur = Array.isArray(s.technician_wages) ? (s.technician_wages as any as Wage[]) : [];
+    if (cur.length !== target) ensureWagesRowCount(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s?.technicians]);
 
   // --------------------------
   // Derived totals (use DRAFTS while editing)
@@ -245,7 +254,7 @@ export function CompanySetupPage() {
 
   // Apply efficiency the way YOU described:
   // If totalHours = 2000 and efficiency = 50%, effective = 1000
-  const effectiveHoursYear = totalHoursYear * Math.max(0, efficiencyPercent) / 100;
+  const effectiveHoursYear = (totalHoursYear * Math.max(0, efficiencyPercent)) / 100;
 
   const overheadPerHour = effectiveHoursYear > 0 ? overheadAnnual / effectiveHoursYear : 0;
 
@@ -276,14 +285,10 @@ export function CompanySetupPage() {
     return (overheadMonthly + npDollar) / margin;
   })();
 
-  const netProfitMonthly =
-    (s?.net_profit_goal_mode ?? 'dollar') === 'percent'
-      ? revenueGoalMonthlyDerived * npPct
-      : npDollar;
+  const netProfitMonthly = (s?.net_profit_goal_mode ?? 'dollar') === 'percent' ? revenueGoalMonthlyDerived * npPct : npDollar;
 
   const grossProfitNeededMonthly = overheadMonthly + netProfitMonthly;
-  const grossProfitPercentOfRevenue =
-    revenueGoalMonthlyDerived > 0 ? (grossProfitNeededMonthly / revenueGoalMonthlyDerived) * 100 : 0;
+  const grossProfitPercentOfRevenue = revenueGoalMonthlyDerived > 0 ? (grossProfitNeededMonthly / revenueGoalMonthlyDerived) * 100 : 0;
 
   // commit payload
   function commitAllDraftsIntoSettings(): CompanySettings {
@@ -429,27 +434,22 @@ export function CompanySetupPage() {
 
   if (!s) return <div className="muted">Loading…</div>;
 
-  const saveLabel =
-    saveUi === 'saving' ? 'Saving…' : saveUi === 'saved' ? 'Saved ✓' : saveUi === 'error' ? 'Error' : 'Save';
+  const saveLabel = saveUi === 'saving' ? 'Saving…' : saveUi === 'saved' ? 'Saved ✓' : saveUi === 'error' ? 'Error' : 'Save';
+
+  // UI row count: NEVER below 1
+  const techRowsUi = Math.max(1, Math.max(0, Number(s.technicians) || 0));
 
   return (
     <div className="stack">
       <Card
         title="Company Setup"
         right={
-          <Button
-            variant="primary"
-            onClick={save}
-            disabled={saveUi === 'saving'}
-            aria-busy={saveUi === 'saving'}
-          >
+          <Button variant="primary" onClick={save} disabled={saveUi === 'saving'} aria-busy={saveUi === 'saving'}>
             {saveLabel}
           </Button>
         }
       >
-        <div className="muted small">
-          Defaults and pricing knobs used across Materials / Assemblies / Estimates. Job Type Default drives efficiency + margin target.
-        </div>
+        <div className="muted small">Defaults and pricing knobs used across Materials / Assemblies / Estimates. Job Type Default drives efficiency + margin target.</div>
       </Card>
 
       <Card title="Defaults">
@@ -549,6 +549,77 @@ export function CompanySetupPage() {
         </div>
       </Card>
 
+      {/* FIX: This card always renders, and row count never goes below 1 */}
+      <Card title="Technician Wages (Defaults)">
+        <div className="stack">
+          <div className="muted small">
+            This card always shows at least 1 technician entry, even if Technicians is set to 0.
+          </div>
+
+          <div className="stack">
+            {Array.from({ length: techRowsUi }).map((_, idx) => {
+              const w = wages[idx] ?? { name: `Tech ${idx + 1}`, hourly_rate: 0 };
+              const rateDraft = wageDrafts[idx] ?? (w.hourly_rate != null ? String(w.hourly_rate) : '');
+
+              return (
+                <div key={idx} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Input
+                    style={{ minWidth: 220 }}
+                    value={w.name ?? ''}
+                    placeholder={`Technician ${idx + 1} Name`}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setS((prev) => {
+                        if (!prev) return prev;
+                        const cur = Array.isArray(prev.technician_wages) ? (prev.technician_wages as any as Wage[]) : [];
+                        const next = [...cur];
+                        while (next.length < techRowsUi) next.push({ name: `Tech ${next.length + 1}`, hourly_rate: 0 });
+                        next[idx] = { ...next[idx], name: v };
+                        return { ...prev, technician_wages: next as any };
+                      });
+                    }}
+                  />
+
+                  <Input
+                    style={{ width: 160 }}
+                    type="text"
+                    inputMode="decimal"
+                    value={rateDraft}
+                    placeholder="Hourly $"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setWageDrafts((prev) => {
+                        const out = [...prev];
+                        while (out.length < techRowsUi) out.push('');
+                        out[idx] = v;
+                        return out;
+                      });
+                    }}
+                    onBlur={() => {
+                      const v = toNum((wageDrafts[idx] ?? '').trim(), Number(w.hourly_rate ?? 0));
+                      setS((prev) => {
+                        if (!prev) return prev;
+                        const cur = Array.isArray(prev.technician_wages) ? (prev.technician_wages as any as Wage[]) : [];
+                        const next = [...cur];
+                        while (next.length < techRowsUi) next.push({ name: `Tech ${next.length + 1}`, hourly_rate: 0 });
+                        next[idx] = { ...next[idx], hourly_rate: v };
+                        return { ...prev, technician_wages: next as any };
+                      });
+                      setWageDrafts((prev) => {
+                        const out = [...prev];
+                        while (out.length < techRowsUi) out.push('');
+                        out[idx] = (wageDrafts[idx] ?? '').trim() === '' ? '' : String(v);
+                        return out;
+                      });
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Card>
+
       <Card title="Business Expenses">
         <div className="grid2">
           <div className="stack">
@@ -563,20 +634,13 @@ export function CompanySetupPage() {
           {!s.business_apply_itemized ? (
             <div className="stack">
               <label className="label">Business Expenses (Monthly Lump Sum)</label>
-              <Input
-                type="text"
-                inputMode="decimal"
-                value={bizLumpDraft}
-                onChange={(e) => setBizLumpDraft(e.target.value)}
-              />
+              <Input type="text" inputMode="decimal" value={bizLumpDraft} onChange={(e) => setBizLumpDraft(e.target.value)} />
             </div>
           ) : (
             <div className="stack" style={{ gridColumn: '1 / -1' }}>
               <div className="rowBetween">
                 <strong>Itemized</strong>
-                <Button onClick={() => setBizItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])}>
-                  Add Expense
-                </Button>
+                <Button onClick={() => setBizItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])}>Add Expense</Button>
               </div>
 
               <div className="stack">
@@ -668,20 +732,13 @@ export function CompanySetupPage() {
           {!s.personal_apply_itemized ? (
             <div className="stack">
               <label className="label">Personal Expenses (Monthly Lump Sum)</label>
-              <Input
-                type="text"
-                inputMode="decimal"
-                value={perLumpDraft}
-                onChange={(e) => setPerLumpDraft(e.target.value)}
-              />
+              <Input type="text" inputMode="decimal" value={perLumpDraft} onChange={(e) => setPerLumpDraft(e.target.value)} />
             </div>
           ) : (
             <div className="stack" style={{ gridColumn: '1 / -1' }}>
               <div className="rowBetween">
                 <strong>Itemized</strong>
-                <Button onClick={() => setPerItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])}>
-                  Add Expense
-                </Button>
+                <Button onClick={() => setPerItemDrafts((prev) => [...prev, { name: '', amount: '', frequency: 'monthly' }])}>Add Expense</Button>
               </div>
 
               <div className="stack">
@@ -773,31 +830,17 @@ export function CompanySetupPage() {
           {s.net_profit_goal_mode === 'percent' ? (
             <div className="stack">
               <label className="label">Net Profit % of Revenue</label>
-              <Input
-                type="text"
-                inputMode="decimal"
-                value={netProfitPctDraft}
-                onChange={(e) => setNetProfitPctDraft(e.target.value)}
-                placeholder="%"
-              />
+              <Input type="text" inputMode="decimal" value={netProfitPctDraft} onChange={(e) => setNetProfitPctDraft(e.target.value)} placeholder="%" />
             </div>
           ) : (
             <div className="stack">
               <label className="label">Net Profit (Fixed $ / Month)</label>
-              <Input
-                type="text"
-                inputMode="decimal"
-                value={netProfitAmtDraft}
-                onChange={(e) => setNetProfitAmtDraft(e.target.value)}
-                placeholder="$"
-              />
+              <Input type="text" inputMode="decimal" value={netProfitAmtDraft} onChange={(e) => setNetProfitAmtDraft(e.target.value)} placeholder="$" />
             </div>
           )}
         </div>
 
-        <div className="muted small">
-          Revenue goal is derived from the Default Job Type margin target. Net profit % mode uses that derived revenue.
-        </div>
+        <div className="muted small">Revenue goal is derived from the Default Job Type margin target. Net profit % mode uses that derived revenue.</div>
       </Card>
 
       <Card title="Cost Breakdown (Computed)">
@@ -901,9 +944,7 @@ export function CompanySetupPage() {
           </div>
         </div>
 
-        <div className="muted small">
-          Revenue goal is computed from overhead + net profit goal, using the Default Job Type gross margin target.
-        </div>
+        <div className="muted small">Revenue goal is computed from overhead + net profit goal, using the Default Job Type gross margin target.</div>
       </Card>
 
       {status ? <div className="muted small mt">{status}</div> : null}
