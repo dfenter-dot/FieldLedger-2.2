@@ -9,10 +9,13 @@ import type { Material } from '../../providers/data/types';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
 
 export function MaterialEditorPage() {
-  const { materialId } = useParams();
+  const { materialId, libraryType } = useParams();
   const data = useData();
   const nav = useNavigate();
   const { confirm } = useDialogs();
+
+  const [isOwner, setIsOwner] = useState(false);
+  const isAppLibrary = (libraryType ?? '') === 'app';
 
   const [m, setM] = useState<Material | null>(null);
   const [status, setStatus] = useState<string>('');
@@ -46,15 +49,60 @@ export function MaterialEditorPage() {
     data.listJobTypes().then(setJobTypes).catch(console.error);
   }, [data]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const owner = await (data as any).isAppOwner?.();
+        setIsOwner(Boolean(owner));
+      } catch {
+        setIsOwner(false);
+      }
+    })();
+  }, [data]);
+
   async function save() {
-    if (!m) return;
+    if (!m || !materialId) return;
     try {
       setStatus('Saving...');
+
       const unit_cost = unitCostText.trim() === '' ? 0 : Number(unitCostText);
       const custom_cost = customCostText.trim() === '' ? null : Number(customCostText);
+
       const lh = laborHoursText.trim() === '' ? null : Number(laborHoursText);
       const lm = laborMinutesText.trim() === '' ? null : Number(laborMinutesText);
-      const labor_minutes = (Number.isFinite(lh as any) ? Number(lh) : 0) * 60 + (Number.isFinite(lm as any) ? Number(lm) : 0);
+      const labor_minutes =
+        (Number.isFinite(lh as any) ? Number(lh) : 0) * 60 +
+        (Number.isFinite(lm as any) ? Number(lm) : 0);
+
+      // App Materials (normal companies): save ONLY overrides
+      if (isAppLibrary && !isOwner) {
+        const patch: any = {
+          override_job_type_id: m.job_type_id ?? null,
+          override_taxable: Boolean(m.taxable),
+          override_custom_cost: Number.isFinite(custom_cost as any) ? (custom_cost as any) : null,
+          override_use_custom_cost: Boolean(m.use_custom_cost),
+        };
+
+        await (data as any).upsertAppMaterialOverride(materialId, patch);
+
+        // refresh merged view
+        const refreshed = await data.getMaterial(materialId);
+        setM(refreshed);
+
+        setUnitCostText(refreshed.unit_cost === null || refreshed.unit_cost === undefined ? '' : String(refreshed.unit_cost));
+        setCustomCostText(refreshed.custom_cost === null || refreshed.custom_cost === undefined ? '' : String(refreshed.custom_cost));
+        const savedLm = Number(refreshed.labor_minutes ?? 0) || 0;
+        const sh = Math.floor(savedLm / 60);
+        const smin = Math.round(savedLm % 60);
+        setLaborHoursText(refreshed.labor_minutes == null ? '' : String(sh));
+        setLaborMinutesText(refreshed.labor_minutes == null ? '' : String(smin));
+
+        setStatus('Saved.');
+        setTimeout(() => setStatus(''), 1500);
+        return;
+      }
+
+      // User Materials + App Owner edit path
       const payload: Material = {
         ...m,
         unit_cost: Number.isFinite(unit_cost) ? unit_cost : 0,
@@ -62,6 +110,7 @@ export function MaterialEditorPage() {
         use_custom_cost: Boolean(m.use_custom_cost),
         labor_minutes: Number.isFinite(labor_minutes) ? labor_minutes : 0,
       };
+
       const saved = await data.upsertMaterial(payload);
       setM(saved);
       setUnitCostText(saved.unit_cost === null || saved.unit_cost === undefined ? '' : String(saved.unit_cost));
@@ -80,6 +129,11 @@ export function MaterialEditorPage() {
   }
 
   async function remove() {
+    if (isAppLibrary && !isOwner) {
+      setStatus('App materials cannot be deleted by companies.');
+      setTimeout(() => setStatus(''), 2000);
+      return;
+    }
     if (!m) return;
     try {
       // eslint-disable-next-line no-restricted-globals
@@ -99,6 +153,8 @@ export function MaterialEditorPage() {
     }
   }
 
+  const readOnlyBase = isAppLibrary && !isOwner;
+
   if (!m) return <div className="muted">Loading…</div>;
 
   return (
@@ -107,10 +163,12 @@ export function MaterialEditorPage() {
         title={`Material • ${m.name}`}
         right={
           <div className="row">
-            <Button onClick={() => nav(-1)}>Back</Button>
-            <Button variant="danger" onClick={remove}>
-              Delete
-            </Button>
+            <Button onClick={() => nav(-1)}>Close ✕</Button>
+            {isAppLibrary && !isOwner ? null : (
+              <Button variant="danger" onClick={remove}>
+                Delete
+              </Button>
+            )}
             <Button variant="primary" onClick={save}>
               Save
             </Button>
@@ -120,12 +178,12 @@ export function MaterialEditorPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Name</label>
-            <Input value={m.name} onChange={(e) => setM({ ...m, name: e.target.value })} />
+            <Input value={m.name} disabled={readOnlyBase} onChange={(e) => setM({ ...m, name: e.target.value })} />
           </div>
 
           <div className="stack">
             <label className="label">SKU / Part #</label>
-            <Input value={m.sku ?? ''} onChange={(e) => setM({ ...m, sku: e.target.value })} />
+            <Input value={m.sku ?? ''} disabled={readOnlyBase} onChange={(e) => setM({ ...m, sku: e.target.value })} />
           </div>
 
           <div className="stack">
@@ -134,6 +192,7 @@ export function MaterialEditorPage() {
               type="text"
               inputMode="decimal"
               value={unitCostText}
+              disabled={readOnlyBase}
               onChange={(e) => setUnitCostText(e.target.value)}
             />
           </div>
@@ -150,12 +209,12 @@ export function MaterialEditorPage() {
 
           <div className="stack">
             <label className="label">Labor Time (Hours)</label>
-            <Input type="text" inputMode="numeric" value={laborHoursText} onChange={(e) => setLaborHoursText(e.target.value)} />
+            <Input type="text" inputMode="numeric" value={laborHoursText} disabled={readOnlyBase} onChange={(e) => setLaborHoursText(e.target.value)} />
           </div>
 
           <div className="stack">
             <label className="label">Labor Time (Minutes)</label>
-            <Input type="text" inputMode="numeric" value={laborMinutesText} onChange={(e) => setLaborMinutesText(e.target.value)} />
+            <Input type="text" inputMode="numeric" value={laborMinutesText} disabled={readOnlyBase} onChange={(e) => setLaborMinutesText(e.target.value)} />
           </div>
 
           <div className="stack">
@@ -179,10 +238,7 @@ export function MaterialEditorPage() {
 
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Description</label>
-            <Input
-              value={m.description ?? ''}
-              onChange={(e) => setM({ ...m, description: e.target.value })}
-            />
+            <Input value={m.description ?? ''} disabled={readOnlyBase} onChange={(e) => setM({ ...m, description: e.target.value })} />
           </div>
         </div>
 
@@ -191,4 +247,5 @@ export function MaterialEditorPage() {
     </div>
   );
 }
+
 
