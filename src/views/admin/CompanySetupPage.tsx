@@ -259,33 +259,56 @@ export function CompanySetupPage() {
   const overheadPerHour = effectiveHoursYear > 0 ? overheadAnnual / effectiveHoursYear : 0;
 
   const avgTechWage = avgWage(wages);
-  const loadedLaborRate = avgTechWage + overheadPerHour;
+  const laborCostPerBillableHourPreview = effectiveHoursYear > 0 ? (avgTechWage * totalHoursYear) / effectiveHoursYear : 0;
+  const loadedLaborRate = overheadPerHour + laborCostPerBillableHourPreview;
 
   // --------------------------
-  // Revenue goal derived from Default Job Type (margin target)
-  // --------------------------
-  const margin = Math.max(0, Math.min(100, grossMarginTargetPercent)) / 100;
+  // Revenue / pricing math derived from Default Job Type (margin + efficiency)
+// --------------------------
+const grossMargin = Math.max(0, Math.min(100, grossMarginTargetPercent)) / 100;
 
-  // Net profit rules you confirmed:
-  // - percent mode: based on revenue goal
-  // - dollar mode: fixed amount based on overhead
-  const npPct = Math.max(0, Number(s?.net_profit_goal_percent_of_revenue || 0)) / 100;
-  const npDollar = Math.max(0, toNum(netProfitAmtDraft, Number(s?.net_profit_goal_amount_monthly || 0)));
+// Net profit rules you confirmed:
+// - percent mode: percent of FINAL revenue (company + personal)
+// - dollar mode: fixed monthly net profit target (converted to per-hour)
+const npPct = Math.max(0, Number(s?.net_profit_goal_percent_of_revenue || 0)) / 100;
+const npDollar = Math.max(0, toNum(netProfitAmtDraft, Number(s?.net_profit_goal_amount_monthly || 0)));
 
-  // Solve revenue goal:
-  // If percent mode: R * margin = overhead + (R * npPct)  => R = overhead / (margin - npPct)
-  // If dollar mode:  R * margin = overhead + npDollar     => R = (overhead + npDollar) / margin
-  const revenueGoalMonthlyDerived = (() => {
-    if (!margin || margin <= 0) return 0;
-    if ((s?.net_profit_goal_mode ?? 'dollar') === 'percent') {
-      const denom = margin - npPct;
-      if (denom <= 0) return 0;
-      return overheadMonthly / denom;
-    }
-    return (overheadMonthly + npDollar) / margin;
-  })();
+// Wage cost MUST be converted to cost per BILLABLE hour (efficiency applied).
+// You pay for total hours, but you only recover through effective/billable hours.
+const laborCostPerBillableHour = effectiveHoursYear > 0 ? (avgTechWage * totalHoursYear) / effectiveHoursYear : 0;
 
-  const netProfitMonthly = (s?.net_profit_goal_mode ?? 'dollar') === 'percent' ? revenueGoalMonthlyDerived * npPct : npDollar;
+// Total cost per billable hour (allocated)
+const totalCostPerBillableHour = overheadPerHour + laborCostPerBillableHour;
+
+// Apply gross margin: Revenue = Cost / (1 - GrossMargin)
+const revenuePerBillableHourBeforeNetProfit =
+  grossMargin < 1 ? (1 - grossMargin) > 0 ? totalCostPerBillableHour / (1 - grossMargin) : 0 : 0;
+
+// Apply net profit:
+// - percent mode: divide by (1 - npPct)
+// - dollar mode: add fixed profit/hour
+const billableHoursPerMonth = effectiveHoursYear / 12;
+
+const requiredRevenuePerBillableHour = (() => {
+  if (!revenuePerBillableHourBeforeNetProfit || revenuePerBillableHourBeforeNetProfit <= 0) return 0;
+
+  if ((s?.net_profit_goal_mode ?? 'percent') === 'percent') {
+    const denom = 1 - npPct;
+    if (denom <= 0) return 0;
+    return revenuePerBillableHourBeforeNetProfit / denom;
+  }
+
+  const profitPerHour = billableHoursPerMonth > 0 ? npDollar / billableHoursPerMonth : 0;
+  return revenuePerBillableHourBeforeNetProfit + profitPerHour;
+})();
+
+// Monthly revenue goal derived from capacity
+const revenueGoalMonthlyDerived = billableHoursPerMonth * requiredRevenuePerBillableHour;
+
+// Net profit monthly (derived)
+const netProfitMonthly =
+  (s?.net_profit_goal_mode ?? 'percent') === 'percent' ? revenueGoalMonthlyDerived * npPct : npDollar;
+
 
   const grossProfitNeededMonthly = overheadMonthly + netProfitMonthly;
   const grossProfitPercentOfRevenue = revenueGoalMonthlyDerived > 0 ? (grossProfitNeededMonthly / revenueGoalMonthlyDerived) * 100 : 0;
@@ -346,7 +369,16 @@ export function CompanySetupPage() {
     (next as any).net_profit_goal_amount_monthly = toNum(netProfitAmtDraft ?? '', next.net_profit_goal_amount_monthly ?? 0);
     (next as any).net_profit_goal_percent_of_revenue = toNum(netProfitPctDraft ?? '', next.net_profit_goal_percent_of_revenue ?? 0);
 
-    // Revenue goal is derived from Default Job Type (margin target), not user-input
+    // Cached computed totals (raw dollars)
+    ;(next as any).business_expenses_monthly = bizMonthly;
+    ;(next as any).personal_expenses_monthly = perMonthly;
+    ;(next as any).overhead_monthly = overheadMonthly;
+
+    // Cached computed rates (system-derived)
+    ;(next as any).overhead_per_billable_hour = overheadPerHour;
+    ;(next as any).required_revenue_per_billable_hour = requiredRevenuePerBillableHour;
+
+    // Revenue goal is derived from capacity + required revenue/hour, not user-input
     ;(next as any).revenue_goal_monthly = revenueGoalMonthlyDerived;
 
     return next;
@@ -923,6 +955,14 @@ export function CompanySetupPage() {
           </div>
 
           <div className="stack">
+            <label className="label">Required Revenue / Billable Hour</label>
+            <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
+              ${requiredRevenuePerBillableHour.toFixed(2)}/hr
+            </div>
+          </div>
+
+
+          <div className="stack">
             <label className="label">Revenue Goal (Monthly, Derived)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
               ${revenueGoalMonthlyDerived.toFixed(2)}
@@ -951,3 +991,4 @@ export function CompanySetupPage() {
     </div>
   );
 }
+
