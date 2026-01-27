@@ -6,6 +6,10 @@ import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { CompanySettings, JobType } from '../../providers/data/types';
 
+const _fmtInt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+const _fmt2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const _fmtMoney = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 type Tier = { min: number; max: number; markup_percent: number };
 type Wage = { name: string; hourly_rate: number };
 
@@ -482,14 +486,9 @@ const netProfitMonthly =
   if (!s) return <div className="muted">Loading…</div>;
 
   const saveLabel = saveUi === 'saving' ? 'Saving…' : saveUi === 'saved' ? 'Saved ✓' : saveUi === 'error' ? 'Error' : 'Save';
-  const fmtInt = useMemo(() => new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }), []);
-  const fmt2 = useMemo(() => new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), []);
-  const fmtMoney = useMemo(() => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }), []);
-
-  const money = (n: number) => fmtMoney.format(Number.isFinite(n) ? n : 0);
-  const num0 = (n: number) => fmtInt.format(Number.isFinite(n) ? n : 0);
-  const num2 = (n: number) => fmt2.format(Number.isFinite(n) ? n : 0);
-
+  const money = (n: number) => _fmtMoney.format(Number.isFinite(n) ? n : 0);
+  const num0 = (n: number) => _fmtInt.format(Number.isFinite(n) ? n : 0);
+  const num2 = (n: number) => _fmt2.format(Number.isFinite(n) ? n : 0);
 
   // UI row count: NEVER below 1
   const techRowsUi = Math.max(1, techCountDraft);
@@ -1081,4 +1080,3 @@ const netProfitMonthly =
     </div>
   );
 }
-
