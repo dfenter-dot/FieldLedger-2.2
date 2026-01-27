@@ -1,159 +1,158 @@
-import { IDataProvider } from '../IDataProvider';
 import {
-  AdminRule,
-  BrandingSettings,
   CompanySettings,
-  CsvSettings,
   JobType,
+  AdminRule,
+  CsvSettings,
+  BrandingSettings,
 } from '../types';
+import { IDataProvider } from '../IDataProvider';
 
 /**
- * Local / in-memory provider.
- * Used only for dev or fallback; not production-safe.
+ * LocalDataProvider
+ *
+ * Used for local/dev mode.
+ * Phase 1 Rules: simple in-memory storage.
  */
 export class LocalDataProvider implements IDataProvider {
-  private companyId: string | null;
-
-  private companySettings: CompanySettings | null = null;
-  private jobTypes: JobType[] = [];
-  private adminRules: AdminRule[] = [];
-  private csvSettings: CsvSettings | null = null;
-  private brandingSettings: BrandingSettings | null = null;
-
-  constructor(companyId: string | null = null) {
-    this.companyId = companyId;
-  }
+  private companySettings = new Map<string, CompanySettings>();
+  private jobTypes = new Map<string, JobType[]>();
+  private adminRules = new Map<string, AdminRule[]>();
+  private csvSettings = new Map<string, CsvSettings>();
+  private brandingSettings = new Map<string, BrandingSettings>();
 
   /* =========================
-     Company / Context
+     Company
      ========================= */
 
-  async getCurrentCompanyId(): Promise<string | null> {
-    return this.companyId;
+  async getCompanySettings(companyId: string): Promise<CompanySettings | null> {
+    return this.companySettings.get(companyId) ?? null;
   }
 
-  /* =========================
-     Company Settings
-     ========================= */
-
-  async getCompanySettings(): Promise<CompanySettings | null> {
-    return this.companySettings;
-  }
-
-  async saveCompanySettings(
+  async upsertCompanySettings(
+    companyId: string,
     settings: Partial<CompanySettings>
-  ): Promise<void> {
-    this.companySettings = {
-      ...(this.companySettings ?? {
-        id: 'local',
-        company_id: this.companyId ?? 'local',
-      }),
-      ...settings,
-    } as CompanySettings;
+  ): Promise<CompanySettings> {
+    const existing = this.companySettings.get(companyId) ?? ({} as CompanySettings);
+    const updated = { ...existing, ...settings, company_id: companyId } as CompanySettings;
+    this.companySettings.set(companyId, updated);
+    return updated;
   }
 
   /* =========================
      Job Types
      ========================= */
 
-  async getJobTypes(): Promise<JobType[]> {
-    return this.jobTypes;
+  async getJobTypes(companyId: string): Promise<JobType[]> {
+    return this.jobTypes.get(companyId) ?? [];
   }
 
-  async saveJobType(jobType: Partial<JobType>): Promise<void> {
-    const existing = this.jobTypes.find(j => j.id === jobType.id);
+  async upsertJobType(
+    companyId: string,
+    jobType: Partial<JobType>
+  ): Promise<JobType> {
+    const list = this.jobTypes.get(companyId) ?? [];
+    let updated: JobType;
 
-    if (existing) {
-      Object.assign(existing, jobType);
+    if (jobType.id) {
+      updated = { ...list.find(j => j.id === jobType.id)!, ...jobType } as JobType;
+      this.jobTypes.set(
+        companyId,
+        list.map(j => (j.id === updated.id ? updated : j))
+      );
     } else {
-      this.jobTypes.push({
-        id: jobType.id ?? crypto.randomUUID(),
-        company_id: this.companyId ?? 'local',
-        name: jobType.name ?? 'New Job Type',
-        billing_mode: jobType.billing_mode ?? 'hourly',
-        is_default: !!jobType.is_default,
-      });
+      updated = {
+        ...(jobType as JobType),
+        id: crypto.randomUUID(),
+        company_id: companyId,
+      };
+      this.jobTypes.set(companyId, [...list, updated]);
     }
+
+    return updated;
   }
 
-  async listJobTypes(): Promise<JobType[]> {
-    return this.getJobTypes();
-  }
-
-  async upsertJobType(jobType: Partial<JobType>): Promise<void> {
-    return this.saveJobType(jobType);
-  }
-
-  async setDefaultJobType(jobTypeId: string): Promise<void> {
-    this.jobTypes.forEach(j => {
-      j.is_default = j.id === jobTypeId;
-    });
+  async deleteJobType(companyId: string, jobTypeId: string): Promise<void> {
+    const list = this.jobTypes.get(companyId) ?? [];
+    this.jobTypes.set(
+      companyId,
+      list.filter(j => j.id !== jobTypeId)
+    );
   }
 
   /* =========================
      Admin Rules
      ========================= */
 
-  async listAdminRules(): Promise<AdminRule[]> {
-    return this.adminRules;
+  async getAdminRules(companyId: string): Promise<AdminRule[]> {
+    return this.adminRules.get(companyId) ?? [];
   }
 
-  async saveAdminRule(rule: Partial<AdminRule>): Promise<void> {
-    const existing = this.adminRules.find(r => r.id === rule.id);
+  async upsertAdminRule(
+    companyId: string,
+    rule: Partial<AdminRule>
+  ): Promise<AdminRule> {
+    const list = this.adminRules.get(companyId) ?? [];
+    let updated: AdminRule;
 
-    if (existing) {
-      Object.assign(existing, rule);
+    if (rule.id) {
+      updated = { ...list.find(r => r.id === rule.id)!, ...rule } as AdminRule;
+      this.adminRules.set(
+        companyId,
+        list.map(r => (r.id === updated.id ? updated : r))
+      );
     } else {
-      this.adminRules.push({
-        id: rule.id ?? crypto.randomUUID(),
-        company_id: this.companyId ?? 'local',
-        name: rule.name ?? 'New Rule',
-        rule_type: rule.rule_type ?? 'custom',
-        rule_value: rule.rule_value ?? null,
-      });
+      updated = {
+        ...(rule as AdminRule),
+        id: crypto.randomUUID(),
+        company_id: companyId,
+      };
+      this.adminRules.set(companyId, [...list, updated]);
     }
+
+    return updated;
   }
 
-  async deleteAdminRule(id: string): Promise<void> {
-    this.adminRules = this.adminRules.filter(r => r.id !== id);
+  async deleteAdminRule(companyId: string, ruleId: string): Promise<void> {
+    const list = this.adminRules.get(companyId) ?? [];
+    this.adminRules.set(
+      companyId,
+      list.filter(r => r.id !== ruleId)
+    );
   }
 
   /* =========================
      CSV Settings
      ========================= */
 
-  async getCsvSettings(): Promise<CsvSettings | null> {
-    return this.csvSettings;
+  async getCsvSettings(companyId: string): Promise<CsvSettings | null> {
+    return this.csvSettings.get(companyId) ?? null;
   }
 
-  async saveCsvSettings(settings: Partial<CsvSettings>): Promise<void> {
-    this.csvSettings = {
-      ...(this.csvSettings ?? {
-        id: 'local',
-        company_id: this.companyId ?? 'local',
-      }),
-      ...settings,
-    } as CsvSettings;
+  async upsertCsvSettings(
+    companyId: string,
+    settings: Partial<CsvSettings>
+  ): Promise<CsvSettings> {
+    const existing = this.csvSettings.get(companyId) ?? ({} as CsvSettings);
+    const updated = { ...existing, ...settings, company_id: companyId } as CsvSettings;
+    this.csvSettings.set(companyId, updated);
+    return updated;
   }
 
   /* =========================
-     Branding Settings
+     Branding
      ========================= */
 
-  async getBrandingSettings(): Promise<BrandingSettings | null> {
-    return this.brandingSettings;
+  async getBrandingSettings(companyId: string): Promise<BrandingSettings | null> {
+    return this.brandingSettings.get(companyId) ?? null;
   }
 
-  async saveBrandingSettings(
+  async upsertBrandingSettings(
+    companyId: string,
     settings: Partial<BrandingSettings>
-  ): Promise<void> {
-    this.brandingSettings = {
-      ...(this.brandingSettings ?? {
-        id: 'local',
-        company_id: this.companyId ?? 'local',
-        company_name: 'Local Company',
-      }),
-      ...settings,
-    } as BrandingSettings;
+  ): Promise<BrandingSettings> {
+    const existing = this.brandingSettings.get(companyId) ?? ({} as BrandingSettings);
+    const updated = { ...existing, ...settings, company_id: companyId } as BrandingSettings;
+    this.brandingSettings.set(companyId, updated);
+    return updated;
   }
 }
