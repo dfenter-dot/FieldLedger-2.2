@@ -10,13 +10,13 @@ export function MobileNav() {
         Dashboard
       </NavLink>
       <NavLink
-        to="/materials/user"
+        to="/materials"
         className={({ isActive }) => (isActive ? 'mobileItem active' : 'mobileItem')}
       >
         Materials
       </NavLink>
       <NavLink
-        to="/assemblies/user"
+        to="/assemblies"
         className={({ isActive }) => (isActive ? 'mobileItem active' : 'mobileItem')}
       >
         Assemblies
@@ -36,4 +36,5 @@ export function MobileNav() {
     </nav>
   );
 }
+
 
