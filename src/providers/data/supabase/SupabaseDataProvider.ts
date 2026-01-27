@@ -502,31 +502,49 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error) throw error;
     return (data ?? []) as any;
   }
+  
+// Compatibility wrapper for Admin Rules UI (Phase 1)
+async getAdminRules(companyId: string): Promise<AdminRule[]> {
+  // companyId param is accepted for compatibility
+  return this.listAdminRules();
+}
 
-  async upsertAdminRule(rule: Partial<AdminRule>): Promise<AdminRule> {
-    const companyId = await this.currentCompanyId();
-    const payload = {
-      ...rule,
-      company_id: companyId,
-    };
-    const { data, error } = await this.supabase
-      .from('admin_rules')
-      .upsert(payload as any)
-      .select()
-      .single();
+ async upsertAdminRule(companyIdOrRule: any, maybeRule?: any): Promise<AdminRule> {
+  // Supports BOTH signatures:
+  // upsertAdminRule(rule)
+  // upsertAdminRule(companyId, rule)
+  const rule = (maybeRule ?? companyIdOrRule) as Partial<AdminRule>;
 
-    if (error) throw error;
-    return data as any;
-  }
+  const companyId = await this.currentCompanyId();
+  const payload = { ...rule, company_id: companyId };
+
+  const { data, error } = await this.supabase
+    .from('admin_rules')
+    .upsert(payload as any)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as any;
+}
 
   async saveAdminRule(rule: Partial<AdminRule>): Promise<void> {
     await this.upsertAdminRule(rule);
   }
 
-  async deleteAdminRule(id: string): Promise<void> {
-    const { error } = await this.supabase.from('admin_rules').delete().eq('id', id);
-    if (error) throw error;
-  }
+ async deleteAdminRule(companyIdOrId: any, maybeId?: any): Promise<void> {
+  // Supports BOTH signatures:
+  // deleteAdminRule(id)
+  // deleteAdminRule(companyId, id)
+  const id = (maybeId ?? companyIdOrId) as string;
+
+  const { error } = await this.supabase
+    .from('admin_rules')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
+}
 
   /* ------------------------------------------------------------------ */
   /* CSV Settings                                                       */
