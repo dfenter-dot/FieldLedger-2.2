@@ -1,215 +1,148 @@
-/* =========================
-   Core / Company
-   ========================= */
+// src/providers/data/types.ts
 
-export interface MaterialMarkupTier {
-  min: number;
-  max: number;
-  markup_percent: number;
+export type UUID = string;
+
+/* ================================
+   Core Ownership / Library Types
+================================ */
+
+export type OwnerType = 'user' | 'app';
+export type LibraryType = 'materials' | 'assemblies';
+
+/* ================================
+   Profiles / Company
+================================ */
+
+export interface Profile {
+  user_id: UUID;
+  email: string;
+  full_name?: string | null;
+  company_id: UUID;
+  is_app_owner?: boolean;
 }
 
-export interface ExpenseItem {
-  name: string;
-  amount: number;
-  frequency: 'monthly' | 'quarterly' | 'biannual' | 'annual';
-}
-
-export interface TechnicianWage {
-  name: string;
-  hourly_rate: number;
-}
-
-export interface CompanySettings {
-  id: string;
-  company_id: string;
-
-  /* -------------------------
-     Company capacity inputs
-     ------------------------- */
-  workdays_per_week: number;
-  work_hours_per_day: number;
-  vacation_days_per_year: number;
-  sick_days_per_year: number;
-
-  /**
-   * Source-of-truth technician count for capacity.
-   * (Tech wages live in Technicians table; this is capacity count / override.)
-   */
-  technicians: number;
-
-  /** Owner-friendly planning input: average jobs per tech per day (used for Average Job Goal). */
-  avg_jobs_per_tech_per_day?: number;
-
-  /* -------------------------
-     Defaults / policies
-     ------------------------- */
-  material_purchase_tax_percent: number;
-  misc_material_percent: number;
-  default_discount_percent: number;
-  processing_fee_percent: number;
-
-  min_billable_labor_minutes_per_job: number;
-  estimate_validity_days: number;
-  starting_estimate_number: number;
-
-  material_markup_tiers: MaterialMarkupTier[];
-  misc_applies_when_customer_supplies: boolean;
-
-  /* -------------------------
-     Labor cost inputs
-     ------------------------- */
-  technician_wages: TechnicianWage[];
-
-  /* -------------------------
-     Expenses (raw monthly dollars)
-     ------------------------- */
-  business_expenses_mode: 'lump' | 'itemized';
-  business_expenses_lump_sum_monthly: number;
-  business_expenses_itemized: ExpenseItem[];
-  business_apply_itemized: boolean;
-
-  personal_expenses_mode: 'lump' | 'itemized';
-  personal_expenses_lump_sum_monthly: number;
-  personal_expenses_itemized: ExpenseItem[];
-  personal_apply_itemized: boolean;
-
-  /** Cached computed totals (raw monthly dollars). */
-  business_expenses_monthly?: number;
-  personal_expenses_monthly?: number;
-  overhead_monthly?: number;
-
-  /* -------------------------
-     Net profit goal
-     ------------------------- */
-  net_profit_goal_mode: 'percent' | 'dollar';
-  /** Dollar mode: fixed monthly net profit target (converted to per-hour in calculations). */
-  net_profit_goal_amount_monthly: number;
-  /** Percent mode: percent of final revenue. */
-  net_profit_goal_percent_of_revenue: number;
-
-  /* -------------------------
-     Cached computed “truth” values (system-derived)
-     ------------------------- */
-  /** Overhead per billable hour (efficiency applied). */
-  overhead_per_billable_hour?: number;
-  /** Required revenue per billable hour (includes wage + overhead + margin + net profit). */
-  required_revenue_per_billable_hour?: number;
-
-  /** Derived monthly revenue goal (required revenue/hr × billable hours/month). */
-  revenue_goal_monthly: number;
-
-  /* -------------------------
-     Text blocks
-     ------------------------- */
-  company_license_text: string;
-  company_warranty_text: string;
-
-  created_at?: string;
-  updated_at?: string;
-}
-
-/* =========================
+/* ================================
    Job Types
-   ========================= */
+================================ */
 
 export interface JobType {
-  id: string;
-  company_id: string;
-
+  id: UUID;
   name: string;
-  description?: string;
-
-  enabled: boolean;
-
-  /**
-   * Target gross margin (percent) for this job type.
-   * Job Type overrides Company default when selected.
-   */
-  profit_margin_percent: number;
-
-  /** Efficiency percent used for billable-hour conversion (default job type drives Company Setup calc). */
   efficiency_percent: number;
-
-  allow_discounts: boolean;
-
-  billing_mode: 'hourly' | 'flat';
-
-  is_default: boolean;
-
-  created_at?: string;
-  updated_at?: string;
-}
-
-/* =========================
-   Admin Rules
-   ========================= */
-
-export interface AdminRule {
-  id: string;
-  company_id: string;
-
-  /** Human-friendly name shown in Admin → Rules */
-  name: string;
-  description?: string;
-
-  /** Enabled rules are eligible for Apply Changes */
+  billing_type: 'flat' | 'hourly';
   enabled: boolean;
-
-  /** Lower numbers run first; first match wins */
-  priority: number;
-
-  /** Which entities this rule can target */
-  scope: 'estimate' | 'assembly' | 'both';
-
-  /** What to test */
-  condition_type:
-    | 'expected_labor_hours'
-    | 'material_cost'
-    | 'line_item_count'
-    | 'any_line_item_qty';
-
-  /** Comparison operator */
-  operator: '>=' | '>' | '<=' | '<' | '==' | '!=';
-
-  /** Numeric threshold to compare against */
-  threshold_value: number;
-
-  /** Job type to apply when matched */
-  target_job_type_id: string | null;
-
-  created_at?: string;
-  updated_at?: string;
 }
 
-/* =========================
-   CSV Settings
-   ========================= */
+/* ================================
+   Folders
+================================ */
 
-export interface CsvSettings {
-  id: string;
-  company_id: string;
-
-  include_headers: boolean;
-  decimal_hours: boolean;
-  round_minutes: boolean;
-
-  created_at?: string;
-  updated_at?: string;
+export interface Folder {
+  id: UUID;
+  company_id: UUID | null;
+  owner: OwnerType;
+  library: LibraryType;
+  parent_id: UUID | null;
+  name: string;
+  image_path?: string | null;
+  sort_order: number;
+  created_at: string;
 }
 
-/* =========================
-   Branding Settings
-   ========================= */
+/* ================================
+   Materials
+================================ */
 
-export interface BrandingSettings {
-  id: string;
-  company_id: string;
+export interface Material {
+  id: UUID;
+  company_id: UUID | null;
+  owner: OwnerType;
+  folder_id: UUID;
 
-  company_name: string;
-  logo_url?: string;
-  primary_color?: string;
-  secondary_color?: string;
+  name: string;
+  sku?: string | null;
+  description?: string | null;
 
-  created_at?: string;
-  updated_at?: string;
+  base_cost: number;
+  taxable: boolean;
+
+  labor_minutes: number;
+  job_type_id: UUID | null;
+
+  image_path?: string | null;
+
+  created_at: string;
+  updated_at: string;
+
+  // UI-only merged fields
+  custom_cost?: number | null;
+  use_custom_cost?: boolean;
+  effective_cost?: number;
+}
+
+/* ================================
+   App Material Overrides
+================================ */
+
+export interface AppMaterialOverride {
+  company_id: UUID;
+  material_id: UUID;
+
+  override_job_type_id?: UUID | null;
+  override_taxable?: boolean | null;
+
+  custom_cost?: number | null;
+  use_custom_cost?: boolean | null;
+
+  updated_at: string;
+}
+
+/* ================================
+   Material Picker (Assemblies / Estimates)
+================================ */
+
+export interface PickedMaterial {
+  material_id: UUID;
+  quantity: number;
+}
+
+/* ================================
+   CSV Import / Export
+================================ */
+
+export interface MaterialCsvRow {
+  folder_path: string;
+  name: string;
+  sku?: string;
+  description?: string;
+  base_cost: number;
+  labor_hours: number; // decimal hours in CSV
+  taxable: boolean;
+  job_type_name?: string;
+}
+
+/* ================================
+   Data Provider Interface
+================================ */
+
+export interface DataProvider {
+  /* ---------- Materials ---------- */
+
+  listMaterials(library: OwnerType): Promise<Material[]>;
+  getMaterial(id: UUID): Promise<Material | null>;
+  upsertMaterial(material: Partial<Material>): Promise<Material>;
+  deleteMaterial(id: UUID): Promise<void>;
+
+  /* ---------- Folders ---------- */
+
+  listFolders(library: LibraryType, owner: OwnerType): Promise<Folder[]>;
+  upsertFolder(folder: Partial<Folder>): Promise<Folder>;
+  deleteFolder(id: UUID): Promise<void>;
+
+  /* ---------- Overrides ---------- */
+
+  listAppMaterialOverrides(): Promise<AppMaterialOverride[]>;
+  upsertAppMaterialOverride(
+    override: Partial<AppMaterialOverride>
+  ): Promise<void>;
 }
