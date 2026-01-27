@@ -20,9 +20,9 @@ import { seedCompanySettings } from '../local/seed';
  * This provider maps the UI/types model to your current Supabase schema.
  *
  * Your DB schema (from your screenshots):
- * - folders: { owner, library, sort_order, parent_id, company_id, name, ... }
+ * - folders: { owner, library, sort_order, parent_id, company_id, name, created_at, ... }  // NO updated_at
  * - materials: { owner, company_id, folder_id, base_cost, labor_minutes, job_type_id, taxable, ... }
- * - app_material_overrides: { company_id, material_id, override_job_type_id, override_taxable, custom_cost, use_custom_cost, ... }
+ * - app_material_overrides: { company_id, material_id, override_job_type_id, override_taxable, custom_cost, use_custom_cost, updated_at }
  *
  * The UI/types currently expect legacy fields like Folder.kind / library_type / order_index
  * and Material.unit_cost (rather than base_cost). This file performs the translation.
@@ -106,7 +106,7 @@ export class SupabaseDataProvider implements IDataProvider {
       name: row.name,
       order_index: Number(row.sort_order ?? 0),
       created_at: row.created_at ?? undefined,
-      updated_at: row.updated_at ?? undefined,
+      updated_at: (row.updated_at ?? undefined) as any, // some envs may have it; DB currently does not
     } as Folder;
   }
 
@@ -123,7 +123,7 @@ export class SupabaseDataProvider implements IDataProvider {
       name: folder.name,
       sort_order: folder.order_index ?? 0,
       created_at: folder.created_at,
-      updated_at: folder.updated_at,
+      // DO NOT include updated_at (folders table doesn't have it)
     };
   }
 
@@ -177,7 +177,7 @@ export class SupabaseDataProvider implements IDataProvider {
 
     merged.__has_override = true;
 
-    // Your DB table uses these exact column names:
+    // DB column names:
     // override_job_type_id, override_taxable, custom_cost, use_custom_cost
     if ((ov as any).override_job_type_id != null) merged.job_type_id = (ov as any).override_job_type_id;
     if ((ov as any).override_taxable != null) merged.taxable = (ov as any).override_taxable;
@@ -286,7 +286,7 @@ export class SupabaseDataProvider implements IDataProvider {
     const dbOwner = this.toDbOwner(args.libraryType);
 
     const payload: any = {
-      id: crypto.randomUUID?.() ?? `folder_${Date.now()}`,
+      // DO NOT send id (let DB generate UUID)
       owner: dbOwner,
       library: args.kind,
       name: args.name,
@@ -294,7 +294,7 @@ export class SupabaseDataProvider implements IDataProvider {
       sort_order: 0,
       company_id: dbOwner === 'user' ? companyId : null,
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      // folders table has NO updated_at
     };
 
     const { data, error } = await this.supabase.from('folders').insert(payload).select().single();
@@ -305,14 +305,14 @@ export class SupabaseDataProvider implements IDataProvider {
   async saveFolder(folder: Partial<Folder>): Promise<Folder> {
     const companyId = await this.currentCompanyId();
 
-    // Map incoming UI folder to DB payload
     const dbPayload = this.mapFolderToDb(folder);
 
     // Ensure company scope matches owner
     if ((dbPayload.owner as DbOwner) === 'user') dbPayload.company_id = dbPayload.company_id ?? companyId;
     else dbPayload.company_id = null;
 
-    dbPayload.updated_at = new Date().toISOString();
+    // folders table has NO updated_at
+    delete dbPayload.updated_at;
 
     const { data, error } = await this.supabase.from('folders').upsert(dbPayload).select().single();
     if (error) throw error;
@@ -364,7 +364,7 @@ export class SupabaseDataProvider implements IDataProvider {
 
     if (dbOwner !== 'app') return mats;
 
-    // Merge company overrides for app-owned materials (best-effort; no overrides if table missing)
+    // Merge company overrides for app-owned materials (best-effort)
     const overrides = await this.tryListAppMaterialOverrides(companyId);
     const byMat = new Map<string, AppMaterialOverride>();
     for (const ov of overrides) byMat.set((ov as any).material_id, ov as any);
@@ -610,7 +610,6 @@ export class SupabaseDataProvider implements IDataProvider {
     return (data ?? []) as any;
   }
 
-  // Compatibility wrapper for Admin Rules UI
   async getAdminRules(_companyId: string): Promise<AdminRule[]> {
     return this.listAdminRules();
   }
