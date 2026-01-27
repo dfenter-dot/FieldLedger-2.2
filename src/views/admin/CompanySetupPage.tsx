@@ -492,7 +492,6 @@ const netProfitMonthly =
 
 
   // UI row count: NEVER below 1
-  const techCountDraft = Math.max(0, toInt(draft.technicians ?? '', Number(s.technicians) || 0));
   const techRowsUi = Math.max(1, techCountDraft);
 
   return (
