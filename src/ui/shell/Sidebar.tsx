@@ -26,7 +26,7 @@ export function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/materials/user"
+          to="/materials"
           className={({ isActive }) =>
             isActive ? 'navItem active' : 'navItem'
           }
@@ -35,7 +35,7 @@ export function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/assemblies/user"
+          to="/assemblies"
           className={({ isActive }) =>
             isActive ? 'navItem active' : 'navItem'
           }
@@ -70,4 +70,5 @@ export function Sidebar() {
     </aside>
   );
 }
+
 
