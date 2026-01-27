@@ -33,7 +33,15 @@ export function JobTypesPage() {
       .then(setRows)
       .catch((e) => {
         console.error(e);
-        setStatus(String((e as any)?.message ?? e));
+        const msg = String((e as any)?.message ?? e);
+        if (msg.toLowerCase().includes('schema cache')) {
+          setStatus(
+            msg +
+              "\n\nHint: This usually means your Supabase 'job_types' table is missing one of the columns the UI expects (e.g. allow_discounts, profit_margin_percent). Add the missing column(s) and run: select pg_notify('pgrst','reload schema');"
+          );
+        } else {
+          setStatus(msg);
+        }
       });
   }, [data]);
 
@@ -213,4 +221,5 @@ export function JobTypesPage() {
     </div>
   );
 }
+
 
