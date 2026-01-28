@@ -78,7 +78,10 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   }, [kind, mode.type]);
 
   const returnToPath = useMemo(() => {
-    if (mode.type === 'add-materials-to-assembly') return `/assemblies/user/${mode.assemblyId}`;
+    if (mode.type === 'add-materials-to-assembly') {
+      const lt = (mode as any)?.assemblyLibraryType === 'app' ? 'app' : 'user';
+      return `/assemblies/${lt}/${mode.assemblyId}`;
+    }
     if (mode.type === 'add-materials-to-estimate') return `/estimates/${mode.estimateId}`;
     if (mode.type === 'add-assemblies-to-estimate') return `/estimates/${mode.estimateId}`;
     return null;
