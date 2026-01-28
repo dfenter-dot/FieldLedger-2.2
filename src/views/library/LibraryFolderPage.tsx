@@ -105,7 +105,83 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     };
   }, [data, kind, mode]);
 
-const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
+  const inMaterialPickerMode =
+    kind === 'materials' &&
+    (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
+
+  function setPickerQtyLocal(materialId: string, qtyText: string) {
+    setSelectedQtyByMaterialId((prev) => ({ ...prev, [materialId]: qtyText }));
+  }
+
+  async function commitPickerSelectionAndReturn() {
+    if (!inMaterialPickerMode) {
+      setMode({ type: 'none' });
+      if (returnToPath) nav(returnToPath);
+      return;
+    }
+
+    try {
+      setStatus('');
+
+      const normalized: Array<{ material_id: string; quantity: number }> = [];
+      for (const [material_id, qtyText] of Object.entries(selectedQtyByMaterialId)) {
+        const s = String(qtyText ?? '').trim();
+        if (s === '') continue;
+        const q = clampQty(Number(s));
+        if (!Number.isFinite(q) || q <= 0) continue;
+        normalized.push({ material_id, quantity: q });
+      }
+
+      if (mode.type === 'add-materials-to-assembly') {
+        const asm = await data.getAssembly(mode.assemblyId);
+        if (!asm) throw new Error('Assembly not found');
+
+        const prevItems = Array.isArray((asm as any).items) ? ([...(asm as any).items] as any[]) : [];
+        const keepNonMaterial = prevItems.filter((it) => (it?.type ?? it?.item_type) !== 'material');
+
+        const nextMaterialItems = normalized.map(({ material_id, quantity }) => {
+          const existing = prevItems.find(
+            (it) => it?.material_id === material_id && (it?.type ?? it?.item_type) === 'material'
+          );
+          return {
+            ...(existing ?? {}),
+            id: existing?.id ?? (crypto.randomUUID?.() ?? `it_${Date.now()}`),
+            type: 'material',
+            item_type: 'material',
+            material_id,
+            quantity,
+          };
+        });
+
+        await data.upsertAssembly({ ...(asm as any), items: [...keepNonMaterial, ...nextMaterialItems] } as any);
+      } else if (mode.type === 'add-materials-to-estimate') {
+        const est = await data.getEstimate(mode.estimateId);
+        if (!est) throw new Error('Estimate not found');
+
+        const prevItems = Array.isArray((est as any).items) ? ([...(est as any).items] as any[]) : [];
+        const keepNonMaterial = prevItems.filter((it) => it?.type !== 'material');
+
+        const nextMaterialItems = normalized.map(({ material_id, quantity }) => {
+          const existing = prevItems.find((it) => it?.material_id === material_id && it?.type === 'material');
+          return {
+            ...(existing ?? {}),
+            id: existing?.id ?? (crypto.randomUUID?.() ?? `it_${Date.now()}`),
+            type: 'material',
+            material_id,
+            quantity,
+          };
+        });
+
+        await data.upsertEstimate({ ...(est as any), items: [...keepNonMaterial, ...nextMaterialItems] } as any);
+      }
+
+      setMode({ type: 'none' });
+      if (returnToPath) nav(returnToPath);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
 
   async function refresh() {
     try {
@@ -428,56 +504,10 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     }
   }
 
-  // Picker: add/update/remove items
-  async function updatePickerQuantity(materialId: string, qtyText: string) {
+  // Picker: local add/update/remove only. Persist happens on "Return".
+  function updatePickerQuantity(materialId: string, qtyText: string) {
     if (!inMaterialPickerMode) return;
-
-    setSelectedQtyByMaterialId((prev) => ({ ...prev, [materialId]: qtyText }));
-
-    const qty = qtyText.trim() === '' ? null : clampQty(Number(qtyText));
-
-    try {
-      if (mode.type === 'add-materials-to-assembly') {
-        const asm = await data.getAssembly(mode.assemblyId);
-        if (!asm) throw new Error('Assembly not found');
-
-        const items = [...((asm.items ?? []) as any[])];
-        const idx = items.findIndex((it) => it.material_id === materialId);
-
-        if (qty == null) {
-          // remove
-          if (idx >= 0) items.splice(idx, 1);
-        } else if (idx >= 0) {
-          items[idx] = { ...items[idx], quantity: qty };
-        } else {
-          items.push({ id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: materialId, quantity: qty });
-        }
-
-        await data.upsertAssembly({ ...asm, items } as any);
-        return;
-      }
-
-      if (mode.type === 'add-materials-to-estimate') {
-        const est = await data.getEstimate(mode.estimateId);
-        if (!est) throw new Error('Estimate not found');
-
-        const items = [...((est.items ?? []) as any[])];
-        const idx = items.findIndex((it) => it.material_id === materialId);
-
-        if (qty == null) {
-          if (idx >= 0) items.splice(idx, 1);
-        } else if (idx >= 0) {
-          items[idx] = { ...items[idx], quantity: qty };
-        } else {
-          items.push({ id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: materialId, quantity: qty });
-        }
-
-        await data.upsertEstimate({ ...est, items } as any);
-      }
-    } catch (e: any) {
-      console.error(e);
-      setStatus(String(e?.message ?? e));
-    }
+    setPickerQtyLocal(materialId, qtyText);
   }
 
   // Global search dropdown (materials only)
@@ -556,8 +586,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                   <Button
                     variant="primary"
                     onClick={() => {
-                      setMode({ type: 'none' });
-                      nav(returnToPath);
+                      commitPickerSelectionAndReturn();
                     }}
                   >
                     {mode.type === 'add-materials-to-assembly' ? 'Return to Assembly' : 'Return to Estimate'}
@@ -691,7 +720,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                               style={{ width: 80 }}
                               inputMode="numeric"
                               value={selectedText}
-                              onChange={(e) => setSelectedQtyByMaterialId((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                              onChange={(e) => setPickerQtyLocal(m.id, e.target.value)}
                               onBlur={() => updatePickerQuantity(m.id, selectedQtyByMaterialId[m.id] ?? '')}
                             />
                             <Button onClick={() => updatePickerQuantity(m.id, String(clampQty(Number(selectedText)) + 1))}>+</Button>
