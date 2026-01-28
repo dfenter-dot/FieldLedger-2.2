@@ -11,8 +11,6 @@ import {
   LibraryType,
   Material,
   AppMaterialOverride,
-  AppAssemblyOverride,
-  OwnerType,
 } from '../types';
 import { IDataProvider } from '../IDataProvider';
 import { seedCompanySettings } from '../local/seed';
@@ -122,8 +120,9 @@ export class SupabaseDataProvider implements IDataProvider {
       company_id: owner === 'company' ? folder.company_id : null,
       parent_id: folder.parent_id ?? null,
       name: folder.name,
-      sort_order: folder.order_index ?? (folder as any).sort_order ?? 0,
-      image_path: (folder as any).image_path ?? null,
+      sort_order: folder.order_index ?? 0,
+      created_at: folder.created_at,
+      // NO updated_at on folders table
     };
   }
 
@@ -135,183 +134,123 @@ export class SupabaseDataProvider implements IDataProvider {
     return {
       id: row.id,
       company_id: row.company_id ?? null,
-      owner: row.owner,
-      folder_id: row.folder_id,
-
+      folder_id: row.folder_id ?? null,
       name: row.name,
-      sku: row.sku,
-      description: row.description,
-
-      base_cost: Number(row.base_cost ?? 0),
+      sku: row.sku ?? null,
+      description: row.description ?? null,
+      unit_cost: Number(row.base_cost ?? 0),
       taxable: Boolean(row.taxable),
-
       labor_minutes: Number(row.labor_minutes ?? 0),
       job_type_id: row.job_type_id ?? null,
-
-      image_path: row.image_path ?? null,
-
+      order_index: Number(row.sort_order ?? 0),
       created_at: row.created_at,
       updated_at: row.updated_at,
-
-      custom_cost: row.custom_cost ?? null,
-      use_custom_cost: row.use_custom_cost ?? false,
-      effective_cost: row.effective_cost ?? undefined,
+      __is_app_material: row.owner === 'app',
     } as Material;
   }
 
-  private mapMaterialToDb(material: Partial<Material>): any {
-    return {
-      id: material.id,
-      owner: material.owner,
-      company_id: material.company_id ?? null,
-      folder_id: material.folder_id,
+  private mapMaterialToDb(material: Partial<Material>, companyId: string): any {
+    const isApp = material.company_id === null;
+    const owner: DbOwner = isApp ? 'app' : 'company';
 
+    return {
+      // DO NOT require client-generated UUID
+      id: material.id,
+      owner,
+      company_id: owner === 'company' ? companyId : null,
+      folder_id: material.folder_id ?? null,
       name: material.name,
       sku: material.sku ?? null,
       description: material.description ?? null,
-
-      base_cost: material.base_cost ?? 0,
+      base_cost: material.unit_cost ?? 0,
       taxable: material.taxable ?? false,
-
       labor_minutes: material.labor_minutes ?? 0,
       job_type_id: material.job_type_id ?? null,
-
-      image_path: material.image_path ?? null,
-
-      sort_order: (material as any).sort_order ?? 0,
+      sort_order: material.order_index ?? 0,
+      updated_at: new Date().toISOString(),
     };
   }
 
   /* ============================
-     Assemblies
+     App Material Overrides
   ============================ */
 
-  async listAssemblies(params: { libraryType: LibraryType; folderId: string | null }): Promise<Assembly[]> {
-    const companyId = await this.currentCompanyId();
-    const owner: DbOwner = this.toDbOwner(params.libraryType);
+  private async getOverrides(companyId: string): Promise<Map<string, AppMaterialOverride>> {
+    const map = new Map<string, AppMaterialOverride>();
 
-    const folderId = params.folderId;
-    if (!folderId) return [];
-
-    // IMPORTANT: assemblies table DOES NOT have sort_order in your Supabase schema.
-    const q = this.supabase
-      .from('assemblies')
+    const { data, error } = await this.supabase
+      .from('app_material_overrides')
       .select('*')
-      .eq('owner', owner)
-      .eq('folder_id', folderId)
-      .order('name', { ascending: true });
+      .eq('company_id', companyId);
 
-    if (owner === 'company') q.eq('company_id', companyId);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    return (data ?? []) as any[];
-  }
-
-  async getAssembly(id: string): Promise<Assembly | null> {
-    const { data: a, error } = await this.supabase.from('assemblies').select('*').eq('id', id).single();
-    if (error) throw error;
-    if (!a) return null;
-
-    const { data: items, error: e2 } = await this.supabase
-      .from('assembly_items')
-      .select('*')
-      .eq('assembly_id', id)
-      .order('sort_order', { ascending: true });
-
-    if (e2) throw e2;
-
-    return { ...(a as any), items: items ?? [] } as any;
-  }
-
-  async upsertAssembly(assembly: Partial<Assembly> & { items?: any[] }): Promise<Assembly> {
-    const companyId = await this.currentCompanyId();
-
-    const isOwner = await this.isAppOwner();
-    const owner: DbOwner = (assembly as any).owner
-      ? ((assembly as any).owner as DbOwner)
-      : ((assembly as any).library_type ? this.toDbOwner((assembly as any).library_type) : 'company');
-
-    // Guard: normal companies cannot mutate app-owned base assemblies
-    if (owner === 'app' && !isOwner) {
-      throw new Error('Not allowed to modify app-owned assemblies');
+    if (!error && data) {
+      for (const o of data as any[]) {
+        map.set((o as any).material_id, o as any);
+      }
     }
+
+    return map;
+  }
+
+  private mergeOverride(base: Material, ov?: AppMaterialOverride): Material {
+    if (!ov) return base;
+
+    return {
+      ...base,
+      job_type_id: (ov as any).override_job_type_id ?? base.job_type_id,
+      taxable: (ov as any).override_taxable ?? base.taxable,
+      custom_cost: (ov as any).custom_cost ?? undefined,
+      use_custom_cost: (ov as any).use_custom_cost ?? undefined,
+      __has_override: true,
+    } as Material;
+  }
+
+  async upsertAppMaterialOverride(materialId: string, patch: Partial<AppMaterialOverride>): Promise<AppMaterialOverride> {
+    const companyId = await this.currentCompanyId();
 
     const payload: any = {
-      ...assembly,
-      owner,
-      company_id: owner === 'company' ? (assembly as any).company_id ?? companyId : null,
+      company_id: companyId,
+      material_id: materialId,
+      ...patch,
+      updated_at: new Date().toISOString(),
     };
 
-    // DB column is customer_supplies_materials (NOT customer_supplied_materials)
-    if (payload.customer_supplied_materials !== undefined && payload.customer_supplies_materials === undefined) {
-      payload.customer_supplies_materials = payload.customer_supplied_materials;
-      delete payload.customer_supplied_materials;
-    }
+    const { data, error } = await this.supabase
+      .from('app_material_overrides')
+      .upsert(payload, { onConflict: 'company_id,material_id' })
+      .select()
+      .single();
 
-    // items are stored separately
-    const items = (payload.items ?? []) as any[];
-    delete payload.items;
-
-    const { data: saved, error } = await this.supabase.from('assemblies').upsert(payload).select('*').single();
     if (error) throw error;
-
-    // Replace items
-    const { error: delErr } = await this.supabase.from('assembly_items').delete().eq('assembly_id', saved.id);
-    if (delErr) throw delErr;
-
-    if (items.length) {
-      const rows = items.map((it, idx) => {
-        const itemType = it.item_type ?? it.type ?? 'material';
-
-        // DB is labor_minutes (single int)
-        const laborMinutes =
-          typeof it.labor_minutes === 'number'
-            ? it.labor_minutes
-            : Number(it.labor_minutes ?? 0) || 0;
-
-        // DB is material_cost_override
-        const materialCostOverride =
-          it.material_cost_override ?? it.material_cost ?? it.materialCost ?? it.materialCostOverride ?? null;
-
-        return {
-          assembly_id: saved.id,
-          item_type: itemType,
-          material_id: it.material_id ?? it.materialId ?? null,
-          name: it.name ?? null,
-          quantity: it.quantity ?? 1,
-          material_cost_override: materialCostOverride,
-          labor_minutes: laborMinutes,
-          sort_order: idx,
-        };
-      });
-
-      const { error: insErr } = await this.supabase.from('assembly_items').insert(rows);
-      if (insErr) throw insErr;
-    }
-
-    return (await this.getAssembly(saved.id)) as any;
-  }
-
-  async deleteAssembly(id: string): Promise<void> {
-    const isOwner = await this.isAppOwner();
-
-    const { data: a } = await this.supabase.from('assemblies').select('id, owner').eq('id', id).single();
-    if ((a as any)?.owner === 'app' && !isOwner) {
-      throw new Error('Not allowed to delete app-owned assemblies');
-    }
-
-    await this.supabase.from('assembly_items').delete().eq('assembly_id', id);
-
-    const { error } = await this.supabase.from('assemblies').delete().eq('id', id);
-    if (error) throw error;
+    return data as any;
   }
 
   /* ============================
      Folders
-     NOTE: UI calls data.createFolder(...) in multiple places.
-     This method must exist at runtime.
   ============================ */
+
+  async listFolders(args: {
+    kind: 'materials' | 'assemblies';
+    libraryType: LibraryType;
+    parentId: string | null;
+  }): Promise<Folder[]> {
+    const companyId = await this.currentCompanyId();
+    const owner = this.toDbOwner(args.libraryType);
+
+    let q = this.supabase
+      .from('folders')
+      .select('*')
+      .eq('library', args.kind)
+      .eq('owner', owner)
+      .order('sort_order', { ascending: true });
+
+    q = args.parentId ? q.eq('parent_id', args.parentId) : q.is('parent_id', null);
+    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []).map((r: any) => this.mapFolderFromDb(r));
+  }
 
   async createFolder(args: {
     kind: 'materials' | 'assemblies';
@@ -330,7 +269,7 @@ export class SupabaseDataProvider implements IDataProvider {
       sort_order: 0,
       company_id: owner === 'company' ? companyId : null,
       created_at: new Date().toISOString(),
-      // folders table has NO updated_at
+      // NO updated_at
     };
 
     const { data, error } = await this.supabase.from('folders').insert(payload).select().single();
@@ -338,37 +277,17 @@ export class SupabaseDataProvider implements IDataProvider {
     return this.mapFolderFromDb(data);
   }
 
-  async listFolders(library: LibraryType, owner: OwnerType): Promise<Folder[]> {
+  async saveFolder(folder: Partial<Folder>): Promise<Folder> {
     const companyId = await this.currentCompanyId();
+    const payload = this.mapFolderToDb(folder);
 
-    const q = this.supabase
-      .from('folders')
-      .select('*')
-      .eq('library', library)
-      .eq('owner', owner)
-      .order('sort_order', { ascending: true });
-
-    if (owner === 'user') q.eq('company_id', companyId);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    return (data ?? []).map((r) => this.mapFolderFromDb(r));
-  }
-
-  async upsertFolder(folder: Partial<Folder>): Promise<Folder> {
-    const companyId = await this.currentCompanyId();
-
-    const owner = folder.library_type ? this.toDbOwner(folder.library_type) : 'company';
-
-    const payload = this.mapFolderToDb({
-      ...folder,
-      company_id: owner === 'company' ? companyId : null,
-    } as any);
+    if (payload.owner === 'company') payload.company_id = payload.company_id ?? companyId;
+    else payload.company_id = null;
 
     // ensure we don't send updated_at to folders ever
     delete payload.updated_at;
 
-    const { data, error } = await this.supabase.from('folders').upsert(payload).select('*').single();
+    const { data, error } = await this.supabase.from('folders').upsert(payload).select().single();
     if (error) throw error;
     return this.mapFolderFromDb(data);
   }
@@ -382,36 +301,74 @@ export class SupabaseDataProvider implements IDataProvider {
      Materials
   ============================ */
 
-  async listMaterials(library: OwnerType): Promise<Material[]> {
+  async listMaterials(args: { libraryType: LibraryType; folderId: string | null }): Promise<Material[]> {
     const companyId = await this.currentCompanyId();
-    const owner = library;
+    const owner = this.toDbOwner(args.libraryType);
 
-    const q = this.supabase.from('materials').select('*').eq('owner', owner).order('sort_order', { ascending: true });
+    let q = this.supabase
+      .from('materials')
+      .select('*')
+      .eq('owner', owner)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true });
 
-    if (owner === 'user') q.eq('company_id', companyId);
+    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
+    q = args.folderId ? q.eq('folder_id', args.folderId) : q.is('folder_id', null);
 
     const { data, error } = await q;
     if (error) throw error;
-    return (data ?? []).map((r) => this.mapMaterialFromDb(r));
+
+    let mats = (data ?? []).map((r: any) => this.mapMaterialFromDb(r));
+
+    if (owner === 'app') {
+      const overrides = await this.getOverrides(companyId);
+      mats = mats.map((m) => this.mergeOverride(m, overrides.get(m.id)));
+    }
+
+    return mats;
   }
 
-  async getMaterial(id: string): Promise<Material | null> {
+  async getMaterial(id: string): Promise<Material> {
+    const companyId = await this.currentCompanyId();
+
     const { data, error } = await this.supabase.from('materials').select('*').eq('id', id).single();
     if (error) throw error;
-    return data ? this.mapMaterialFromDb(data) : null;
+
+    const material = this.mapMaterialFromDb(data);
+
+    if (material.company_id === null) {
+      const isOwner = await this.isAppOwner();
+      if (!isOwner) {
+        const overrides = await this.getOverrides(companyId);
+        return this.mergeOverride(material, overrides.get(id));
+      }
+    }
+
+    return material;
   }
 
   async upsertMaterial(material: Partial<Material>): Promise<Material> {
     const companyId = await this.currentCompanyId();
 
-    const payload = this.mapMaterialToDb({
-      ...material,
-      company_id: material.owner === 'user' ? companyId : null,
-    });
+    // Protect app-owned base records
+    if (material.company_id === null) {
+      const isOwner = await this.isAppOwner();
+      if (!isOwner) throw new Error('App materials cannot be edited directly');
+    }
 
-    const { data, error } = await this.supabase.from('materials').upsert(payload).select('*').single();
+    const payload = this.mapMaterialToDb(material, companyId);
+
+    // If client didn't provide an id, let DB generate one (works for inserts)
+    if (!payload.id) delete payload.id;
+
+    const { data, error } = await this.supabase.from('materials').upsert(payload).select().single();
     if (error) throw error;
+
     return this.mapMaterialFromDb(data);
+  }
+
+  async saveMaterial(material: Partial<Material>): Promise<Material> {
+    return this.upsertMaterial(material);
   }
 
   async deleteMaterial(id: string): Promise<void> {
@@ -420,25 +377,45 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   /* ============================
-     App Material Overrides
+     Job Types (THIS FIXES YOUR BLANK PAGE)
   ============================ */
 
-  async listAppMaterialOverrides(): Promise<AppMaterialOverride[]> {
+  async getJobTypes(): Promise<JobType[]> {
     const companyId = await this.currentCompanyId();
-    const { data, error } = await this.supabase
-      .from('app_material_overrides')
-      .select('*')
-      .eq('company_id', companyId);
-
+    const { data, error } = await this.supabase.from('job_types').select('*').eq('company_id', companyId).order('name');
     if (error) throw error;
-    return (data ?? []) as any[];
+    return data ?? [];
   }
 
-  async upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<void> {
+  // ✅ the UI expects this method
+  async listJobTypes(): Promise<JobType[]> {
+    return this.getJobTypes();
+  }
+
+  async saveJobType(jobType: Partial<JobType>): Promise<JobType> {
     const companyId = await this.currentCompanyId();
-    const payload = { ...override, company_id: companyId };
-    const { error } = await this.supabase.from('app_material_overrides').upsert(payload);
+    const payload = { ...jobType, company_id: companyId };
+    const { data, error } = await this.supabase.from('job_types').upsert(payload as any).select().single();
     if (error) throw error;
+    return data as any;
+  }
+
+  async upsertJobType(jobType: Partial<JobType>): Promise<JobType> {
+    return this.saveJobType(jobType);
+  }
+
+  async setDefaultJobType(jobTypeId: string): Promise<void> {
+    const companyId = await this.currentCompanyId();
+    const { error: clearErr } = await this.supabase.from('job_types').update({ is_default: false }).eq('company_id', companyId);
+    if (clearErr) throw clearErr;
+
+    const { error: setErr } = await this.supabase
+      .from('job_types')
+      .update({ is_default: true })
+      .eq('company_id', companyId)
+      .eq('id', jobTypeId);
+
+    if (setErr) throw setErr;
   }
 
   /* ============================
@@ -447,125 +424,116 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async getCompanySettings(): Promise<CompanySettings> {
     const companyId = await this.currentCompanyId();
-    const { data, error } = await this.supabase.from('company_settings').select('*').eq('company_id', companyId).single();
+    const { data, error } = await this.supabase.from('company_settings').select('*').eq('company_id', companyId).maybeSingle();
+    if (error) throw error;
+    if (data) return data as any;
 
-    if (error) {
-      // If missing, seed
-      const seeded = seedCompanySettings(companyId);
-      const { data: inserted, error: insErr } = await this.supabase
-        .from('company_settings')
-        .insert(seeded)
-        .select('*')
-        .single();
-      if (insErr) throw insErr;
-      return inserted as any;
-    }
-
-    return data as any;
+    const payload = seedCompanySettings(companyId);
+    const { data: created, error: createErr } = await this.supabase.from('company_settings').insert(payload as any).select().single();
+    if (createErr) throw createErr;
+    return created as any;
   }
 
-  async upsertCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings> {
+  async saveCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings> {
     const companyId = await this.currentCompanyId();
-    const payload = { ...settings, company_id: companyId };
-    const { data, error } = await this.supabase.from('company_settings').upsert(payload).select('*').single();
+    const payload = { ...settings, company_id: companyId, updated_at: new Date().toISOString() };
+    const { data, error } = await this.supabase.from('company_settings').upsert(payload as any).select().single();
     if (error) throw error;
     return data as any;
   }
 
   /* ============================
-     Job Types
+     Everything Else (stubs to satisfy interface where used)
   ============================ */
 
-  async listJobTypes(): Promise<JobType[]> {
+  async getAssemblies(): Promise<Assembly[]> {
     const companyId = await this.currentCompanyId();
-    const { data, error } = await this.supabase.from('job_types').select('*').eq('company_id', companyId).order('name');
+    const { data, error } = await this.supabase.from('assemblies').select('*').or(`company_id.eq.${companyId},company_id.is.null`);
     if (error) throw error;
-    return (data ?? []) as any[];
+    return data ?? [];
   }
 
-  async getJobTypes(companyId: string): Promise<JobType[]> {
-    const { data, error } = await this.supabase.from('job_types').select('*').eq('company_id', companyId).order('name');
-    if (error) throw error;
-    return (data ?? []) as any[];
+  async listAssemblies(): Promise<Assembly[]> {
+    return this.getAssemblies();
   }
 
-  async upsertJobType(companyId: string, jobType: Partial<JobType>): Promise<JobType> {
-    const payload = { ...jobType, company_id: companyId };
-    const { data, error } = await this.supabase.from('job_types').upsert(payload).select('*').single();
+  async getEstimates(): Promise<Estimate[]> {
+    const companyId = await this.currentCompanyId();
+    const { data, error } = await this.supabase.from('estimates').select('*').eq('company_id', companyId);
     if (error) throw error;
-    return data as any;
+    return data ?? [];
   }
 
-  async deleteJobType(companyId: string, jobTypeId: string): Promise<void> {
-    const { error } = await this.supabase.from('job_types').delete().eq('company_id', companyId).eq('id', jobTypeId);
-    if (error) throw error;
+  async listEstimates(): Promise<Estimate[]> {
+    return this.getEstimates();
   }
-
-  /* ============================
-     Admin Rules
-  ============================ */
 
   async listAdminRules(): Promise<AdminRule[]> {
     const companyId = await this.currentCompanyId();
-    const { data, error } = await this.supabase
-      .from('admin_rules')
-      .select('*')
-      .eq('company_id', companyId)
-      .order('priority', { ascending: true });
+    const { data, error } = await this.supabase.from('admin_rules').select('*').eq('company_id', companyId).order('priority', { ascending: true });
     if (error) throw error;
-    return (data ?? []) as any[];
+    return (data ?? []) as any;
   }
 
-  async getAdminRules(companyId: string): Promise<AdminRule[]> {
-    const { data, error } = await this.supabase
-      .from('admin_rules')
-      .select('*')
-      .eq('company_id', companyId)
-      .order('priority', { ascending: true });
-    if (error) throw error;
-    return (data ?? []) as any[];
+  async getAdminRules(_companyId: string): Promise<AdminRule[]> {
+    return this.listAdminRules();
   }
 
-  async upsertAdminRule(companyId: string, rule: Partial<AdminRule>): Promise<AdminRule> {
+  async upsertAdminRule(companyIdOrRule: any, maybeRule?: any): Promise<AdminRule> {
+    const rule = (maybeRule ?? companyIdOrRule) as Partial<AdminRule>;
+    const companyId = await this.currentCompanyId();
     const payload = { ...rule, company_id: companyId };
-    const { data, error } = await this.supabase.from('admin_rules').upsert(payload).select('*').single();
+    const { data, error } = await this.supabase.from('admin_rules').upsert(payload as any).select().single();
     if (error) throw error;
     return data as any;
   }
 
-  async deleteAdminRule(companyId: string, ruleId: string): Promise<void> {
-    const { error } = await this.supabase.from('admin_rules').delete().eq('company_id', companyId).eq('id', ruleId);
+  async saveAdminRule(rule: Partial<AdminRule>): Promise<void> {
+    await this.upsertAdminRule(rule);
+  }
+
+  async deleteAdminRule(companyIdOrId: any, maybeId?: any): Promise<void> {
+    const id = (maybeId ?? companyIdOrId) as string;
+    const { error } = await this.supabase.from('admin_rules').delete().eq('id', id);
     if (error) throw error;
   }
 
-  /* ============================
-     CSV Settings
-  ============================ */
+  async getCsvSettings(): Promise<CsvSettings> {
+    const companyId = await this.currentCompanyId();
+    const { data, error } = await this.supabase.from('csv_settings').select('*').eq('company_id', companyId).maybeSingle();
+    if (error) throw error;
+    if (data) return data as any;
 
-  async getCsvSettings(companyId: string): Promise<CsvSettings | null> {
-    const { data } = await this.supabase.from('csv_settings').select('*').eq('company_id', companyId).single();
-    return (data as any) ?? null;
+    const payload = { company_id: companyId, allow_material_import: true, allow_assembly_import: true, updated_at: new Date().toISOString() };
+    const { data: created, error: createErr } = await this.supabase.from('csv_settings').insert(payload as any).select().single();
+    if (createErr) throw createErr;
+    return created as any;
   }
 
-  async upsertCsvSettings(companyId: string, settings: Partial<CsvSettings>): Promise<CsvSettings> {
-    const payload = { ...settings, company_id: companyId };
-    const { data, error } = await this.supabase.from('csv_settings').upsert(payload).select('*').single();
+  async saveCsvSettings(settings: Partial<CsvSettings>): Promise<CsvSettings> {
+    const companyId = await this.currentCompanyId();
+    const payload = { ...settings, company_id: companyId, updated_at: new Date().toISOString() };
+    const { data, error } = await this.supabase.from('csv_settings').upsert(payload as any).select().single();
     if (error) throw error;
     return data as any;
   }
 
-  /* ============================
-     Branding Settings
-  ============================ */
+  async getBrandingSettings(): Promise<BrandingSettings> {
+    const companyId = await this.currentCompanyId();
+    const { data, error } = await this.supabase.from('branding_settings').select('*').eq('company_id', companyId).maybeSingle();
+    if (error) throw error;
+    if (data) return data as any;
 
-  async getBrandingSettings(companyId: string): Promise<BrandingSettings | null> {
-    const { data } = await this.supabase.from('branding_settings').select('*').eq('company_id', companyId).single();
-    return (data as any) ?? null;
+    const payload = { company_id: companyId, primary_color: null, logo_url: null, updated_at: new Date().toISOString() };
+    const { data: created, error: createErr } = await this.supabase.from('branding_settings').insert(payload as any).select().single();
+    if (createErr) throw createErr;
+    return created as any;
   }
 
-  async upsertBrandingSettings(companyId: string, settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
-    const payload = { ...settings, company_id: companyId };
-    const { data, error } = await this.supabase.from('branding_settings').upsert(payload).select('*').single();
+  async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
+    const companyId = await this.currentCompanyId();
+    const payload = { ...settings, company_id: companyId, updated_at: new Date().toISOString() };
+    const { data, error } = await this.supabase.from('branding_settings').upsert(payload as any).select().single();
     if (error) throw error;
     return data as any;
   }
