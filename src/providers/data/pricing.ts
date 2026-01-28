@@ -1,179 +1,160 @@
-import {
+// src/providers/data/pricing.ts
+
+import type {
   Assembly,
+  AssemblyItem,
   CompanySettings,
-  Estimate,
   JobType,
   Material,
+  PricingLineBreakdown,
+  PricingResult,
+  UUID,
 } from './types';
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
-
-export function minutesToHours(minutes: number): number {
-  return minutes / 60;
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
 }
 
-export function hoursToMinutes(hours: number): number {
-  return Math.round(hours * 60);
-}
+export function computeAssemblyPricing(params: {
+  assembly: Assembly;
+  items: AssemblyItem[];
+  materialsById: Record<UUID, Material>;
+  jobTypesById: Record<UUID, JobType>;
+  companySettings: CompanySettings;
+}): PricingResult {
+  const {
+    assembly,
+    items,
+    materialsById,
+    jobTypesById,
+    companySettings,
+  } = params;
 
-export function applyEfficiency(
-  baselineMinutes: number,
-  efficiencyPercent: number
-): number {
-  if (!efficiencyPercent || efficiencyPercent <= 0) return baselineMinutes;
-  return Math.ceil(baselineMinutes / (efficiencyPercent / 100));
-}
+  const jobType =
+    (assembly.job_type_id && jobTypesById[assembly.job_type_id]) ||
+    null;
 
-export function getMarkupPercent(
-  cost: number,
-  tiers: CompanySettings['material_markup_tiers']
-): number {
-  const tier = tiers.find(t => cost >= t.min && cost <= t.max);
-  return tier ? tier.markup_percent : 0;
-}
+  let materialCostTotal = 0;
+  let materialPriceTotal = 0;
+  let laborMinutesTotal = 0;
+  let laborPriceTotal = 0;
 
-/* ------------------------------------------------------------------ */
-/* Technician Wage                                                     */
-/* ------------------------------------------------------------------ */
+  const lines: PricingLineBreakdown[] = [];
 
-export function getAverageTechnicianWage(
-  settings: CompanySettings
-): number {
-  const wages = settings.technician_wages ?? [];
-  const valid = wages
-    .map(w => Number(w.hourly_rate))
-    .filter(v => Number.isFinite(v) && v > 0);
+  for (const item of items) {
+    const qty = item.quantity || 1;
 
-  if (valid.length === 0) return 0;
+    let materialCost = 0;
+    let laborMinutes = 0;
 
-  return valid.reduce((a, b) => a + b, 0) / valid.length;
-}
-
-/* ------------------------------------------------------------------ */
-/* Material Pricing                                                    */
-/* ------------------------------------------------------------------ */
-
-export function computeMaterialCost(
-  material: Material,
-  settings: CompanySettings
-): {
-  baseCost: number;
-  tax: number;
-  markup: number;
-  misc: number;
-  total: number;
-} {
-  const cost =
-    material.use_custom_cost && material.custom_cost != null
-      ? material.custom_cost
-      : material.unit_cost;
-
-  const tax = cost * (settings.material_purchase_tax_percent / 100);
-  const markupPercent = getMarkupPercent(cost, settings.material_markup_tiers);
-  const markup = cost * (markupPercent / 100);
-  const misc = (cost + tax + markup) * (settings.misc_material_percent / 100);
-
-  return {
-    baseCost: cost,
-    tax,
-    markup,
-    misc,
-    total: cost + tax + markup + misc,
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Assembly Pricing                                                    */
-/* ------------------------------------------------------------------ */
-
-export function computeAssemblyPricing(
-  assembly: Assembly,
-  materials: Material[],
-  settings: CompanySettings,
-  jobTypes: JobType[]
-) {
-  let materialTotal = 0;
-  let laborMinutesBaseline = 0;
-
-  for (const item of assembly.items) {
-    if (item.type === 'material') {
-      const mat = materials.find(m => m.id === item.id);
-      if (!mat) continue;
-
-      const pricing = computeMaterialCost(mat, settings);
-      materialTotal += pricing.total * item.quantity;
-      laborMinutesBaseline += mat.labor_minutes * item.quantity;
-    }
-
-    if (item.type === 'oneoff') {
-      materialTotal += item.unit_cost * item.quantity;
-      laborMinutesBaseline += item.labor_minutes * item.quantity;
-    }
-
+    /* =======================
+     * Labor
+     * ======================= */
     if (item.type === 'labor') {
-      laborMinutesBaseline += item.labor_minutes * item.quantity;
+      const hours = item.labor_hours || 0;
+      const minutes = item.labor_minutes || 0;
+      laborMinutes = (hours * 60 + minutes) * qty;
     }
+
+    /* =======================
+     * Material / Blank Material
+     * ======================= */
+    if (item.type === 'material') {
+      const mat = item.material_id
+        ? materialsById[item.material_id]
+        : null;
+
+      if (mat) {
+        materialCost = mat.base_cost * qty;
+
+        if (mat.taxable) {
+          materialCost *=
+            1 + companySettings.purchase_tax_percent / 100;
+        }
+      }
+    }
+
+    if (item.type === 'blank_material') {
+      materialCost = (item.material_cost || 0) * qty;
+
+      if (item.taxable) {
+        materialCost *=
+          1 + companySettings.purchase_tax_percent / 100;
+      }
+    }
+
+    if (assembly.customer_supplied_materials) {
+      materialCost = 0;
+    }
+
+    materialCost = round2(materialCost);
+    materialCostTotal += materialCost;
+    laborMinutesTotal += laborMinutes;
+
+    /* =======================
+     * Pricing
+     * ======================= */
+    let materialPrice = materialCost;
+    let laborPrice = 0;
+
+    if (jobType?.billing_type === 'hourly') {
+      const hourlyRate =
+        jobType.gross_margin_percent != null
+          ? (jobType.gross_margin_percent / 100) ** -1
+          : 1;
+
+      laborPrice = (laborMinutes / 60) * hourlyRate;
+    }
+
+    lines.push({
+      name: item.name,
+      quantity: qty,
+      material_cost: materialCost,
+      labor_minutes: laborMinutes,
+      material_price: materialPrice,
+      labor_price: laborPrice,
+      total_price: round2(materialPrice + laborPrice),
+    });
+
+    materialPriceTotal += materialPrice;
+    laborPriceTotal += laborPrice;
   }
 
-  const jobType = jobTypes.find(j => j.id === assembly.job_type_id);
-  const efficiency = jobType?.efficiency_percent ?? 100;
+  /* =======================
+   * Flat-rate labor adjustments
+   * ======================= */
+  if (jobType?.billing_type === 'flat_rate') {
+    const efficiency =
+      (jobType.efficiency_percent ?? 100) / 100;
 
-  const laborMinutesExpected = applyEfficiency(
-    laborMinutesBaseline,
-    efficiency
-  );
+    let expectedMinutes = laborMinutesTotal / efficiency;
 
-  return {
-    materialTotal,
-    laborMinutesBaseline,
-    laborMinutesExpected,
-  };
-}
+    if (
+      jobType.minimum_billable_minutes &&
+      expectedMinutes < jobType.minimum_billable_minutes
+    ) {
+      expectedMinutes = jobType.minimum_billable_minutes;
+    }
 
-/* ------------------------------------------------------------------ */
-/* Estimate Pricing                                                    */
-/* ------------------------------------------------------------------ */
-
-export function computeEstimatePricing(
-  estimate: Estimate,
-  settings: CompanySettings,
-  jobTypes: JobType[]
-) {
-  let materialSubtotal = 0;
-  let laborMinutesBaseline = 0;
-
-  for (const item of estimate.items) {
-    materialSubtotal += item.unit_cost * item.quantity;
-    laborMinutesBaseline += item.labor_minutes * item.quantity;
+    laborMinutesTotal = expectedMinutes;
   }
 
-  const jobType = jobTypes.find(j => j.id === estimate.job_type_id);
-  const efficiency = jobType?.efficiency_percent ?? 100;
+  const miscMaterial =
+    materialPriceTotal *
+    ((companySettings.misc_material_percent || 0) / 100);
 
-  const laborMinutesExpected = applyEfficiency(
-    laborMinutesBaseline,
-    efficiency
-  );
-
-  const discountPercent = estimate.discount_percent ?? 0;
-
-  const discountedBase =
-    discountPercent > 0
-      ? materialSubtotal / (1 - discountPercent / 100)
-      : materialSubtotal;
-
-  const processingFee = estimate.apply_processing_fees
-    ? discountedBase * (settings.processing_fee_percent / 100)
-    : 0;
+  const totalPrice =
+    materialPriceTotal +
+    laborPriceTotal +
+    miscMaterial;
 
   return {
-    materialSubtotal,
-    laborMinutesBaseline,
-    laborMinutesExpected,
-    discountedBase,
-    processingFee,
-    grandTotal: discountedBase + processingFee,
+    material_cost_total: round2(materialCostTotal),
+    labor_minutes_total: Math.round(laborMinutesTotal),
+    material_price_total: round2(materialPriceTotal),
+    labor_price_total: round2(laborPriceTotal),
+    misc_material_price: round2(miscMaterial),
+    total_price: round2(totalPrice),
+    lines,
   };
 }
