@@ -353,6 +353,21 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
         setStatus('Create or enter a folder first. Materials must live inside a folder.');
         return;
       }
+
+      // App materials represent the global catalog and should only be created by the app owner.
+      // Company users create materials in the User Materials library.
+      if (lib === 'personal') {
+        try {
+          const owner = await (data as any).isAppOwner?.();
+          if (!owner) {
+            setStatus('App materials can only be created by the app owner.');
+            return;
+          }
+        } catch {
+          setStatus('App materials can only be created by the app owner.');
+          return;
+        }
+      }
       const name = await dialogs.prompt({
         title: 'Create Material',
         label: 'New material name',
@@ -362,7 +377,9 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
       if (!name) return;
 
       const created = await data.upsertMaterial({
-        id: crypto.randomUUID?.() ?? `mat_${Date.now()}`,
+        // Let the DB generate the id (avoids insert failures under certain RLS/DB setups)
+        // and always provide library_type so the provider maps owner correctly.
+        library_type: lib,
         company_id: lib === 'personal' ? null : undefined,
         name,
         description: null,
@@ -370,7 +387,6 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
         taxable: true,
         labor_minutes: 0,
         folder_id: activeFolderId,
-        created_at: new Date().toISOString(),
       } as any);
 
       nav(`/materials/${libraryType === 'app' ? 'app' : 'user'}/${created.id}`);
@@ -793,6 +809,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     </div>
   );
 }
+
 
 
 
