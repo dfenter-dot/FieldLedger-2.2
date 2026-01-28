@@ -114,6 +114,9 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   }
 
   async function commitPickerSelectionAndReturn() {
+    // In picker mode, we *only* commit when the user clicks Return.
+    // We do not write to Supabase from here; we return the selection payload
+    // to the destination editor page, which will apply + persist it.
     if (!inMaterialPickerMode) {
       setMode({ type: 'none' });
       if (returnToPath) nav(returnToPath);
@@ -123,60 +126,24 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     try {
       setStatus('');
 
-      const normalized: Array<{ material_id: string; quantity: number }> = [];
+      const picked: Array<{ material_id: string; quantity: number }> = [];
       for (const [material_id, qtyText] of Object.entries(selectedQtyByMaterialId)) {
         const s = String(qtyText ?? '').trim();
         if (s === '') continue;
         const q = clampQty(Number(s));
         if (!Number.isFinite(q) || q <= 0) continue;
-        normalized.push({ material_id, quantity: q });
+        picked.push({ material_id, quantity: q });
       }
 
-      if (mode.type === 'add-materials-to-assembly') {
-        const asm = await data.getAssembly(mode.assemblyId);
-        if (!asm) throw new Error('Assembly not found');
-
-        const prevItems = Array.isArray((asm as any).items) ? ([...(asm as any).items] as any[]) : [];
-        const keepNonMaterial = prevItems.filter((it) => (it?.type ?? it?.item_type) !== 'material');
-
-        const nextMaterialItems = normalized.map(({ material_id, quantity }) => {
-          const existing = prevItems.find(
-            (it) => it?.material_id === material_id && (it?.type ?? it?.item_type) === 'material'
-          );
-          return {
-            ...(existing ?? {}),
-            id: existing?.id ?? (crypto.randomUUID?.() ?? `it_${Date.now()}`),
-            type: 'material',
-            item_type: 'material',
-            material_id,
-            quantity,
-          };
-        });
-
-        await data.upsertAssembly({ ...(asm as any), items: [...keepNonMaterial, ...nextMaterialItems] } as any);
-      } else if (mode.type === 'add-materials-to-estimate') {
-        const est = await data.getEstimate(mode.estimateId);
-        if (!est) throw new Error('Estimate not found');
-
-        const prevItems = Array.isArray((est as any).items) ? ([...(est as any).items] as any[]) : [];
-        const keepNonMaterial = prevItems.filter((it) => it?.type !== 'material');
-
-        const nextMaterialItems = normalized.map(({ material_id, quantity }) => {
-          const existing = prevItems.find((it) => it?.material_id === material_id && it?.type === 'material');
-          return {
-            ...(existing ?? {}),
-            id: existing?.id ?? (crypto.randomUUID?.() ?? `it_${Date.now()}`),
-            type: 'material',
-            material_id,
-            quantity,
-          };
-        });
-
-        await data.upsertEstimate({ ...(est as any), items: [...keepNonMaterial, ...nextMaterialItems] } as any);
-      }
+      // Clear picker mode, then navigate back with the selection payload.
+      // The destination page (assembly/estimate editor) is responsible for applying/persisting.
+      const nextState: any =
+        mode.type === 'add-materials-to-assembly'
+          ? { pickedMaterials: picked, picker: 'assembly' }
+          : { pickedMaterials: picked, picker: 'estimate' };
 
       setMode({ type: 'none' });
-      if (returnToPath) nav(returnToPath);
+      if (returnToPath) nav(returnToPath, { state: nextState });
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
