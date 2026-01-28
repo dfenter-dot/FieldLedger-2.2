@@ -115,6 +115,7 @@ export function AssemblyEditorPage() {
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
     return computeAssemblyPricing({
       assembly: a,
+      items: (a.items ?? []) as any,
       materialsById: materialCache,
       jobTypesById,
       companySettings,
