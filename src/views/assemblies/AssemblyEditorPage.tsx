@@ -113,9 +113,16 @@ export function AssemblyEditorPage() {
   const totals = useMemo(() => {
     if (!a || !companySettings) return null;
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
+    const materialsById = Object.fromEntries(
+      Object.entries(materialCache)
+        .filter(([, v]) => v)
+        .map(([k, v]) => [k, v])
+    ) as any;
+
     return computeAssemblyPricing({
       assembly: a,
-      materialsById: materialCache,
+      items: ((a as any).items ?? []) as any,
+      materialsById,
       jobTypesById,
       companySettings,
     });
@@ -513,5 +520,6 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
