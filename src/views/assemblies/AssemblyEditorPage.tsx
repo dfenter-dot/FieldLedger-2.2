@@ -351,8 +351,10 @@ export function AssemblyEditorPage() {
           <Button
             variant="primary"
             onClick={() => {
-              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id });
-              nav('/materials/user');
+              // Enter Materials picker mode, but route to the Materials home so the
+              // user can choose User vs App libraries.
+              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, assemblyLibraryType: libraryType } as any);
+              nav('/materials');
             }}
           >
             Add From Materials
