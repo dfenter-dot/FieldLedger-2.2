@@ -113,9 +113,16 @@ export function AssemblyEditorPage() {
   const totals = useMemo(() => {
     if (!a || !companySettings) return null;
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
+    const materialsById = Object.fromEntries(
+      Object.entries(materialCache)
+        .filter(([, v]) => v)
+        .map(([k, v]) => [k, v])
+    ) as any;
+
     return computeAssemblyPricing({
       assembly: a,
-      materialsById: materialCache,
+      items: ((a as any).items ?? []) as any,
+      materialsById,
       jobTypesById,
       companySettings,
     });
@@ -295,8 +302,9 @@ export function AssemblyEditorPage() {
           <Button
             variant="primary"
             onClick={() => {
-              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id });
-              nav('/materials/user');
+              const lt = libraryType === 'app' ? 'app' : 'user';
+              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, returnTo: `/assemblies/${lt}/${a.id}` });
+              nav('/materials');
             }}
           >
             Add From Materials
@@ -486,42 +494,22 @@ export function AssemblyEditorPage() {
           </div>
         </div>
 
-        {totals ? (
+{totals ? (
           <div className="mt">
             <div className="muted small">Cost & Pricing Breakdown</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              {(() => {
-                // Backward/forward compatible totals mapping.
-                // Different builds return different key names; guard everything to prevent render crashes.
-                const n = (v: any) => {
-                  const x = Number(v);
-                  return Number.isFinite(x) ? x : 0;
-                };
-
-                const laborActual = n((totals as any).labor_minutes_actual ?? (totals as any).labor_minutes_total);
-                const laborExpected = n((totals as any).labor_minutes_expected ?? (totals as any).labor_minutes_total);
-
-                const materialCost = n((totals as any).material_cost ?? (totals as any).material_cost_total);
-                const materialPrice = n((totals as any).material_price ?? (totals as any).material_price_total);
-                const laborPrice = n((totals as any).labor_price ?? (totals as any).labor_price_total);
-                const total = n((totals as any).total ?? (totals as any).total_price ?? (totals as any).total_price_total);
-
-                const gmTarget = (totals as any).gross_margin_target_percent;
-                const gmExpected = (totals as any).gross_margin_expected_percent;
-
-                return (
-                  <>
-                    <div className="pill">Actual Labor: {Math.round(laborActual)} min</div>
-                    <div className="pill">Expected Labor: {Math.round(laborExpected)} min</div>
-                    <div className="pill">Material Cost: ${materialCost.toFixed(2)}</div>
-                    <div className="pill">Material Price: ${materialPrice.toFixed(2)}</div>
-                    <div className="pill">Labor Price: ${laborPrice.toFixed(2)}</div>
-                    <div className="pill">Total: ${total.toFixed(2)}</div>
-                    {gmTarget != null ? <div className="pill">Target GM: {n(gmTarget).toFixed(0)}%</div> : null}
-                    {gmExpected != null ? <div className="pill">Expected GM: {n(gmExpected).toFixed(0)}%</div> : null}
-                  </>
-                );
-              })()}
+              <div className="pill">Actual Labor: {Math.round(Number((totals as any).labor_minutes_actual ?? 0))} min</div>
+              <div className="pill">Expected Labor: {Math.round(Number((totals as any).labor_minutes_expected ?? 0))} min</div>
+              <div className="pill">Material Cost: ${Number((totals as any).material_cost ?? 0).toFixed(2)}</div>
+              <div className="pill">Material Price: ${Number((totals as any).material_price ?? 0).toFixed(2)}</div>
+              <div className="pill">Labor Price: ${Number((totals as any).labor_price ?? 0).toFixed(2)}</div>
+              <div className="pill">Total: ${Number((totals as any).total ?? 0).toFixed(2)}</div>
+              {totals.gross_margin_target_percent != null ? (
+                <div className="pill">Target GM: {Number((totals as any).gross_margin_target_percent ?? 0).toFixed(0)}%</div>
+              ) : null}
+              {totals.gross_margin_expected_percent != null ? (
+                <div className="pill">Expected GM: {Number((totals as any).gross_margin_expected_percent ?? 0).toFixed(0)}%</div>
+              ) : null}
             </div>
           </div>
         ) : (
