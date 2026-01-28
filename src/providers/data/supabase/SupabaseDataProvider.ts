@@ -25,6 +25,10 @@ import { seedCompanySettings } from '../local/seed';
  * IMPORTANT DB NOTES (your Supabase):
  * - assemblies table uses `owner` and `customer_supplies_materials` (plural)
  * - assembly_items uses `item_type` and `labor_minutes` (no labor_hours)
+ *
+ * IMPORTANT MATERIALS NOTE:
+ * - your `materials` table does NOT have `labor_hours`
+ * - do NOT send `labor_hours` in inserts/updates or PostgREST returns 400
  */
 
 type DbOwner = 'company' | 'app';
@@ -139,7 +143,10 @@ export class SupabaseDataProvider implements IDataProvider {
       taxable: Boolean(row.taxable ?? false),
       job_type_id: row.job_type_id ?? null,
       labor_minutes: Number(row.labor_minutes ?? 0),
-      labor_hours: Number(row.labor_hours ?? 0),
+
+      // DB does NOT have labor_hours; keep for UI/types but always 0
+      labor_hours: Number(row.labor_hours ?? 0) || 0,
+
       order_index: Number(row.sort_order ?? 0),
       updated_at: row.updated_at ?? null,
       created_at: row.created_at ?? null,
@@ -150,7 +157,7 @@ export class SupabaseDataProvider implements IDataProvider {
   private mapMaterialToDb(material: Partial<Material>): any {
     const owner = material.library_type ? this.toDbOwner(material.library_type) : 'company';
 
-    return {
+    const payload: any = {
       id: material.id,
       owner,
       company_id: owner === 'company' ? material.company_id : null,
@@ -162,11 +169,16 @@ export class SupabaseDataProvider implements IDataProvider {
       taxable: (material as any).taxable ?? false,
       job_type_id: (material as any).job_type_id ?? null,
       labor_minutes: (material as any).labor_minutes ?? 0,
-      labor_hours: (material as any).labor_hours ?? 0,
+
+      // IMPORTANT: do NOT send labor_hours — column does not exist in your DB
+      // labor_hours: ...
+
       sort_order: (material as any).order_index ?? 0,
       created_at: (material as any).created_at,
       updated_at: new Date().toISOString(),
     };
+
+    return payload;
   }
 
   /* ============================
@@ -179,8 +191,7 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('job_types')
       .select('*')
       .or(`company_id.eq.${companyId},company_id.is.null`)
-      // IMPORTANT: Your job_types table does NOT have `priority`.
-      // Ordering by a non-existent column causes PostgREST 400 and breaks Company Setup + Assemblies.
+      // IMPORTANT: your DB doesn't have `priority`, so ordering by it 400s and breaks Company Setup.
       .order('name', { ascending: true });
     if (error) throw error;
     return (data ?? []) as any;
@@ -557,7 +568,12 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async getEstimate(id: string): Promise<Estimate | null> {
     const companyId = await this.currentCompanyId();
-    const { data, error } = await this.supabase.from('estimates').select('*').eq('company_id', companyId).eq('id', id).maybeSingle();
+    const { data, error } = await this.supabase
+      .from('estimates')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('id', id)
+      .maybeSingle();
     if (error) throw error;
     return (data as any) ?? null;
   }
@@ -592,7 +608,11 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async listAdminRules(): Promise<AdminRule[]> {
     const companyId = await this.currentCompanyId();
-    const { data, error } = await this.supabase.from('admin_rules').select('*').eq('company_id', companyId).order('priority', { ascending: true });
+    const { data, error } = await this.supabase
+      .from('admin_rules')
+      .select('*')
+      .eq('company_id', companyId)
+      .order('priority', { ascending: true });
     if (error) throw error;
     return (data ?? []) as any;
   }
