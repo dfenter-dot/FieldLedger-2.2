@@ -1,158 +1,156 @@
-import {
+// src/providers/data/local/LocalDataProvider.ts
+
+import type {
+  Assembly,
+  AssemblyItem,
+  AppAssemblyOverride,
   CompanySettings,
+  Estimate,
+  EstimateAssemblyLine,
+  Folder,
   JobType,
-  AdminRule,
-  CsvSettings,
-  BrandingSettings,
+  Material,
+  PricingResult,
+  UUID,
 } from '../types';
-import { IDataProvider } from '../IDataProvider';
+import type { IDataProvider } from '../IDataProvider';
+import { computeAssemblyPricing } from '../pricing';
 
-/**
- * LocalDataProvider
- *
- * Used for local/dev mode.
- * Phase 1 Rules: simple in-memory storage.
- */
 export class LocalDataProvider implements IDataProvider {
-  private companySettings = new Map<string, CompanySettings>();
-  private jobTypes = new Map<string, JobType[]>();
-  private adminRules = new Map<string, AdminRule[]>();
-  private csvSettings = new Map<string, CsvSettings>();
-  private brandingSettings = new Map<string, BrandingSettings>();
-
-  /* =========================
-     Company
-     ========================= */
-
-  async getCompanySettings(companyId: string): Promise<CompanySettings | null> {
-    return this.companySettings.get(companyId) ?? null;
+  /* =======================
+   * Folders
+   * ======================= */
+  async listFolders(): Promise<Folder[]> {
+    return [];
   }
 
-  async upsertCompanySettings(
-    companyId: string,
-    settings: Partial<CompanySettings>
-  ): Promise<CompanySettings> {
-    const existing = this.companySettings.get(companyId) ?? ({} as CompanySettings);
-    const updated = { ...existing, ...settings, company_id: companyId } as CompanySettings;
-    this.companySettings.set(companyId, updated);
-    return updated;
+  async createFolder(folder: Partial<Folder>): Promise<Folder> {
+    return folder as Folder;
   }
 
-  /* =========================
-     Job Types
-     ========================= */
-
-  async getJobTypes(companyId: string): Promise<JobType[]> {
-    return this.jobTypes.get(companyId) ?? [];
+  async updateFolder(folder: Partial<Folder>): Promise<Folder> {
+    return folder as Folder;
   }
 
-  async upsertJobType(
-    companyId: string,
-    jobType: Partial<JobType>
-  ): Promise<JobType> {
-    const list = this.jobTypes.get(companyId) ?? [];
-    let updated: JobType;
-
-    if (jobType.id) {
-      updated = { ...list.find(j => j.id === jobType.id)!, ...jobType } as JobType;
-      this.jobTypes.set(
-        companyId,
-        list.map(j => (j.id === updated.id ? updated : j))
-      );
-    } else {
-      updated = {
-        ...(jobType as JobType),
-        id: crypto.randomUUID(),
-        company_id: companyId,
-      };
-      this.jobTypes.set(companyId, [...list, updated]);
-    }
-
-    return updated;
+  async deleteFolder(): Promise<void> {
+    return;
   }
 
-  async deleteJobType(companyId: string, jobTypeId: string): Promise<void> {
-    const list = this.jobTypes.get(companyId) ?? [];
-    this.jobTypes.set(
-      companyId,
-      list.filter(j => j.id !== jobTypeId)
-    );
+  /* =======================
+   * Materials
+   * ======================= */
+  async listMaterials(): Promise<Material[]> {
+    return [];
   }
 
-  /* =========================
-     Admin Rules
-     ========================= */
-
-  async getAdminRules(companyId: string): Promise<AdminRule[]> {
-    return this.adminRules.get(companyId) ?? [];
+  async getMaterial(): Promise<Material | null> {
+    return null;
   }
 
-  async upsertAdminRule(
-    companyId: string,
-    rule: Partial<AdminRule>
-  ): Promise<AdminRule> {
-    const list = this.adminRules.get(companyId) ?? [];
-    let updated: AdminRule;
-
-    if (rule.id) {
-      updated = { ...list.find(r => r.id === rule.id)!, ...rule } as AdminRule;
-      this.adminRules.set(
-        companyId,
-        list.map(r => (r.id === updated.id ? updated : r))
-      );
-    } else {
-      updated = {
-        ...(rule as AdminRule),
-        id: crypto.randomUUID(),
-        company_id: companyId,
-      };
-      this.adminRules.set(companyId, [...list, updated]);
-    }
-
-    return updated;
+  async upsertMaterial(material: Partial<Material>): Promise<Material> {
+    return material as Material;
   }
 
-  async deleteAdminRule(companyId: string, ruleId: string): Promise<void> {
-    const list = this.adminRules.get(companyId) ?? [];
-    this.adminRules.set(
-      companyId,
-      list.filter(r => r.id !== ruleId)
-    );
+  async deleteMaterial(): Promise<void> {
+    return;
   }
 
-  /* =========================
-     CSV Settings
-     ========================= */
-
-  async getCsvSettings(companyId: string): Promise<CsvSettings | null> {
-    return this.csvSettings.get(companyId) ?? null;
+  /* =======================
+   * Assemblies
+   * ======================= */
+  async listAssemblies(): Promise<Assembly[]> {
+    return [];
   }
 
-  async upsertCsvSettings(
-    companyId: string,
-    settings: Partial<CsvSettings>
-  ): Promise<CsvSettings> {
-    const existing = this.csvSettings.get(companyId) ?? ({} as CsvSettings);
-    const updated = { ...existing, ...settings, company_id: companyId } as CsvSettings;
-    this.csvSettings.set(companyId, updated);
-    return updated;
+  async getAssembly(): Promise<{
+    assembly: Assembly;
+    items: AssemblyItem[];
+    appOverride?: AppAssemblyOverride | null;
+  } | null> {
+    return null;
   }
 
-  /* =========================
-     Branding
-     ========================= */
-
-  async getBrandingSettings(companyId: string): Promise<BrandingSettings | null> {
-    return this.brandingSettings.get(companyId) ?? null;
+  async upsertAssembly(params: {
+    assembly: Partial<Assembly>;
+    items: AssemblyItem[];
+  }): Promise<Assembly> {
+    return params.assembly as Assembly;
   }
 
-  async upsertBrandingSettings(
-    companyId: string,
-    settings: Partial<BrandingSettings>
-  ): Promise<BrandingSettings> {
-    const existing = this.brandingSettings.get(companyId) ?? ({} as BrandingSettings);
-    const updated = { ...existing, ...settings, company_id: companyId } as BrandingSettings;
-    this.brandingSettings.set(companyId, updated);
-    return updated;
+  async deleteAssembly(): Promise<void> {
+    return;
+  }
+
+  /* =======================
+   * Assembly Overrides
+   * ======================= */
+  async getAppAssemblyOverride(): Promise<AppAssemblyOverride | null> {
+    return null;
+  }
+
+  async upsertAppAssemblyOverride(
+    override: Partial<AppAssemblyOverride>
+  ): Promise<AppAssemblyOverride> {
+    return override as AppAssemblyOverride;
+  }
+
+  /* =======================
+   * Estimates
+   * ======================= */
+  async getEstimate(): Promise<Estimate | null> {
+    return null;
+  }
+
+  async upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
+    return estimate as Estimate;
+  }
+
+  async deleteEstimate(): Promise<void> {
+    return;
+  }
+
+  async addAssemblyToEstimate(params: {
+    estimateId: UUID;
+    assemblyId: UUID;
+    quantity: number;
+  }): Promise<EstimateAssemblyLine> {
+    return {
+      id: crypto.randomUUID(),
+      estimate_id: params.estimateId,
+      assembly_id: params.assemblyId,
+      quantity: params.quantity,
+    };
+  }
+
+  async removeAssemblyFromEstimate(): Promise<void> {
+    return;
+  }
+
+  /* =======================
+   * Job Types / Settings
+   * ======================= */
+  async listJobTypes(): Promise<JobType[]> {
+    return [];
+  }
+
+  async getCompanySettings(): Promise<CompanySettings> {
+    return {
+      id: crypto.randomUUID(),
+      purchase_tax_percent: 0,
+      misc_material_percent: 0,
+    };
+  }
+
+  /* =======================
+   * Pricing
+   * ======================= */
+  computeAssemblyPricing(params: {
+    assembly: Assembly;
+    items: AssemblyItem[];
+    materialsById: Record<UUID, Material>;
+    jobTypesById: Record<UUID, JobType>;
+    companySettings: CompanySettings;
+  }): PricingResult {
+    return computeAssemblyPricing(params);
   }
 }
