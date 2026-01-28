@@ -11,6 +11,21 @@ import type {
   UUID,
 } from './types';
 
+/* ------------------------------------------------------------------ */
+/* Technician Wage                                                     */
+/* ------------------------------------------------------------------ */
+
+export function getAverageTechnicianWage(settings: any): number {
+  const wages = settings?.technician_wages ?? [];
+  const valid = wages
+    .map((w: any) => Number(w?.hourly_rate))
+    .filter((v: number) => Number.isFinite(v) && v > 0);
+
+  if (valid.length === 0) return 0;
+
+  return valid.reduce((a: number, b: number) => a + b, 0) / valid.length;
+}
+
 function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
