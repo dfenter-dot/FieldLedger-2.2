@@ -23,3 +23,24 @@
   color: var(--muted);
   font-size: 12px;
 }
+
+.topbarLogout{
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(212,175,55,0.22);
+  background: rgba(11,18,32,0.35);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.topbarLogout:hover{
+  border-color: rgba(212,175,55,0.35);
+  background: rgba(17,24,39,0.45);
+}
+
+@media (min-width: 900px){
+  /* Desktop already has logout in the sidebar */
+  .topbarLogout{ display: none; }
+}
+
