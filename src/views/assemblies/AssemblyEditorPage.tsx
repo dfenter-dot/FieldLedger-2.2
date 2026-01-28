@@ -113,16 +113,9 @@ export function AssemblyEditorPage() {
   const totals = useMemo(() => {
     if (!a || !companySettings) return null;
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
-    const materialsById = Object.fromEntries(
-      Object.entries(materialCache)
-        .filter(([, v]) => v)
-        .map(([k, v]) => [k, v])
-    ) as any;
-
     return computeAssemblyPricing({
       assembly: a,
-      items: ((a as any).items ?? []) as any,
-      materialsById,
+      materialsById: materialCache,
       jobTypesById,
       companySettings,
     });
@@ -303,7 +296,8 @@ export function AssemblyEditorPage() {
             variant="primary"
             onClick={() => {
               setMode({ type: 'add-materials-to-assembly', assemblyId: a.id });
-              nav('/materials/user');
+              // Go to Materials landing page so user can choose User vs App libraries.
+              nav('/materials');
             }}
           >
             Add From Materials
