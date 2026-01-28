@@ -19,15 +19,28 @@ function titleFromPath(pathname: string): string {
 
 export function Topbar() {
   const loc = useLocation();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
+
+  async function handleLogout() {
+    try {
+      await signOut();
+      // AppRouter will automatically render LoginPage when user becomes null.
+    } catch {
+      // ignore
+    }
+  }
 
   return (
     <header className="topbar">
       <div className="topbarTitle">{titleFromPath(loc.pathname)}</div>
       <div className="topbarRight">
         <div className="chip">{user?.email}</div>
+        <button className="topbarLogout" type="button" onClick={handleLogout}>
+          Log Out
+        </button>
       </div>
     </header>
   );
 }
+
 
