@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
@@ -21,7 +21,6 @@ export function AssemblyEditorPage() {
   const { assemblyId, libraryType } = useParams();
   const data = useData();
   const nav = useNavigate();
-  const location = useLocation();
   const { setMode } = useSelection();
   const dialogs = useDialogs();
 
@@ -63,64 +62,10 @@ export function AssemblyEditorPage() {
       });
   }, [assemblyId, data]);
 
-
-  // Returned from Materials picker → apply selected materials to this assembly.
-  useEffect(() => {
-    if (!a) return;
-
-    const state = (location as any)?.state as any;
-    const picked = Array.isArray(state?.pickedMaterials) ? (state.pickedMaterials as any[]) : [];
-    if (picked.length === 0) return;
-
-    const normalized = picked
-      .map((x) => ({
-        material_id: String(x.material_id ?? x.materialId ?? ''),
-        quantity: Number(x.quantity ?? 1) || 1,
-      }))
-      .filter((x) => x.material_id);
-
-    if (normalized.length === 0) return;
-
-    const prevItems = Array.isArray((a as any).items) ? ([...(a as any).items] as any[]) : [];
-    const keep = prevItems.filter((it) => (it?.type ?? it?.item_type) !== 'material');
-
-    const nextMaterialItems = normalized.map(({ material_id, quantity }) => {
-      const existing = prevItems.find((it) => (it?.type ?? it?.item_type) === 'material' && it?.material_id === material_id);
-      return {
-        ...(existing ?? {}),
-        // IMPORTANT: omit id for brand-new items so Supabase can generate a UUID
-        ...(existing ? {} : { id: undefined }),
-        type: 'material',
-        item_type: 'material',
-        material_id,
-        quantity,
-      };
-    });
-
-    const next = { ...(a as any), items: [...keep, ...nextMaterialItems] } as any;
-
-    // Clear history state first so refresh/re-render doesn't re-apply
-    nav(location.pathname, { replace: true, state: {} });
-
-    // Persist, then keep local items in state regardless of provider return shape
-    (async () => {
-      try {
-        setStatus('Saving…');
-        const saved = await data.upsertAssembly(next);
-        setA({ ...(saved as any), items: next.items } as any);
-        setStatus('Saved.');
-        setTimeout(() => setStatus(''), 1500);
-      } catch (e: any) {
-        console.error(e);
-        setStatus(String(e?.message ?? e));
-      }
-    })();
-  }, [a, data, location, nav]);
-
   const materialRows = useMemo<AssemblyMaterialRow[]>(() => {
     const items = (a?.items ?? []) as any[];
     return items
-      .filter((it) => (it.type ?? it.item_type) === 'material' && it.material_id)
+      .filter((it) => it.type === 'material' && it.material_id)
       .map((it) => ({
         itemId: it.id,
         materialId: it.material_id,
@@ -130,12 +75,12 @@ export function AssemblyEditorPage() {
 
   const blankMaterialRows = useMemo(() => {
     const items = (a?.items ?? []) as any[];
-    return items.filter((it) => (it.type ?? it.item_type) === 'blank_material');
+    return items.filter((it) => it.type === 'blank_material');
   }, [a?.items]);
 
   const laborRows = useMemo(() => {
     const items = (a?.items ?? []) as any[];
-    return items.filter((it) => (it.type ?? it.item_type) === 'labor');
+    return items.filter((it) => it.type === 'labor');
   }, [a?.items]);
 
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
@@ -170,7 +115,6 @@ export function AssemblyEditorPage() {
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
     return computeAssemblyPricing({
       assembly: a,
-      items: (a as any).items ?? [],
       materialsById: materialCache,
       jobTypesById,
       companySettings,
@@ -181,7 +125,7 @@ export function AssemblyEditorPage() {
     try {
       setStatus('Saving…');
       const saved = await data.upsertAssembly(next);
-      setA({ ...(saved as any), items: (next as any).items ?? (saved as any).items } as any);
+      setA(saved);
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
@@ -351,10 +295,8 @@ export function AssemblyEditorPage() {
           <Button
             variant="primary"
             onClick={() => {
-              // Enter Materials picker mode, but route to the Materials home so the
-              // user can choose User vs App libraries.
-              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, assemblyLibraryType: libraryType } as any);
-              nav('/materials');
+              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id });
+              nav('/materials/user');
             }}
           >
             Add From Materials
@@ -544,22 +486,42 @@ export function AssemblyEditorPage() {
           </div>
         </div>
 
-{totals ? (
+        {totals ? (
           <div className="mt">
             <div className="muted small">Cost & Pricing Breakdown</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <div className="pill">Actual Labor: {Math.round(totals.labor_minutes_actual)} min</div>
-              <div className="pill">Expected Labor: {Math.round(totals.labor_minutes_expected)} min</div>
-              <div className="pill">Material Cost: ${totals.material_cost.toFixed(2)}</div>
-              <div className="pill">Material Price: ${totals.material_price.toFixed(2)}</div>
-              <div className="pill">Labor Price: ${totals.labor_price.toFixed(2)}</div>
-              <div className="pill">Total: ${totals.total.toFixed(2)}</div>
-              {totals.gross_margin_target_percent != null ? (
-                <div className="pill">Target GM: {totals.gross_margin_target_percent.toFixed(0)}%</div>
-              ) : null}
-              {totals.gross_margin_expected_percent != null ? (
-                <div className="pill">Expected GM: {totals.gross_margin_expected_percent.toFixed(0)}%</div>
-              ) : null}
+              {(() => {
+                // Backward/forward compatible totals mapping.
+                // Different builds return different key names; guard everything to prevent render crashes.
+                const n = (v: any) => {
+                  const x = Number(v);
+                  return Number.isFinite(x) ? x : 0;
+                };
+
+                const laborActual = n((totals as any).labor_minutes_actual ?? (totals as any).labor_minutes_total);
+                const laborExpected = n((totals as any).labor_minutes_expected ?? (totals as any).labor_minutes_total);
+
+                const materialCost = n((totals as any).material_cost ?? (totals as any).material_cost_total);
+                const materialPrice = n((totals as any).material_price ?? (totals as any).material_price_total);
+                const laborPrice = n((totals as any).labor_price ?? (totals as any).labor_price_total);
+                const total = n((totals as any).total ?? (totals as any).total_price ?? (totals as any).total_price_total);
+
+                const gmTarget = (totals as any).gross_margin_target_percent;
+                const gmExpected = (totals as any).gross_margin_expected_percent;
+
+                return (
+                  <>
+                    <div className="pill">Actual Labor: {Math.round(laborActual)} min</div>
+                    <div className="pill">Expected Labor: {Math.round(laborExpected)} min</div>
+                    <div className="pill">Material Cost: ${materialCost.toFixed(2)}</div>
+                    <div className="pill">Material Price: ${materialPrice.toFixed(2)}</div>
+                    <div className="pill">Labor Price: ${laborPrice.toFixed(2)}</div>
+                    <div className="pill">Total: ${total.toFixed(2)}</div>
+                    {gmTarget != null ? <div className="pill">Target GM: {n(gmTarget).toFixed(0)}%</div> : null}
+                    {gmExpected != null ? <div className="pill">Expected GM: {n(gmExpected).toFixed(0)}%</div> : null}
+                  </>
+                );
+              })()}
             </div>
           </div>
         ) : (
