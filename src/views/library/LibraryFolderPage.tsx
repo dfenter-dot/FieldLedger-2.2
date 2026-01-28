@@ -48,6 +48,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   const [folders, setFolders] = useState<Folder[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [assemblies, setAssemblies] = useState<Assembly[]>([]);
+
+  const [selectedEstimateItems, setSelectedEstimateItems] = useState<any[] | null>(null);
   const [status, setStatus] = useState<string>('');
 
   // Picker mode selection tracking (materials only)
@@ -82,7 +84,28 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     return null;
   }, [mode]);
 
-  const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
+  
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (mode.type === 'add-assemblies-to-estimate' && kind === 'assemblies') {
+          const est = await data.getEstimate(mode.estimateId);
+          if (!cancelled) setSelectedEstimateItems((est?.items ?? []) as any[]);
+        } else {
+          if (!cancelled) setSelectedEstimateItems(null);
+        }
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) setSelectedEstimateItems(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data, kind, mode]);
+
+const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
 
   async function refresh() {
     try {
@@ -688,17 +711,49 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
             </div>
           ) : (
             <div className="list">
-              {assemblies.map((a) => (
-                <div key={a.id} className="listRow">
-                  <div className="clickable" style={{ flex: 1 }} onClick={() => nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${a.id}`)}>
-                    <div style={{ fontWeight: 600 }}>{a.name}</div>
-                    <div className="muted small">{(a.items ?? []).length} items</div>
+              {assemblies.map((a) => {
+                const inAssemblyPicker = mode.type === 'add-assemblies-to-estimate';
+                // current qty if already selected in estimate
+                const selectedQty = (() => {
+                  if (!inAssemblyPicker) return '';
+                  const estItem = (selectedEstimateItems ?? []).find((it: any) => it.type === 'assembly' && it.assembly_id === a.id);
+                  return estItem ? String(estItem.quantity ?? 1) : '';
+                })();
+
+                return (
+                  <div key={a.id} className="listRow">
+                    <div
+                      className={inAssemblyPicker ? '' : 'clickable'}
+                      style={{ flex: 1 }}
+                      onClick={() => {
+                        if (inAssemblyPicker) return;
+                        nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${a.id}`);
+                      }}
+                    >
+                      <div style={{ fontWeight: 600 }}>{a.name}</div>
+                      <div className="muted small">{(a.items ?? []).length} items</div>
+                    </div>
+
+                    <div className="row" style={{ gap: 8 }}>
+                      {inAssemblyPicker ? (
+                        <>
+                          <Input
+                            style={{ width: 90 }}
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="Qty"
+                            value={selectedQty}
+                            onChange={(e) => handlePickAssembly(a.id, e.target.value)}
+                          />
+                          <Button onClick={() => nav(returnToPath!)}>Done</Button>
+                        </>
+                      ) : (
+                        <Button onClick={() => openMoveModal({ type: 'assembly', id: a.id, currentFolderId: a.folder_id ?? null })}>Move</Button>
+                      )}
+                    </div>
                   </div>
-                  <div className="row">
-                    <Button onClick={() => openMoveModal({ type: 'assembly', id: a.id, currentFolderId: a.folder_id ?? null })}>Move</Button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {assemblies.length === 0 ? <div className="muted">No assemblies in this folder.</div> : null}
             </div>
           )}
@@ -738,4 +793,5 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
 
