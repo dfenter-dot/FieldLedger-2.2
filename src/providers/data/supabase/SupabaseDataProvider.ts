@@ -179,7 +179,9 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('job_types')
       .select('*')
       .or(`company_id.eq.${companyId},company_id.is.null`)
-      .order('priority', { ascending: true });
+      // IMPORTANT: Your job_types table does NOT have `priority`.
+      // Ordering by a non-existent column causes PostgREST 400 and breaks Company Setup + Assemblies.
+      .order('name', { ascending: true });
     if (error) throw error;
     return (data ?? []) as any;
   }
