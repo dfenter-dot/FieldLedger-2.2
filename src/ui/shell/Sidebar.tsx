@@ -3,7 +3,16 @@ import { useAuth } from '../../providers/auth/AuthContext';
 import './sidebar.css';
 
 export function Sidebar() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
+
+  async function handleLogout() {
+    try {
+      await signOut();
+      // AppRouter will automatically render LoginPage when user becomes null.
+    } catch {
+      // ignore
+    }
+  }
 
   return (
     <aside className="sidebar">
@@ -26,7 +35,7 @@ export function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/materials"
+          to="/materials/user"
           className={({ isActive }) =>
             isActive ? 'navItem active' : 'navItem'
           }
@@ -35,7 +44,7 @@ export function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/assemblies"
+          to="/assemblies/user"
           className={({ isActive }) =>
             isActive ? 'navItem active' : 'navItem'
           }
@@ -65,6 +74,9 @@ export function Sidebar() {
       </nav>
 
       <div className="sidebarFooter">
+        <button className="logoutBtn" onClick={handleLogout} type="button">
+          Log Out
+        </button>
         <div className="footerHint">Navy • Slate • Gold</div>
       </div>
     </aside>
