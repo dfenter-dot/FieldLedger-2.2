@@ -26,3 +26,4 @@ export function useSelection() {
   if (!ctx) throw new Error('useSelection must be used within SelectionProvider');
   return ctx;
 }
+
