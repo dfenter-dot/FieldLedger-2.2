@@ -65,22 +65,25 @@ export function AssemblyEditorPage() {
   const materialRows = useMemo<AssemblyMaterialRow[]>(() => {
     const items = (a?.items ?? []) as any[];
     return items
-      .filter((it) => it.type === 'material' && it.material_id)
+      // Items can come from different providers:
+      // - UI-created: { type: 'material', material_id: ... }
+      // - Supabase:   { item_type: 'material', material_id: ... }
+      .filter((it) => (it.type ?? it.item_type) === 'material' && (it.material_id ?? it.materialId))
       .map((it) => ({
         itemId: it.id,
-        materialId: it.material_id,
+        materialId: it.material_id ?? it.materialId,
         quantity: Number(it.quantity ?? 1) || 1,
       }));
   }, [a?.items]);
 
   const blankMaterialRows = useMemo(() => {
     const items = (a?.items ?? []) as any[];
-    return items.filter((it) => it.type === 'blank_material');
+    return items.filter((it) => (it.type ?? it.item_type) === 'blank_material');
   }, [a?.items]);
 
   const laborRows = useMemo(() => {
     const items = (a?.items ?? []) as any[];
-    return items.filter((it) => it.type === 'labor');
+    return items.filter((it) => (it.type ?? it.item_type) === 'labor');
   }, [a?.items]);
 
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
@@ -521,6 +524,3 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
-
-
-
