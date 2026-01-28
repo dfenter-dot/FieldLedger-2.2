@@ -54,6 +54,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
 
   // Picker mode selection tracking (materials only)
   const [selectedQtyByMaterialId, setSelectedQtyByMaterialId] = useState<Record<string, string>>({});
+  // Draft quantities for picker mode before a material is actually added
+  const [draftQtyByMaterialId, setDraftQtyByMaterialId] = useState<Record<string, string>>({});
 
   // Global search (materials only)
   const [searchText, setSearchText] = useState('');
@@ -448,9 +450,16 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
   async function updatePickerQuantity(materialId: string, qtyText: string) {
     if (!inMaterialPickerMode) return;
 
-    setSelectedQtyByMaterialId((prev) => ({ ...prev, [materialId]: qtyText }));
+    const trimmed = qtyText.trim();
+    const qty = trimmed === '' ? null : clampQty(Number(trimmed));
 
-    const qty = qtyText.trim() === '' ? null : clampQty(Number(qtyText));
+    // Keep UI selection map in sync (blank means removed)
+    setSelectedQtyByMaterialId((prev) => {
+      const next = { ...prev };
+      if (qty == null) delete next[materialId];
+      else next[materialId] = String(qty);
+      return next;
+    });
 
     try {
       if (mode.type === 'add-materials-to-assembly') {
@@ -464,9 +473,14 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
           // remove
           if (idx >= 0) items.splice(idx, 1);
         } else if (idx >= 0) {
-          items[idx] = { ...items[idx], quantity: qty };
+          items[idx] = { ...items[idx], type: items[idx]?.type ?? 'material', material_id: items[idx]?.material_id ?? materialId, quantity: qty };
         } else {
-          items.push({ id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: materialId, quantity: qty });
+          items.push({
+            id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+            type: 'material',
+            material_id: materialId,
+            quantity: qty,
+          });
         }
 
         await data.upsertAssembly({ ...asm, items } as any);
@@ -483,9 +497,14 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
         if (qty == null) {
           if (idx >= 0) items.splice(idx, 1);
         } else if (idx >= 0) {
-          items[idx] = { ...items[idx], quantity: qty };
+          items[idx] = { ...items[idx], type: items[idx]?.type ?? 'material', material_id: items[idx]?.material_id ?? materialId, quantity: qty };
         } else {
-          items.push({ id: crypto.randomUUID?.() ?? `it_${Date.now()}`, material_id: materialId, quantity: qty });
+          items.push({
+            id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+            type: 'material',
+            material_id: materialId,
+            quantity: qty,
+          });
         }
 
         await data.upsertEstimate({ ...est, items } as any);
@@ -658,6 +677,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
               {materials.map((m) => {
                 const selectedText = selectedQtyByMaterialId[m.id];
                 const isSelected = selectedText != null;
+                const draftText = draftQtyByMaterialId[m.id] ?? '1';
                 return (
                   <div
                     key={m.id}
@@ -714,9 +734,38 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                             <Button variant="danger" onClick={() => updatePickerQuantity(m.id, '')}>Remove</Button>
                           </div>
                         ) : (
-                          <Button variant="primary" onClick={() => updatePickerQuantity(m.id, '1')}>
-                            Add
-                          </Button>
+                          <div className="row">
+                            <Button
+                              onClick={() =>
+                                setDraftQtyByMaterialId((prev) => ({
+                                  ...prev,
+                                  [m.id]: String(Math.max(1, clampQty(Number(draftText)) - 1)),
+                                }))
+                              }
+                              disabled={clampQty(Number(draftText)) <= 1}
+                            >
+                              -
+                            </Button>
+                            <Input
+                              style={{ width: 80 }}
+                              inputMode="numeric"
+                              value={draftText}
+                              onChange={(e) => setDraftQtyByMaterialId((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                            />
+                            <Button
+                              onClick={() =>
+                                setDraftQtyByMaterialId((prev) => ({
+                                  ...prev,
+                                  [m.id]: String(clampQty(Number(draftText)) + 1),
+                                }))
+                              }
+                            >
+                              +
+                            </Button>
+                            <Button variant="primary" onClick={() => updatePickerQuantity(m.id, draftText)}>
+                              Add
+                            </Button>
+                          </div>
                         )
                       ) : null}
                     </div>
