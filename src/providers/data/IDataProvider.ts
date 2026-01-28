@@ -1,71 +1,110 @@
-import {
+// src/providers/data/IDataProvider.ts
+
+import type {
+  Assembly,
+  AssemblyItem,
+  AppAssemblyOverride,
   CompanySettings,
+  Estimate,
+  EstimateAssemblyLine,
+  Folder,
   JobType,
-  AdminRule,
-  CsvSettings,
-  BrandingSettings,
+  Material,
+  PricingResult,
+  UUID,
 } from './types';
 
-/**
- * IDataProvider
- *
- * This interface defines the contract used by the app
- * to talk to either LocalDataProvider or SupabaseDataProvider.
- *
- * Phase 1 Rules work only requires READ / WRITE of Admin Rules.
- */
+export type AssemblyListParams = {
+  libraryType: 'user' | 'app';
+  folderId: UUID;
+};
+
 export interface IDataProvider {
-  /* =========================
-     Company
-     ========================= */
+  /* =======================
+   * Folders
+   * ======================= */
+  listFolders(params: {
+    ownerType: 'user' | 'app';
+    parentId: UUID | null;
+  }): Promise<Folder[]>;
 
-  getCompanySettings(companyId: string): Promise<CompanySettings | null>;
-  upsertCompanySettings(
-    companyId: string,
-    settings: Partial<CompanySettings>
-  ): Promise<CompanySettings>;
+  createFolder(folder: Partial<Folder>): Promise<Folder>;
+  updateFolder(folder: Partial<Folder>): Promise<Folder>;
+  deleteFolder(folderId: UUID): Promise<void>;
 
-  /* =========================
-     Job Types
-     ========================= */
+  /* =======================
+   * Materials
+   * ======================= */
+  listMaterials(params: {
+    ownerType: 'user' | 'app';
+    folderId: UUID;
+  }): Promise<Material[]>;
 
-  getJobTypes(companyId: string): Promise<JobType[]>;
-  upsertJobType(
-    companyId: string,
-    jobType: Partial<JobType>
-  ): Promise<JobType>;
-  deleteJobType(companyId: string, jobTypeId: string): Promise<void>;
+  getMaterial(id: UUID): Promise<Material | null>;
+  upsertMaterial(material: Partial<Material>): Promise<Material>;
+  deleteMaterial(id: UUID): Promise<void>;
 
-  /* =========================
-     Admin Rules
-     ========================= */
+  /* =======================
+   * Assemblies
+   * ======================= */
+  listAssemblies(params: AssemblyListParams): Promise<Assembly[]>;
 
-  getAdminRules(companyId: string): Promise<AdminRule[]>;
+  getAssembly(id: UUID): Promise<{
+    assembly: Assembly;
+    items: AssemblyItem[];
+    appOverride?: AppAssemblyOverride | null;
+  } | null>;
 
-  upsertAdminRule(
-    companyId: string,
-    rule: Partial<AdminRule>
-  ): Promise<AdminRule>;
+  upsertAssembly(params: {
+    assembly: Partial<Assembly>;
+    items: AssemblyItem[];
+  }): Promise<Assembly>;
 
-  deleteAdminRule(companyId: string, ruleId: string): Promise<void>;
+  deleteAssembly(id: UUID): Promise<void>;
 
-  /* =========================
-     CSV Settings
-     ========================= */
+  /* =======================
+   * Assembly Overrides
+   * ======================= */
+  getAppAssemblyOverride(
+    assemblyId: UUID,
+    companyId: UUID
+  ): Promise<AppAssemblyOverride | null>;
 
-  getCsvSettings(companyId: string): Promise<CsvSettings | null>;
-  upsertCsvSettings(
-    companyId: string,
-    settings: Partial<CsvSettings>
-  ): Promise<CsvSettings>;
+  upsertAppAssemblyOverride(
+    override: Partial<AppAssemblyOverride>
+  ): Promise<AppAssemblyOverride>;
 
-  /* =========================
-     Branding
-     ========================= */
+  /* =======================
+   * Estimates
+   * ======================= */
+  getEstimate(id: UUID): Promise<Estimate | null>;
+  upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
+  deleteEstimate(id: UUID): Promise<void>;
 
-  getBrandingSettings(companyId: string): Promise<BrandingSettings | null>;
-  upsertBrandingSettings(
-    companyId: string,
-    settings: Partial<BrandingSettings>
-  ): Promise<BrandingSettings>;
+  addAssemblyToEstimate(params: {
+    estimateId: UUID;
+    assemblyId: UUID;
+    quantity: number;
+  }): Promise<EstimateAssemblyLine>;
+
+  removeAssemblyFromEstimate(
+    estimateAssemblyLineId: UUID
+  ): Promise<void>;
+
+  /* =======================
+   * Job Types / Settings
+   * ======================= */
+  listJobTypes(): Promise<JobType[]>;
+  getCompanySettings(): Promise<CompanySettings>;
+
+  /* =======================
+   * Pricing
+   * ======================= */
+  computeAssemblyPricing(params: {
+    assembly: Assembly;
+    items: AssemblyItem[];
+    materialsById: Record<UUID, Material>;
+    jobTypesById: Record<UUID, JobType>;
+    companySettings: CompanySettings;
+  }): PricingResult;
 }
