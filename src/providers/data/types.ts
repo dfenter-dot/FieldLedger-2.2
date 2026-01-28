@@ -2,62 +2,89 @@
 
 export type UUID = string;
 
-/* ================================
-   Core Ownership / Library Types
-================================ */
-
 export type OwnerType = 'user' | 'app';
-export type LibraryType = 'materials' | 'assemblies';
 
-/* ================================
-   Profiles / Company
-================================ */
-
-export interface Profile {
-  user_id: UUID;
-  email: string;
-  full_name?: string | null;
-  company_id: UUID;
-  is_app_owner?: boolean;
-}
-
-/* ================================
-   Job Types
-================================ */
-
-export interface JobType {
+export type Folder = {
   id: UUID;
-  name: string;
-  efficiency_percent: number;
-  billing_type: 'flat' | 'hourly';
-  enabled: boolean;
-}
-
-/* ================================
-   Folders
-================================ */
-
-export interface Folder {
-  id: UUID;
-  company_id: UUID | null;
-  owner: OwnerType;
-  library: LibraryType;
+  company_id: UUID | null; // null for app-owned
+  owner_type: OwnerType;
   parent_id: UUID | null;
   name: string;
-  image_path?: string | null;
   sort_order: number;
-  created_at: string;
-}
+  created_at?: string;
+};
 
-/* ================================
-   Materials
-================================ */
-
-export interface Material {
+export type Assembly = {
   id: UUID;
   company_id: UUID | null;
-  owner: OwnerType;
+  owner_type: OwnerType;
+
   folder_id: UUID;
+
+  name: string;
+  assembly_code?: string | null;
+  description?: string | null;
+
+  use_admin_rules: boolean;
+  job_type_id: UUID | null;
+  customer_supplied_materials: boolean;
+
+  sort_order: number;
+
+  created_at?: string;
+};
+
+export type AssemblyItemType = 'material' | 'labor' | 'blank_material';
+
+export type AssemblyItem = {
+  id: UUID;
+  assembly_id: UUID;
+
+  type: AssemblyItemType;
+
+  material_id?: UUID | null; // only for referenced material lines
+  reference_id?: UUID | null;
+
+  name: string;
+  quantity: number;
+
+  material_cost?: number | null;
+  taxable?: boolean;
+
+  labor_hours?: number | null;
+  labor_minutes?: number | null;
+
+  sort_order: number;
+};
+
+export type AppAssemblyOverride = {
+  id: UUID;
+  company_id: UUID;
+  assembly_id: UUID;
+
+  override_job_type_id?: UUID | null;
+  override_customer_supplied_materials?: boolean | null;
+};
+
+export type JobType = {
+  id: UUID;
+  name: string;
+
+  billing_type: 'flat_rate' | 'hourly';
+
+  efficiency_percent?: number | null;
+
+  minimum_billable_minutes?: number | null;
+
+  gross_margin_percent?: number | null;
+
+  created_at?: string;
+};
+
+export type Material = {
+  id: UUID;
+  company_id: UUID | null;
+  owner_type: OwnerType;
 
   name: string;
   sku?: string | null;
@@ -66,83 +93,63 @@ export interface Material {
   base_cost: number;
   taxable: boolean;
 
-  labor_minutes: number;
-  job_type_id: UUID | null;
+  job_type_id?: UUID | null;
 
-  image_path?: string | null;
+  created_at?: string;
+};
 
-  created_at: string;
-  updated_at: string;
+export type EstimateAssemblyLine = {
+  id: UUID;
+  estimate_id: UUID;
 
-  // UI-only merged fields
-  custom_cost?: number | null;
-  use_custom_cost?: boolean;
-  effective_cost?: number;
-}
-
-/* ================================
-   App Material Overrides
-================================ */
-
-export interface AppMaterialOverride {
-  company_id: UUID;
-  material_id: UUID;
-
-  override_job_type_id?: UUID | null;
-  override_taxable?: boolean | null;
-
-  custom_cost?: number | null;
-  use_custom_cost?: boolean | null;
-
-  updated_at: string;
-}
-
-/* ================================
-   Material Picker (Assemblies / Estimates)
-================================ */
-
-export interface PickedMaterial {
-  material_id: UUID;
+  assembly_id: UUID;
   quantity: number;
-}
+};
 
-/* ================================
-   CSV Import / Export
-================================ */
+export type Estimate = {
+  id: UUID;
+  company_id: UUID;
 
-export interface MaterialCsvRow {
-  folder_path: string;
   name: string;
-  sku?: string;
-  description?: string;
-  base_cost: number;
-  labor_hours: number; // decimal hours in CSV
-  taxable: boolean;
-  job_type_name?: string;
-}
 
-/* ================================
-   Data Provider Interface
-================================ */
+  job_type_id: UUID | null;
+  use_admin_rules: boolean;
 
-export interface DataProvider {
-  /* ---------- Materials ---------- */
+  created_at?: string;
+};
 
-  listMaterials(library: OwnerType): Promise<Material[]>;
-  getMaterial(id: UUID): Promise<Material | null>;
-  upsertMaterial(material: Partial<Material>): Promise<Material>;
-  deleteMaterial(id: UUID): Promise<void>;
+export type CompanySettings = {
+  id: UUID;
+  purchase_tax_percent: number;
 
-  /* ---------- Folders ---------- */
+  misc_material_percent?: number | null;
 
-  listFolders(library: LibraryType, owner: OwnerType): Promise<Folder[]>;
-  upsertFolder(folder: Partial<Folder>): Promise<Folder>;
-  deleteFolder(id: UUID): Promise<void>;
+  created_at?: string;
+};
 
-  /* ---------- Overrides ---------- */
+export type PricingLineBreakdown = {
+  name: string;
+  quantity: number;
 
-  listAppMaterialOverrides(): Promise<AppMaterialOverride[]>;
-  upsertAppMaterialOverride(
-    override: Partial<AppMaterialOverride>
-  ): Promise<void>;
-}
+  material_cost: number;
+  labor_minutes: number;
+
+  material_price: number;
+  labor_price: number;
+
+  total_price: number;
+};
+
+export type PricingResult = {
+  material_cost_total: number;
+  labor_minutes_total: number;
+
+  material_price_total: number;
+  labor_price_total: number;
+
+  misc_material_price: number;
+
+  total_price: number;
+
+  lines: PricingLineBreakdown[];
+};
