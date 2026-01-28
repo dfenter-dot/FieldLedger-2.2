@@ -2,15 +2,16 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import {
   AdminRule,
   Assembly,
+  AppAssemblyOverride,
   BrandingSettings,
   CompanySettings,
   CsvSettings,
-  Estimate,
   Folder,
   JobType,
   LibraryType,
   Material,
   AppMaterialOverride,
+  OwnerType,
 } from '../types';
 import { IDataProvider } from '../IDataProvider';
 import { seedCompanySettings } from '../local/seed';
@@ -19,14 +20,15 @@ import { seedCompanySettings } from '../local/seed';
  * SupabaseDataProvider
  *
  * DB enums:
- * - owner_type: 'app' | 'company'
+ * - owner_type: 'app' | 'company'   (your DB uses column name: owner, enum type owner_type)
  * - library_type: 'materials' | 'assemblies'
  *
- * IMPORTANT DB NOTES:
- * - folders table DOES NOT have updated_at
- * - materials table DOES have updated_at
- * - materials now should have sort_order (int4) for folder ordering
- * - app_material_overrides stores override fields only
+ * IMPORTANT DB NOTES (confirmed from your Supabase metadata):
+ * - assemblies columns include: owner, company_id, folder_id, name, description,
+ *   job_type_id, use_admin_rules, customer_supplies_materials, taxable, created_at, updated_at
+ * - assembly_items columns include: assembly_id, item_type, material_id, name, quantity,
+ *   material_cost_override, labor_minutes, sort_order
+ * - app_assembly_overrides exists and now has RLS policies (you added them)
  */
 
 type DbOwner = 'company' | 'app';
@@ -120,7 +122,7 @@ export class SupabaseDataProvider implements IDataProvider {
       company_id: owner === 'company' ? folder.company_id : null,
       parent_id: folder.parent_id ?? null,
       name: folder.name,
-      sort_order: folder.order_index ?? folder.sort_order ?? 0,
+      sort_order: (folder as any).order_index ?? (folder as any).sort_order ?? 0,
       image_path: (folder as any).image_path ?? null,
     };
   }
@@ -181,26 +183,23 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   /* ============================
-     Assemblies (NEW)
-     These are required by:
-     - LibraryFolderPage (Create, list, move, save items)
-     - AssemblyEditorPage (load/save/duplicate/delete)
+     Assemblies (matches your Supabase schema)
   ============================ */
 
   async listAssemblies(params: { libraryType: LibraryType; folderId: string | null }): Promise<Assembly[]> {
     const companyId = await this.currentCompanyId();
     const owner: DbOwner = this.toDbOwner(params.libraryType);
 
-    // Assemblies must live in folders; UI blocks root creation, but still handle null safely
     const folderId = params.folderId;
     if (!folderId) return [];
 
+    // NOTE: your DB assemblies table does NOT have sort_order; order by name for stable UI.
     const q = this.supabase
       .from('assemblies')
       .select('*')
       .eq('owner', owner)
       .eq('folder_id', folderId)
-      .order('sort_order', { ascending: true });
+      .order('name', { ascending: true });
 
     if (owner === 'company') q.eq('company_id', companyId);
 
@@ -222,6 +221,7 @@ export class SupabaseDataProvider implements IDataProvider {
 
     if (e2) throw e2;
 
+    // Return shape used by your UI: assembly row + items array
     return { ...(a as any), items: items ?? [] } as any;
   }
 
@@ -235,15 +235,22 @@ export class SupabaseDataProvider implements IDataProvider {
 
     // Guard: normal companies cannot mutate app-owned base assemblies
     if (owner === 'app' && !isOwner) {
-      // Allow “override” behavior later; for now block base writes.
       throw new Error('Not allowed to modify app-owned assemblies');
     }
 
+    // Map to your real DB column names:
+    // - customer_supplies_materials (DB) vs customer_supplied_materials (spec)
     const payload: any = {
       ...assembly,
       owner,
       company_id: owner === 'company' ? (assembly as any).company_id ?? companyId : null,
     };
+
+    // normalize field name if UI/spec sends customer_supplied_materials
+    if (payload.customer_supplied_materials !== undefined && payload.customer_supplies_materials === undefined) {
+      payload.customer_supplies_materials = payload.customer_supplied_materials;
+      delete payload.customer_supplied_materials;
+    }
 
     // items are stored separately
     const items = (payload.items ?? []) as any[];
@@ -252,17 +259,44 @@ export class SupabaseDataProvider implements IDataProvider {
     const { data: saved, error } = await this.supabase.from('assemblies').upsert(payload).select('*').single();
     if (error) throw error;
 
-    // Replace items
-    // NOTE: if you have ON DELETE CASCADE this delete is redundant but safe.
+    // Replace items (your FK exists; cascade may exist, but this is safe)
     const { error: delErr } = await this.supabase.from('assembly_items').delete().eq('assembly_id', saved.id);
     if (delErr) throw delErr;
 
     if (items.length) {
-      const rows = items.map((it, idx) => ({
-        ...it,
-        assembly_id: saved.id,
-        sort_order: idx,
-      }));
+      // Map item payload to your DB columns:
+      // - item_type (DB) vs type (spec)
+      // - material_cost_override (DB) vs material_cost (spec)
+      // - labor_minutes (DB) is single integer
+      const rows = items.map((it, idx) => {
+        const itemType = it.item_type ?? it.type ?? 'material';
+        const laborMinutes =
+          typeof it.labor_minutes === 'number'
+            ? it.labor_minutes
+            : typeof it.laborMinutes === 'number'
+              ? it.laborMinutes
+              : // if spec sends labor_hours + labor_minutes
+                (Number(it.labor_hours ?? 0) * 60 + Number(it.labor_minutes ?? 0)) || 0;
+
+        const materialCostOverride =
+          it.material_cost_override ??
+          it.materialCostOverride ??
+          it.material_cost ??
+          it.materialCost ??
+          null;
+
+        return {
+          assembly_id: saved.id,
+          item_type: itemType,
+          material_id: it.material_id ?? it.materialId ?? null,
+          name: it.name ?? null,
+          quantity: it.quantity ?? 1,
+          material_cost_override: materialCostOverride,
+          labor_minutes: laborMinutes,
+          sort_order: idx,
+        };
+      });
+
       const { error: insErr } = await this.supabase.from('assembly_items').insert(rows);
       if (insErr) throw insErr;
     }
@@ -283,6 +317,30 @@ export class SupabaseDataProvider implements IDataProvider {
 
     const { error } = await this.supabase.from('assemblies').delete().eq('id', id);
     if (error) throw error;
+  }
+
+  /* ============================
+     App Assembly Overrides (your DB has this; you just added policies)
+  ============================ */
+
+  async listAppAssemblyOverrides(): Promise<AppAssemblyOverride[]> {
+    const companyId = await this.currentCompanyId();
+    const { data, error } = await this.supabase
+      .from('app_assembly_overrides')
+      .select('*')
+      .eq('company_id', companyId);
+
+    if (error) throw error;
+    return (data ?? []) as any[];
+  }
+
+  async upsertAppAssemblyOverride(override: Partial<AppAssemblyOverride>): Promise<AppAssemblyOverride> {
+    const companyId = await this.currentCompanyId();
+    const payload = { ...override, company_id: companyId };
+
+    const { data, error } = await this.supabase.from('app_assembly_overrides').upsert(payload).select('*').single();
+    if (error) throw error;
+    return data as any;
   }
 
   /* ============================
