@@ -54,6 +54,11 @@ function fmtLaborHM(totalMinutes: number) {
   return `${h}h ${m}m`;
 }
 
+function splitHM(totalMinutes: number) {
+  const mins = Math.max(0, Math.floor(Number(totalMinutes || 0)));
+  return { h: Math.floor(mins / 60), m: mins % 60 };
+}
+
 export function AssemblyEditorPage() {
   const { assemblyId, libraryType } = useParams();
   const data = useData();
@@ -187,6 +192,12 @@ export function AssemblyEditorPage() {
       console.error(e);
       setStatus(String(e?.message ?? e));
     }
+  }
+
+  function updateItem(id: string, patch: Record<string, any>) {
+    if (!a) return;
+    const nextItems = (a.items ?? []).map((x: any) => (x.id === id ? { ...x, ...patch } : x));
+    setA({ ...a, items: nextItems } as any);
   }
 
   async function saveAll() {
@@ -459,13 +470,17 @@ export function AssemblyEditorPage() {
                         type="text"
                         inputMode="decimal"
                         placeholder="0.00"
-                        value={String(it.unit_cost ?? 0)}
-                        onChange={(e) => {
-                          const v = Number(e.target.value || 0);
-                          const nextItems = (a.items ?? []).map((x: any) =>
-                            x.id === it.id ? { ...x, unit_cost: Number.isFinite(v) ? v : 0 } : x
-                          );
-                          setA({ ...a, items: nextItems } as any);
+                        // Allow blank while editing; normalize on blur.
+                        value={it._ui_unit_cost_text ?? (it.unit_cost == null ? '' : String(it.unit_cost))}
+                        onChange={(e) => updateItem(it.id, { _ui_unit_cost_text: e.target.value })}
+                        onBlur={() => {
+                          const raw = String(it._ui_unit_cost_text ?? '');
+                          const trimmed = raw.trim();
+                          const v = trimmed === '' ? 0 : Number(trimmed);
+                          updateItem(it.id, {
+                            unit_cost: Number.isFinite(v) ? v : 0,
+                            _ui_unit_cost_text: undefined,
+                          });
                         }}
                       />
                     </div>
@@ -499,21 +514,46 @@ export function AssemblyEditorPage() {
                       />
                     </div>
 
-                    <div className="stack" style={{ width: 140 }}>
-                      <div className="muted small">Labor (minutes)</div>
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="0"
-                        value={String(it.labor_minutes ?? 0)}
-                        onChange={(e) => {
-                          const v = Number(e.target.value || 0);
-                          const nextItems = (a.items ?? []).map((x: any) =>
-                            x.id === it.id ? { ...x, labor_minutes: Number.isFinite(v) ? v : 0 } : x
-                          );
-                          setA({ ...a, items: nextItems } as any);
-                        }}
-                      />
+                    <div className="stack" style={{ width: 200 }}>
+                      <div className="muted small">Labor</div>
+                      {(() => {
+                        const { h, m } = splitHM(it.labor_minutes ?? 0);
+                        const hText = it._ui_labor_h_text ?? (h ? String(h) : '');
+                        const mText = it._ui_labor_m_text ?? (m ? String(m) : '');
+                        const commit = () => {
+                          const hh = (String(it._ui_labor_h_text ?? '').trim() === '' ? 0 : Number(it._ui_labor_h_text));
+                          const mm = (String(it._ui_labor_m_text ?? '').trim() === '' ? 0 : Number(it._ui_labor_m_text));
+                          const hhSafe = Number.isFinite(hh) ? Math.max(0, Math.floor(hh)) : 0;
+                          const mmSafe = Number.isFinite(mm) ? Math.max(0, Math.floor(mm)) : 0;
+                          updateItem(it.id, {
+                            labor_minutes: hhSafe * 60 + mmSafe,
+                            _ui_labor_h_text: undefined,
+                            _ui_labor_m_text: undefined,
+                          });
+                        };
+                        return (
+                          <div className="row" style={{ gap: 8 }}>
+                            <Input
+                              style={{ width: 90 }}
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="Hours"
+                              value={hText}
+                              onChange={(e) => updateItem(it.id, { _ui_labor_h_text: e.target.value })}
+                              onBlur={commit}
+                            />
+                            <Input
+                              style={{ width: 90 }}
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="Minutes"
+                              value={mText}
+                              onChange={(e) => updateItem(it.id, { _ui_labor_m_text: e.target.value })}
+                              onBlur={commit}
+                            />
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <Button variant="danger" onClick={() => removeItem(it.id)}>
@@ -558,21 +598,46 @@ export function AssemblyEditorPage() {
                       />
                     </div>
 
-                    <div className="stack" style={{ width: 150 }}>
-                      <div className="muted small">Labor (minutes)</div>
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="0"
-                        value={String(it.labor_minutes ?? 0)}
-                        onChange={(e) => {
-                          const v = Number(e.target.value || 0);
-                          const nextItems = (a.items ?? []).map((x: any) =>
-                            x.id === it.id ? { ...x, labor_minutes: Number.isFinite(v) ? v : 0 } : x
-                          );
-                          setA({ ...a, items: nextItems } as any);
-                        }}
-                      />
+                    <div className="stack" style={{ width: 220 }}>
+                      <div className="muted small">Labor</div>
+                      {(() => {
+                        const { h, m } = splitHM(it.labor_minutes ?? 0);
+                        const hText = it._ui_labor_h_text ?? (h ? String(h) : '');
+                        const mText = it._ui_labor_m_text ?? (m ? String(m) : '');
+                        const commit = () => {
+                          const hh = (String(it._ui_labor_h_text ?? '').trim() === '' ? 0 : Number(it._ui_labor_h_text));
+                          const mm = (String(it._ui_labor_m_text ?? '').trim() === '' ? 0 : Number(it._ui_labor_m_text));
+                          const hhSafe = Number.isFinite(hh) ? Math.max(0, Math.floor(hh)) : 0;
+                          const mmSafe = Number.isFinite(mm) ? Math.max(0, Math.floor(mm)) : 0;
+                          updateItem(it.id, {
+                            labor_minutes: hhSafe * 60 + mmSafe,
+                            _ui_labor_h_text: undefined,
+                            _ui_labor_m_text: undefined,
+                          });
+                        };
+                        return (
+                          <div className="row" style={{ gap: 8 }}>
+                            <Input
+                              style={{ width: 100 }}
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="Hours"
+                              value={hText}
+                              onChange={(e) => updateItem(it.id, { _ui_labor_h_text: e.target.value })}
+                              onBlur={commit}
+                            />
+                            <Input
+                              style={{ width: 100 }}
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="Minutes"
+                              value={mText}
+                              onChange={(e) => updateItem(it.id, { _ui_labor_m_text: e.target.value })}
+                              onBlur={commit}
+                            />
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <Button variant="danger" onClick={() => removeItem(it.id)}>
@@ -613,3 +678,4 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
