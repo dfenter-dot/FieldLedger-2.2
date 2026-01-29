@@ -23,7 +23,8 @@ function newRule(nextPriority: number): AdminRule {
   const id = crypto.randomUUID?.() ?? `rule_${Date.now()}`;
   return {
     id,
-    company_id: '' as any,
+    // company_id is enforced server-side by the data provider (currentCompanyId)
+    company_id: null as any,
     name: 'New Rule',
     description: '',
     enabled: true,
@@ -354,4 +355,5 @@ export function AdminRulesPage() {
     </div>
   );
 }
+
 
