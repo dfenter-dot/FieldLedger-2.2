@@ -799,7 +799,9 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                       }}
                     >
                       <div style={{ fontWeight: 600 }}>{a.name}</div>
-                      <div className="muted small">{(a.items ?? []).length} items</div>
+                      <div className="muted small">
+                        {((a as any).item_count ?? (a.items ?? []).length) as any} items
+                      </div>
                     </div>
 
                     <div className="row" style={{ gap: 8 }}>
