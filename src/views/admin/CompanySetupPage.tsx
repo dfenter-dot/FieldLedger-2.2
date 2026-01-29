@@ -353,6 +353,11 @@ export function CompanySetupPage() {
     // Integers
     (next as any).workdays_per_week = Math.max(0, toInt(draft.workdays_per_week ?? '', next.workdays_per_week ?? 0));
     (next as any).technicians = Math.max(0, toInt(draft.technicians ?? '', next.technicians ?? 0));
+    // This field is used for Average Ticket calculations and MUST persist.
+    (next as any).avg_jobs_per_tech_per_day = Math.max(
+      0,
+      toNum((draft as any).avg_jobs_per_tech_per_day ?? '', Number((next as any).avg_jobs_per_tech_per_day) || 0)
+    );
     (next as any).vacation_days_per_year = Math.max(0, toInt(draft.vacation_days_per_year ?? '', next.vacation_days_per_year ?? 0));
     (next as any).sick_days_per_year = Math.max(0, toInt(draft.sick_days_per_year ?? '', next.sick_days_per_year ?? 0));
     (next as any).estimate_validity_days = Math.max(0, toInt(draft.estimate_validity_days ?? '', next.estimate_validity_days ?? 0));
@@ -932,7 +937,7 @@ export function CompanySetupPage() {
             <label className="label">Net Profit Goal Mode</label>
             <Toggle
               checked={s.net_profit_goal_mode === 'percent'}
-              onChange={(v) => setS({ ...s, net_profit_goal_mode: v ? 'percent' : 'dollar' })}
+              onChange={(v) => setS({ ...s, net_profit_goal_mode: v ? 'percent' : 'fixed' })}
               label={s.net_profit_goal_mode === 'percent' ? 'Percent of Revenue' : 'Fixed $ / Month'}
             />
           </div>
@@ -1093,3 +1098,4 @@ export function CompanySetupPage() {
     </div>
   );
 }
+
