@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
@@ -62,6 +62,14 @@ function splitHM(totalMinutes: number) {
 export function AssemblyEditorPage() {
   const { assemblyId, libraryType } = useParams();
   const data = useData();
+  // NOTE: In this codebase, the DataContext value has previously changed identity between renders.
+  // That can unintentionally re-trigger effects that include `data` in their dependency array,
+  // causing editor state (like the name field) to be overwritten by a fresh fetch.
+  // Using a ref keeps the latest provider while keeping the "load on enter / on return" effect stable.
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
   const nav = useNavigate();
   const location = useLocation();
   const { setMode } = useSelection();
@@ -93,7 +101,7 @@ export function AssemblyEditorPage() {
   }, [data]);
 
   async function refreshAssembly(id: string) {
-    const asm = await data.getAssembly(id);
+    const asm = await dataRef.current.getAssembly(id);
     setA(asm);
     setLaborMinutesText(asm?.labor_minutes == null ? '' : String(asm.labor_minutes));
   }
@@ -105,7 +113,7 @@ export function AssemblyEditorPage() {
       setStatus(String((e as any)?.message ?? e));
     });
     // Also re-fetch when navigating back from picker flows.
-  }, [assemblyId, data, location.key]);
+  }, [assemblyId, location.key]);
 
   const materialRows = useMemo<AssemblyMaterialRow[]>(() => {
     const items = (a?.items ?? []) as any[];
@@ -145,7 +153,7 @@ export function AssemblyEditorPage() {
       const next: Record<string, Material | null> = {};
       for (const id of missing) {
         try {
-          next[id] = await data.getMaterial(id);
+          next[id] = await dataRef.current.getMaterial(id);
         } catch {
           next[id] = null;
         }
@@ -156,7 +164,7 @@ export function AssemblyEditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [data, materialRows, materialCache]);
+  }, [materialRows, materialCache]);
 
   const totals = useMemo(() => {
     if (!a || !companySettings) return null;
