@@ -12,25 +12,36 @@ import type {
   AppMaterialOverride,
 } from '../types';
 import type { IDataProvider } from '../IDataProvider';
+import { seedCompanySettings } from './seed';
 
 /**
  * LocalDataProvider
  *
- * In-memory provider used only for dev/testing.
- * MUST satisfy IDataProvider signatures so pages compile.
+ * In-memory provider used for:
+ * - local mode
+ * - UI development
+ * - fallback behavior
  *
- * For the Admin phase, this intentionally focuses on:
- * - Company Setup
- * - Job Types
- * - Rules
+ * This MUST mirror SupabaseDataProvider behavior closely
+ * so UI logic does not diverge.
  */
 export class LocalDataProvider implements IDataProvider {
+  private companyId = 'local-company';
+
+  private companySettings: CompanySettings = seedCompanySettings(this.companyId);
+  private jobTypes: JobType[] = [];
+  private adminRules: AdminRule[] = [];
+
+  private folders: Folder[] = [];
+  private materials: Material[] = [];
+  private appMaterialOverrides: AppMaterialOverride[] = [];
+
   /* ============================
      Context
   ============================ */
 
   async getCurrentCompanyId(): Promise<string> {
-    return 'local-company';
+    return this.companyId;
   }
 
   async isAppOwner(): Promise<boolean> {
@@ -38,176 +49,249 @@ export class LocalDataProvider implements IDataProvider {
   }
 
   /* ============================
+     Company Settings
+  ============================ */
+
+  async getCompanySettings(): Promise<CompanySettings> {
+    return this.companySettings;
+  }
+
+  async saveCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings> {
+    this.companySettings = {
+      ...this.companySettings,
+      ...settings,
+      updated_at: new Date().toISOString(),
+    };
+    return this.companySettings;
+  }
+
+  /* ============================
+     Job Types
+  ============================ */
+
+  async listJobTypes(): Promise<JobType[]> {
+    return [...this.jobTypes];
+  }
+
+  async upsertJobType(companyIdOrJobType: any, maybeJobType?: any): Promise<JobType> {
+    const jobType = (maybeJobType ?? companyIdOrJobType) as JobType;
+
+    const idx = this.jobTypes.findIndex(j => j.id === jobType.id);
+    if (idx >= 0) {
+      this.jobTypes[idx] = { ...this.jobTypes[idx], ...jobType };
+    } else {
+      this.jobTypes.push({ ...jobType, id: jobType.id ?? crypto.randomUUID() });
+    }
+    return jobType as JobType;
+  }
+
+  async deleteJobType(companyIdOrId: any, maybeId?: any): Promise<void> {
+    const id = (maybeId ?? companyIdOrId) as string;
+    this.jobTypes = this.jobTypes.filter(j => j.id !== id);
+  }
+
+  /* ============================
+     Admin Rules
+  ============================ */
+
+  async listAdminRules(): Promise<AdminRule[]> {
+    return [...this.adminRules].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  }
+
+  async getAdminRules(_companyId: string): Promise<AdminRule[]> {
+    return this.listAdminRules();
+  }
+
+  async upsertAdminRule(companyIdOrRule: any, maybeRule?: any): Promise<AdminRule> {
+    const rule = (maybeRule ?? companyIdOrRule) as AdminRule;
+
+    const idx = this.adminRules.findIndex(r => r.id === rule.id);
+    if (idx >= 0) {
+      this.adminRules[idx] = { ...this.adminRules[idx], ...rule };
+    } else {
+      this.adminRules.push({ ...rule, id: rule.id ?? crypto.randomUUID() });
+    }
+    return rule as AdminRule;
+  }
+
+  async saveAdminRule(rule: Partial<AdminRule>): Promise<void> {
+    await this.upsertAdminRule(rule);
+  }
+
+  async deleteAdminRule(companyIdOrId: any, maybeId?: any): Promise<void> {
+    const id = (maybeId ?? companyIdOrId) as string;
+    this.adminRules = this.adminRules.filter(r => r.id !== id);
+  }
+
+  /* ============================
      Folders
   ============================ */
 
-  async listFolders(_args: {
+  async listFolders(args: {
     kind: 'materials' | 'assemblies';
     libraryType: LibraryType;
     parentId: string | null;
   }): Promise<Folder[]> {
-    return [];
+    return this.folders.filter(
+      f =>
+        f.kind === args.kind &&
+        f.library_type === args.libraryType &&
+        f.parent_id === args.parentId
+    );
   }
 
-  async createFolder(_args: {
+  async createFolder(args: {
     kind: 'materials' | 'assemblies';
     libraryType: LibraryType;
     parentId: string | null;
     name: string;
   }): Promise<Folder> {
-    throw new Error('LocalDataProvider.createFolder not implemented');
+    const folder: Folder = {
+      id: crypto.randomUUID(),
+      kind: args.kind,
+      library_type: args.libraryType,
+      company_id: this.companyId,
+      parent_id: args.parentId,
+      name: args.name,
+      order_index: 0,
+      created_at: new Date().toISOString(),
+    };
+    this.folders.push(folder);
+    return folder;
   }
 
-  async saveFolder(_folder: Partial<Folder>): Promise<Folder> {
-    throw new Error('LocalDataProvider.saveFolder not implemented');
+  async saveFolder(folder: Partial<Folder>): Promise<Folder> {
+    const idx = this.folders.findIndex(f => f.id === folder.id);
+    if (idx >= 0) {
+      this.folders[idx] = { ...this.folders[idx], ...folder } as Folder;
+      return this.folders[idx];
+    }
+    throw new Error('Folder not found');
   }
 
-  async deleteFolder(_id: string): Promise<void> {
-    return;
+  async deleteFolder(id: string): Promise<void> {
+    this.folders = this.folders.filter(f => f.id !== id);
   }
 
   /* ============================
-     Materials
+     Materials (AUTHORITATIVE)
   ============================ */
 
-  async listMaterials(_args: { libraryType: LibraryType; folderId: string | null }): Promise<Material[]> {
-    return [];
+  async listMaterials(args: {
+    libraryType: LibraryType;
+    folderId: string | null;
+  }): Promise<Material[]> {
+    return this.materials.filter(
+      m => m.library_type === args.libraryType && m.folder_id === args.folderId
+    );
   }
 
-  async getMaterial(_id: string): Promise<Material | null> {
-    return null;
+  async getMaterial(id: string): Promise<Material | null> {
+    return this.materials.find(m => m.id === id) ?? null;
   }
 
   async saveMaterial(material: Partial<Material>): Promise<Material> {
-    return material as Material;
+    const idx = this.materials.findIndex(m => m.id === material.id);
+    if (idx >= 0) {
+      this.materials[idx] = { ...this.materials[idx], ...material } as Material;
+      return this.materials[idx];
+    }
+
+    const created: Material = {
+      ...(material as Material),
+      id: crypto.randomUUID(),
+      company_id: this.companyId,
+      library_type: material.library_type ?? 'company',
+      folder_id: material.folder_id ?? null,
+      labor_minutes: material.labor_minutes ?? 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    this.materials.push(created);
+    return created;
   }
 
-  async deleteMaterial(_id: string): Promise<void> {
-    return;
-  }
-
-  async getAppMaterialOverride(_materialId: string, _companyId: string): Promise<AppMaterialOverride | null> {
-    return null;
-  }
-
-  async upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride> {
-    return override as AppMaterialOverride;
+  async deleteMaterial(id: string): Promise<void> {
+    this.materials = this.materials.filter(m => m.id !== id);
   }
 
   /* ============================
-     Assemblies
+     App Material Overrides
   ============================ */
 
-  async listAssemblies(_args: { libraryType: LibraryType; folderId: string | null }): Promise<Assembly[]> {
+  async getAppMaterialOverride(
+    materialId: string,
+    companyId: string
+  ): Promise<AppMaterialOverride | null> {
+    return (
+      this.appMaterialOverrides.find(
+        o => o.material_id === materialId && o.company_id === companyId
+      ) ?? null
+    );
+  }
+
+  async upsertAppMaterialOverride(
+    override: Partial<AppMaterialOverride>
+  ): Promise<AppMaterialOverride> {
+    const idx = this.appMaterialOverrides.findIndex(
+      o => o.material_id === override.material_id && o.company_id === override.company_id
+    );
+
+    if (idx >= 0) {
+      this.appMaterialOverrides[idx] = {
+        ...this.appMaterialOverrides[idx],
+        ...override,
+      } as AppMaterialOverride;
+      return this.appMaterialOverrides[idx];
+    }
+
+    const created: AppMaterialOverride = {
+      ...(override as AppMaterialOverride),
+      id: crypto.randomUUID(),
+    };
+    this.appMaterialOverrides.push(created);
+    return created;
+  }
+
+  /* ============================
+     Stubbed sections (later phases)
+  ============================ */
+
+  async listAssemblies(): Promise<Assembly[]> {
     return [];
   }
-
-  async getAssembly(_id: string): Promise<any | null> {
+  async getAssembly(): Promise<any | null> {
     return null;
   }
-
   async upsertAssembly(arg: any): Promise<any> {
     return arg;
   }
-
-  async deleteAssembly(_id: string): Promise<void> {
-    return;
-  }
-
-  /* ============================
-     Estimates
-  ============================ */
+  async deleteAssembly(): Promise<void> {}
 
   async getEstimates(): Promise<Estimate[]> {
     return [];
   }
-
   async listEstimates(): Promise<Estimate[]> {
     return [];
   }
-
-  async getEstimate(_id: string): Promise<Estimate | null> {
+  async getEstimate(): Promise<Estimate | null> {
     return null;
   }
-
   async upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
     return estimate as Estimate;
   }
-
-  async deleteEstimate(_id: string): Promise<void> {
-    return;
-  }
-
-  /* ============================
-     Job Types (Admin)
-  ============================ */
-
-  async listJobTypes(): Promise<JobType[]> {
-    return [];
-  }
-
-  async upsertJobType(companyIdOrJobType: any, maybeJobType?: any): Promise<JobType> {
-    const jobType = (maybeJobType ?? companyIdOrJobType) as Partial<JobType>;
-    return jobType as JobType;
-  }
-
-  async deleteJobType(_companyIdOrId: any, _maybeId?: any): Promise<void> {
-    return;
-  }
-
-  /* ============================
-     Company Settings (Admin)
-  ============================ */
-
-  async getCompanySettings(): Promise<CompanySettings> {
-    throw new Error('LocalDataProvider.getCompanySettings not implemented');
-  }
-
-  async saveCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings> {
-    return settings as CompanySettings;
-  }
-
-  /* ============================
-     Admin Rules (Admin)
-  ============================ */
-
-  async listAdminRules(): Promise<AdminRule[]> {
-    return [];
-  }
-
-  async getAdminRules(_companyId: string): Promise<AdminRule[]> {
-    return [];
-  }
-
-  async upsertAdminRule(companyIdOrRule: any, maybeRule?: any): Promise<AdminRule> {
-    const rule = (maybeRule ?? companyIdOrRule) as Partial<AdminRule>;
-    return rule as AdminRule;
-  }
-
-  async saveAdminRule(_rule: Partial<AdminRule>): Promise<void> {
-    return;
-  }
-
-  async deleteAdminRule(_companyIdOrId: any, _maybeId?: any): Promise<void> {
-    return;
-  }
-
-  /* ============================
-     CSV / Branding (not prioritized yet)
-  ============================ */
+  async deleteEstimate(): Promise<void> {}
 
   async getCsvSettings(): Promise<CsvSettings> {
-    throw new Error('LocalDataProvider.getCsvSettings not implemented');
+    return {} as CsvSettings;
   }
-
   async saveCsvSettings(settings: Partial<CsvSettings>): Promise<CsvSettings> {
     return settings as CsvSettings;
   }
 
   async getBrandingSettings(): Promise<BrandingSettings> {
-    throw new Error('LocalDataProvider.getBrandingSettings not implemented');
+    return {} as BrandingSettings;
   }
-
   async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
     return settings as BrandingSettings;
   }
