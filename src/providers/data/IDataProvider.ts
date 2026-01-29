@@ -15,13 +15,13 @@ import type {
 /**
  * IDataProvider
  *
- * This is the authoritative contract between UI and persistence.
- * Pages must ONLY call methods defined here.
+ * Authoritative contract between UI and persistence.
  *
- * During phased development:
- * - Admin methods are authoritative
- * - Materials methods are now authoritative
- * - Assemblies / Estimates will be finalized later
+ * STATUS:
+ * - Admin ✅
+ * - Materials ✅
+ * - Assemblies ✅ (this phase)
+ * - Estimates ⏳
  */
 export interface IDataProvider {
   /* ============================
@@ -53,7 +53,7 @@ export interface IDataProvider {
   deleteAdminRule(companyIdOrId: any, maybeId?: any): Promise<void>;
 
   /* ============================
-     Folders (Materials / Assemblies)
+     Folders
   ============================ */
   listFolders(args: {
     kind: 'materials' | 'assemblies';
@@ -72,7 +72,7 @@ export interface IDataProvider {
   deleteFolder(id: string): Promise<void>;
 
   /* ============================
-     Materials (AUTHORITATIVE)
+     Materials
   ============================ */
   listMaterials(args: {
     libraryType: LibraryType;
@@ -90,15 +90,26 @@ export interface IDataProvider {
   upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride>;
 
   /* ============================
-     Assemblies (stubbed for now)
+     Assemblies (AUTHORITATIVE)
   ============================ */
-  listAssemblies(args: { libraryType: LibraryType; folderId: string | null }): Promise<Assembly[]>;
+  listAssemblies(args: {
+    libraryType: LibraryType;
+    folderId: string | null;
+  }): Promise<Assembly[]>;
+
   getAssembly(id: string): Promise<any | null>;
+
+  /**
+   * Supports:
+   * - upsertAssembly(assembly)
+   * - upsertAssembly({ assembly, items })
+   */
   upsertAssembly(arg: any): Promise<any>;
+
   deleteAssembly(id: string): Promise<void>;
 
   /* ============================
-     Estimates (stubbed for now)
+     Estimates (stubbed)
   ============================ */
   getEstimates(): Promise<Estimate[]>;
   listEstimates(): Promise<Estimate[]>;
