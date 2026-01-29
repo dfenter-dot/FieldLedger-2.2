@@ -1,110 +1,147 @@
-// src/providers/data/IDataProvider.ts
-
-import type {
+import {
+  AdminRule,
   Assembly,
   AssemblyItem,
-  AppAssemblyOverride,
+  BrandingSettings,
   CompanySettings,
+  CsvSettings,
   Estimate,
-  EstimateAssemblyLine,
   Folder,
   JobType,
+  LibraryType,
   Material,
-  PricingResult,
-  UUID,
+  AppMaterialOverride,
 } from './types';
 
-export type AssemblyListParams = {
-  libraryType: 'user' | 'app';
-  folderId: UUID;
-};
-
+/**
+ * IDataProvider
+ *
+ * AUTHORITATIVE data contract between UI and persistence.
+ * All pages must go through this interface.
+ *
+ * IMPORTANT RULES:
+ * - No page talks directly to Supabase.
+ * - Ownership (app vs company) is resolved inside the provider.
+ * - All saves are explicit (Save / Apply Changes).
+ * - Provider returns canonical shapes defined in types.ts.
+ */
 export interface IDataProvider {
-  /* =======================
-   * Folders
-   * ======================= */
-  listFolders(params: {
-    ownerType: 'user' | 'app';
-    parentId: UUID | null;
+  /* ============================
+     Context
+  ============================ */
+
+  getCurrentCompanyId(): Promise<string>;
+  isAppOwner(): Promise<boolean>;
+
+  /* ============================
+     Folders
+  ============================ */
+
+  listFolders(args: {
+    kind: 'materials' | 'assemblies';
+    libraryType: LibraryType;
+    parentId: string | null;
   }): Promise<Folder[]>;
 
-  createFolder(folder: Partial<Folder>): Promise<Folder>;
-  updateFolder(folder: Partial<Folder>): Promise<Folder>;
-  deleteFolder(folderId: UUID): Promise<void>;
+  createFolder(args: {
+    kind: 'materials' | 'assemblies';
+    libraryType: LibraryType;
+    parentId: string | null;
+    name: string;
+  }): Promise<Folder>;
 
-  /* =======================
-   * Materials
-   * ======================= */
-  listMaterials(params: {
-    ownerType: 'user' | 'app';
-    folderId: UUID;
+  saveFolder(folder: Partial<Folder>): Promise<Folder>;
+  deleteFolder(id: string): Promise<void>;
+
+  /* ============================
+     Materials
+  ============================ */
+
+  listMaterials(args: {
+    libraryType: LibraryType;
+    folderId: string | null;
   }): Promise<Material[]>;
 
-  getMaterial(id: UUID): Promise<Material | null>;
-  upsertMaterial(material: Partial<Material>): Promise<Material>;
-  deleteMaterial(id: UUID): Promise<void>;
+  getMaterial(id: string): Promise<Material | null>;
 
-  /* =======================
-   * Assemblies
-   * ======================= */
-  listAssemblies(params: AssemblyListParams): Promise<Assembly[]>;
+  saveMaterial(material: Partial<Material>): Promise<Material>;
+  deleteMaterial(id: string): Promise<void>;
 
-  getAssembly(id: UUID): Promise<{
-    assembly: Assembly;
-    items: AssemblyItem[];
-    appOverride?: AppAssemblyOverride | null;
-  } | null>;
+  getAppMaterialOverride(
+    materialId: string,
+    companyId: string
+  ): Promise<AppMaterialOverride | null>;
 
-  upsertAssembly(params: {
+  upsertAppMaterialOverride(
+    override: Partial<AppMaterialOverride>
+  ): Promise<AppMaterialOverride>;
+
+  /* ============================
+     Assemblies
+  ============================ */
+
+  listAssemblies(args: {
+    libraryType: LibraryType;
+    folderId: string | null;
+  }): Promise<Assembly[]>;
+
+  getAssembly(id: string): Promise<Assembly | null>;
+
+  /**
+   * Upsert an assembly and its items.
+   * - Assembly must belong to a folder.
+   * - Items are persisted in assembly_items.
+   */
+  saveAssembly(args: {
     assembly: Partial<Assembly>;
-    items: AssemblyItem[];
+    items?: AssemblyItem[];
   }): Promise<Assembly>;
 
-  deleteAssembly(id: UUID): Promise<void>;
+  deleteAssembly(id: string): Promise<void>;
 
-  /* =======================
-   * Assembly Overrides
-   * ======================= */
-  getAppAssemblyOverride(
-    assemblyId: UUID,
-    companyId: UUID
-  ): Promise<AppAssemblyOverride | null>;
+  /* ============================
+     Estimates
+  ============================ */
 
-  upsertAppAssemblyOverride(
-    override: Partial<AppAssemblyOverride>
-  ): Promise<AppAssemblyOverride>;
+  listEstimates(): Promise<Estimate[]>;
+  getEstimate(id: string): Promise<Estimate | null>;
+  saveEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
+  deleteEstimate(id: string): Promise<void>;
 
-  /* =======================
-   * Estimates
-   * ======================= */
-  getEstimate(id: UUID): Promise<Estimate | null>;
-  upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
-  deleteEstimate(id: UUID): Promise<void>;
+  /* ============================
+     Job Types
+  ============================ */
 
-  addAssemblyToEstimate(params: {
-    estimateId: UUID;
-    assemblyId: UUID;
-    quantity: number;
-  }): Promise<EstimateAssemblyLine>;
-
-  removeAssemblyFromEstimate(
-    estimateAssemblyLineId: UUID
-  ): Promise<void>;
-
-  /* =======================
-   * Job Types / Settings
-   * ======================= */
   listJobTypes(): Promise<JobType[]>;
-  getCompanySettings(): Promise<CompanySettings>;
+  saveJobType(jobType: Partial<JobType>): Promise<JobType>;
+  deleteJobType(id: string): Promise<void>;
 
-  /* =======================
-   * Pricing
-   * ======================= */
-  computeAssemblyPricing(params: {
-    assembly: Assembly;
-    items: AssemblyItem[];
-    materialsById: Record<UUID, Material>;
-    jobTypesById: Record<UUID, JobType>;
-    companySettings: CompanySettings;
-  }): PricingResult;
+  /* ============================
+     Admin Rules
+  ============================ */
+
+  listAdminRules(): Promise<AdminRule[]>;
+  saveAdminRule(rule: Partial<AdminRule>): Promise<AdminRule>;
+  deleteAdminRule(id: string): Promise<void>;
+
+  /* ============================
+     Company Settings
+  ============================ */
+
+  getCompanySettings(): Promise<CompanySettings>;
+  saveCompanySettings(
+    settings: Partial<CompanySettings>
+  ): Promise<CompanySettings>;
+
+  /* ============================
+     CSV / Branding
+  ============================ */
+
+  getCsvSettings(): Promise<CsvSettings>;
+  saveCsvSettings(settings: Partial<CsvSettings>): Promise<CsvSettings>;
+
+  getBrandingSettings(): Promise<BrandingSettings>;
+  saveBrandingSettings(
+    settings: Partial<BrandingSettings>
+  ): Promise<BrandingSettings>;
 }
