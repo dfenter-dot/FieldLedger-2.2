@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
@@ -30,6 +30,7 @@ export function AssemblyEditorPage() {
   const { assemblyId, libraryType } = useParams();
   const data = useData();
   const nav = useNavigate();
+  const location = useLocation();
   const { setMode } = useSelection();
   const dialogs = useDialogs();
 
@@ -57,45 +58,52 @@ export function AssemblyEditorPage() {
     };
   }, [data]);
 
+  async function refreshAssembly(id: string) {
+    const asm = await data.getAssembly(id);
+    setA(asm);
+    setLaborMinutesText(asm?.labor_minutes == null ? '' : String(asm.labor_minutes));
+  }
+
   useEffect(() => {
     if (!assemblyId) return;
-    data
-      .getAssembly(assemblyId)
-      .then((asm) => {
-        setA(asm);
-        setLaborMinutesText(asm?.labor_minutes == null ? '' : String(asm.labor_minutes));
-      })
-      .catch((e) => {
-        console.error(e);
-        setStatus(String((e as any)?.message ?? e));
-      });
-  }, [assemblyId, data]);
+    refreshAssembly(assemblyId).catch((e) => {
+      console.error(e);
+      setStatus(String((e as any)?.message ?? e));
+    });
+    // Also re-fetch when navigating back from picker flows.
+  }, [assemblyId, data, location.key]);
 
   const materialRows = useMemo<AssemblyMaterialRow[]>(() => {
     const items = (a?.items ?? []) as any[];
     return items
-      .filter((it) => it.type === 'material' && it.material_id)
+      // Items can come from different providers:
+      // - UI-created: { type: 'material', material_id: ... }
+      // - Supabase:   { item_type: 'material', material_id: ... }
+      .filter((it) => (it.type ?? it.item_type) === 'material' && (it.material_id ?? it.materialId))
       .map((it) => ({
         itemId: it.id,
-        materialId: it.material_id,
+        materialId: it.material_id ?? it.materialId,
         quantity: Number(it.quantity ?? 1) || 1,
       }));
   }, [a?.items]);
 
   const blankMaterialRows = useMemo(() => {
     const items = (a?.items ?? []) as any[];
-    return items.filter((it) => it.type === 'blank_material');
+    return items.filter((it) => (it.type ?? it.item_type) === 'blank_material');
   }, [a?.items]);
 
   const laborRows = useMemo(() => {
     const items = (a?.items ?? []) as any[];
-    return items.filter((it) => it.type === 'labor');
+    return items.filter((it) => (it.type ?? it.item_type) === 'labor');
   }, [a?.items]);
 
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
 
   useEffect(() => {
-    const missing = materialRows.map((r) => r.materialId).filter((id) => materialCache[id] === undefined);
+    // Fetch missing materials for display.
+    const missing = materialRows
+      .map((r) => r.materialId)
+      .filter((id) => materialCache[id] === undefined);
     if (missing.length === 0) return;
 
     let cancelled = false;
@@ -195,13 +203,13 @@ export function AssemblyEditorPage() {
   function updateItemQuantity(itemId: string, quantity: number) {
     if (!a) return;
     const nextItems = (a.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
-    setA({ ...(a as any), items: nextItems } as any);
+    setA({ ...a, items: nextItems } as any);
   }
 
   function removeItem(itemId: string) {
     if (!a) return;
     const nextItems = (a.items ?? []).filter((it: any) => it.id !== itemId);
-    setA({ ...(a as any), items: nextItems } as any);
+    setA({ ...a, items: nextItems } as any);
   }
 
   if (!a) return <div className="muted">Loading…</div>;
@@ -359,7 +367,7 @@ export function AssemblyEditorPage() {
             {materialRows.map((r) => {
               const mat = materialCache[r.materialId];
 
-              const unitCost = Number((mat as any)?.unit_cost ?? (mat as any)?.base_cost ?? 0) || 0;
+              const unitCost = Number((mat as any)?.unit_cost ?? 0) || 0;
               const customCostRaw = (mat as any)?.custom_cost;
               const customCost = customCostRaw == null ? null : Number(customCostRaw);
               const useCustom = Boolean((mat as any)?.use_custom_cost);
@@ -370,16 +378,14 @@ export function AssemblyEditorPage() {
 
               const jtId = (mat as any)?.job_type_id ?? null;
               const jtName = jtId ? jobTypes.find((j: any) => j.id === jtId)?.name : null;
-
               return (
                 <div key={r.itemId} className="listRow">
                   <div className="listMain">
                     <div className="listTitle">{mat?.name ?? `Material ${r.materialId}`}</div>
                     <div className="listSub">{mat?.description ?? '—'}</div>
                     <div className="listSub">
-                      Labor: {fmtLaborHM(laborMins)} • Cost: ${chosenCost.toFixed(2)}
-                      {useCustom ? ' (custom)' : ' (base)'} • Taxable: {taxable ? 'Yes' : 'No'} • Job Type:{' '}
-                      {jtName ?? '(None)'}
+                      Labor: {fmtLaborHM(laborMins)} • Cost: ${chosenCost.toFixed(2)}{useCustom ? ' (custom)' : ' (base)'} • Taxable:{' '}
+                      {taxable ? 'Yes' : 'No'} • Job Type: {jtName ?? '(None)'}
                     </div>
                   </div>
                   <div className="listRight" style={{ gap: 8 }}>
@@ -404,6 +410,7 @@ export function AssemblyEditorPage() {
           </div>
         </div>
 
+        
         <div className="mt">
           <div className="muted small">Blank Material Lines</div>
           <div className="list">
@@ -517,7 +524,7 @@ export function AssemblyEditorPage() {
           </div>
         </div>
 
-        {totals ? (
+{totals ? (
           <div className="mt">
             <div className="muted small">Cost & Pricing Breakdown</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -544,3 +551,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
+
+
+
