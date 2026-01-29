@@ -17,6 +17,15 @@ type AssemblyMaterialRow = {
   material?: Material | null;
 };
 
+function fmtLaborHM(totalMinutes: number) {
+  const mins = Math.max(0, Math.floor(Number(totalMinutes || 0)));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h <= 0) return `${m}m`;
+  if (m <= 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 export function AssemblyEditorPage() {
   const { assemblyId, libraryType } = useParams();
   const data = useData();
@@ -65,34 +74,28 @@ export function AssemblyEditorPage() {
   const materialRows = useMemo<AssemblyMaterialRow[]>(() => {
     const items = (a?.items ?? []) as any[];
     return items
-      // Items can come from different providers:
-      // - UI-created: { type: 'material', material_id: ... }
-      // - Supabase:   { item_type: 'material', material_id: ... }
-      .filter((it) => (it.type ?? it.item_type) === 'material' && (it.material_id ?? it.materialId))
+      .filter((it) => it.type === 'material' && it.material_id)
       .map((it) => ({
         itemId: it.id,
-        materialId: it.material_id ?? it.materialId,
+        materialId: it.material_id,
         quantity: Number(it.quantity ?? 1) || 1,
       }));
   }, [a?.items]);
 
   const blankMaterialRows = useMemo(() => {
     const items = (a?.items ?? []) as any[];
-    return items.filter((it) => (it.type ?? it.item_type) === 'blank_material');
+    return items.filter((it) => it.type === 'blank_material');
   }, [a?.items]);
 
   const laborRows = useMemo(() => {
     const items = (a?.items ?? []) as any[];
-    return items.filter((it) => (it.type ?? it.item_type) === 'labor');
+    return items.filter((it) => it.type === 'labor');
   }, [a?.items]);
 
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
 
   useEffect(() => {
-    // Fetch missing materials for display.
-    const missing = materialRows
-      .map((r) => r.materialId)
-      .filter((id) => materialCache[id] === undefined);
+    const missing = materialRows.map((r) => r.materialId).filter((id) => materialCache[id] === undefined);
     if (missing.length === 0) return;
 
     let cancelled = false;
@@ -189,16 +192,16 @@ export function AssemblyEditorPage() {
     }
   }
 
-  async function updateItemQuantity(itemId: string, quantity: number) {
+  function updateItemQuantity(itemId: string, quantity: number) {
     if (!a) return;
     const nextItems = (a.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
-    await save({ ...a, items: nextItems } as any);
+    setA({ ...(a as any), items: nextItems } as any);
   }
 
-  async function removeItem(itemId: string) {
+  function removeItem(itemId: string) {
     if (!a) return;
     const nextItems = (a.items ?? []).filter((it: any) => it.id !== itemId);
-    await save({ ...a, items: nextItems } as any);
+    setA({ ...(a as any), items: nextItems } as any);
   }
 
   if (!a) return <div className="muted">Loading…</div>;
@@ -314,7 +317,7 @@ export function AssemblyEditorPage() {
           </Button>
 
           <Button
-            onClick={async () => {
+            onClick={() => {
               if (!a) return;
               const items = [...((a.items ?? []) as any[])];
               items.push({
@@ -326,14 +329,14 @@ export function AssemblyEditorPage() {
                 taxable: true,
                 labor_minutes: 0,
               });
-              await save({ ...a, items } as any);
+              setA({ ...a, items } as any);
             }}
           >
             Add Blank Material Line
           </Button>
 
           <Button
-            onClick={async () => {
+            onClick={() => {
               if (!a) return;
               const items = [...((a.items ?? []) as any[])];
               items.push({
@@ -343,7 +346,7 @@ export function AssemblyEditorPage() {
                 quantity: 1,
                 labor_minutes: 0,
               });
-              await save({ ...a, items } as any);
+              setA({ ...a, items } as any);
             }}
           >
             Add Labor Line
@@ -355,11 +358,29 @@ export function AssemblyEditorPage() {
           <div className="list">
             {materialRows.map((r) => {
               const mat = materialCache[r.materialId];
+
+              const unitCost = Number((mat as any)?.unit_cost ?? (mat as any)?.base_cost ?? 0) || 0;
+              const customCostRaw = (mat as any)?.custom_cost;
+              const customCost = customCostRaw == null ? null : Number(customCostRaw);
+              const useCustom = Boolean((mat as any)?.use_custom_cost);
+              const chosenCost = useCustom && customCost != null ? customCost : unitCost;
+
+              const taxable = Boolean((mat as any)?.taxable);
+              const laborMins = Number((mat as any)?.labor_minutes ?? 0) || 0;
+
+              const jtId = (mat as any)?.job_type_id ?? null;
+              const jtName = jtId ? jobTypes.find((j: any) => j.id === jtId)?.name : null;
+
               return (
                 <div key={r.itemId} className="listRow">
                   <div className="listMain">
                     <div className="listTitle">{mat?.name ?? `Material ${r.materialId}`}</div>
                     <div className="listSub">{mat?.description ?? '—'}</div>
+                    <div className="listSub">
+                      Labor: {fmtLaborHM(laborMins)} • Cost: ${chosenCost.toFixed(2)}
+                      {useCustom ? ' (custom)' : ' (base)'} • Taxable: {taxable ? 'Yes' : 'No'} • Job Type:{' '}
+                      {jtName ?? '(None)'}
+                    </div>
                   </div>
                   <div className="listRight" style={{ gap: 8 }}>
                     <Input
@@ -383,7 +404,6 @@ export function AssemblyEditorPage() {
           </div>
         </div>
 
-        
         <div className="mt">
           <div className="muted small">Blank Material Lines</div>
           <div className="list">
@@ -497,7 +517,7 @@ export function AssemblyEditorPage() {
           </div>
         </div>
 
-{totals ? (
+        {totals ? (
           <div className="mt">
             <div className="muted small">Cost & Pricing Breakdown</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
