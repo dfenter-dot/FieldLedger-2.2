@@ -1,4 +1,4 @@
-import {
+import type {
   AdminRule,
   Assembly,
   AssemblyItem,
@@ -16,14 +16,16 @@ import {
 /**
  * IDataProvider
  *
- * AUTHORITATIVE data contract between UI and persistence.
- * All pages must go through this interface.
+ * AUTHORITATIVE app-wide contract for persistence.
  *
- * IMPORTANT RULES:
- * - No page talks directly to Supabase.
- * - Ownership (app vs company) is resolved inside the provider.
- * - All saves are explicit (Save / Apply Changes).
- * - Provider returns canonical shapes defined in types.ts.
+ * For this Admin phase, the contract must fully support:
+ * - Company Setup
+ * - Job Types
+ * - Rules
+ *
+ * NOTE:
+ * - CSV / Job Costing / Branding are intentionally present but will not be expanded
+ *   until their sections are prioritized, unless absolutely necessary.
  */
 export interface IDataProvider {
   /* ============================
@@ -85,17 +87,9 @@ export interface IDataProvider {
     folderId: string | null;
   }): Promise<Assembly[]>;
 
-  getAssembly(id: string): Promise<Assembly | null>;
+  getAssembly(id: string): Promise<any | null>;
 
-  /**
-   * Upsert an assembly and its items.
-   * - Assembly must belong to a folder.
-   * - Items are persisted in assembly_items.
-   */
-  saveAssembly(args: {
-    assembly: Partial<Assembly>;
-    items?: AssemblyItem[];
-  }): Promise<Assembly>;
+  upsertAssembly(arg: any): Promise<any>;
 
   deleteAssembly(id: string): Promise<void>;
 
@@ -103,45 +97,55 @@ export interface IDataProvider {
      Estimates
   ============================ */
 
+  getEstimates(): Promise<Estimate[]>;
   listEstimates(): Promise<Estimate[]>;
+
   getEstimate(id: string): Promise<Estimate | null>;
-  saveEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
+  upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
   deleteEstimate(id: string): Promise<void>;
 
   /* ============================
-     Job Types
+     Job Types (Admin)
   ============================ */
 
   listJobTypes(): Promise<JobType[]>;
-  saveJobType(jobType: Partial<JobType>): Promise<JobType>;
-  deleteJobType(id: string): Promise<void>;
+
+  // supports either upsertJobType(jobType) or upsertJobType(companyId, jobType)
+  upsertJobType(companyIdOrJobType: any, maybeJobType?: any): Promise<JobType>;
+
+  // supports either deleteJobType(id) or deleteJobType(companyId, id)
+  deleteJobType(companyIdOrId: any, maybeId?: any): Promise<void>;
 
   /* ============================
-     Admin Rules
-  ============================ */
-
-  listAdminRules(): Promise<AdminRule[]>;
-  saveAdminRule(rule: Partial<AdminRule>): Promise<AdminRule>;
-  deleteAdminRule(id: string): Promise<void>;
-
-  /* ============================
-     Company Settings
+     Company Settings (Admin)
   ============================ */
 
   getCompanySettings(): Promise<CompanySettings>;
-  saveCompanySettings(
-    settings: Partial<CompanySettings>
-  ): Promise<CompanySettings>;
+  saveCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings>;
+
+  /* ============================
+     Admin Rules (Admin)
+  ============================ */
+
+  listAdminRules(): Promise<AdminRule[]>;
+  getAdminRules(companyId: string): Promise<AdminRule[]>;
+
+  // supports either upsertAdminRule(rule) or upsertAdminRule(companyId, rule)
+  upsertAdminRule(companyIdOrRule: any, maybeRule?: any): Promise<AdminRule>;
+
+  saveAdminRule(rule: Partial<AdminRule>): Promise<void>;
+
+  // supports either deleteAdminRule(id) or deleteAdminRule(companyId, id)
+  deleteAdminRule(companyIdOrId: any, maybeId?: any): Promise<void>;
 
   /* ============================
      CSV / Branding
+     (present for compilation only; will be prioritized later)
   ============================ */
 
   getCsvSettings(): Promise<CsvSettings>;
   saveCsvSettings(settings: Partial<CsvSettings>): Promise<CsvSettings>;
 
   getBrandingSettings(): Promise<BrandingSettings>;
-  saveBrandingSettings(
-    settings: Partial<BrandingSettings>
-  ): Promise<BrandingSettings>;
+  saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings>;
 }
