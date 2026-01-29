@@ -484,7 +484,13 @@ export class SupabaseDataProvider implements IDataProvider {
     const assembly: any = arg?.assembly ? arg.assembly : arg;
     const items: any[] = arg?.items ?? assembly?.items ?? [];
 
-    const owner: DbOwner = this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
+    // Preserve existing owner when editing; fall back to library_type when creating.
+    const owner: DbOwner =
+      (assembly.owner_type ?? assembly.owner) === 'app'
+        ? 'app'
+        : (assembly.owner_type ?? assembly.owner) === 'company'
+          ? 'company'
+          : this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
 
     // SPEC: assemblies must belong to a folder
     const folderId = assembly.folder_id ?? null;
@@ -519,30 +525,36 @@ export class SupabaseDataProvider implements IDataProvider {
     const { data, error } = await this.supabase.from('assemblies').upsert(payload).select().single();
     if (error) throw error;
 
-    // Minimal line item support (optional; does not break create)
-    if (Array.isArray(items) && items.length) {
-      for (let idx = 0; idx < items.length; idx++) {
-        const it = items[idx];
+    // Line items: for reliability (and to avoid UUID issues from client-generated ids),
+    // we replace the entire item list on every save.
+    // This also guarantees removed rows are actually removed.
+    {
+      const { error: delErr } = await this.supabase.from('assembly_items').delete().eq('assembly_id', data.id);
+      if (delErr) throw delErr;
+
+      const rows = (Array.isArray(items) ? items : []).map((it, idx) => {
         const hours = Number((it.labor_hours ?? it.laborHours) ?? 0);
         const mins = Number((it.labor_minutes ?? it.laborMinutes) ?? 0);
         const laborMinutes = Number.isFinite(hours) && hours > 0 ? Math.floor(hours * 60 + mins) : mins;
 
-        const itPayload: any = {
-          id: it.id,
+        const unitCost = it.material_cost_override ?? it.material_cost ?? it.unit_cost ?? it.cost ?? null;
+
+        return {
+          // Let DB generate the UUID
           assembly_id: data.id,
           item_type: it.item_type ?? it.type ?? 'material',
           material_id: it.material_id ?? it.materialId ?? null,
           name: it.name ?? null,
-          quantity: Number(it.quantity ?? 1),
-          material_cost_override:
-            it.material_cost_override ?? it.material_cost ?? it.unit_cost ?? it.cost ?? null,
+          quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+          material_cost_override: unitCost == null ? null : Number(unitCost),
           labor_minutes: Number.isFinite(laborMinutes) ? Math.max(0, Math.floor(laborMinutes)) : 0,
           sort_order: Number.isFinite(Number(it.sort_order)) ? Number(it.sort_order) : idx,
         };
-        if (!itPayload.id) delete itPayload.id;
+      });
 
-        const { error: itErr } = await this.supabase.from('assembly_items').upsert(itPayload);
-        if (itErr) throw itErr;
+      if (rows.length) {
+        const { error: insErr } = await this.supabase.from('assembly_items').insert(rows as any);
+        if (insErr) throw insErr;
       }
     }
 
