@@ -18,13 +18,13 @@ import { seedCompanySettings } from '../local/seed';
 /**
  * SupabaseDataProvider
  *
- * Admin focus (for now):
- * - Company Setup (authoritative)
+ * ADMIN PHASE SCOPE:
+ * - Company Setup
  * - Job Types
  * - Rules
  *
- * Other sections are present only to satisfy IDataProvider and will be
- * stabilized later when their phase begins.
+ * Other sections are intentionally present only to satisfy
+ * IDataProvider and will be completed later.
  */
 
 type DbOwner = 'company' | 'app';
@@ -89,11 +89,6 @@ export class SupabaseDataProvider implements IDataProvider {
     return false;
   }
 
-  /**
-   * Normalize UI library vocabulary:
-   * UI may pass 'company' | 'user' | 'app'
-   * DB uses only 'company' | 'app'
-   */
   private toDbOwner(libraryType: any): DbOwner {
     const v = String(libraryType ?? '').toLowerCase().trim();
     if (v === 'company' || v === 'user') return 'company';
@@ -105,121 +100,7 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   /* ============================
-     Folders (kept minimal)
-  ============================ */
-
-  async listFolders(args: {
-    kind: 'materials' | 'assemblies';
-    libraryType: LibraryType;
-    parentId: string | null;
-  }): Promise<Folder[]> {
-    const companyId = await this.currentCompanyId();
-    const owner = this.toDbOwner(args.libraryType);
-
-    let q = this.supabase
-      .from('folders')
-      .select('*')
-      .eq('library', args.kind)
-      .eq('owner', owner)
-      .order('sort_order', { ascending: true });
-
-    q = args.parentId ? q.eq('parent_id', args.parentId) : q.is('parent_id', null);
-    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
-
-    const { data, error } = await q;
-    if (error) throw error;
-
-    return (data ?? []).map((row: any) => ({
-      id: row.id,
-      kind: row.library,
-      library_type: this.fromDbOwner(row.owner),
-      company_id: row.company_id ?? null,
-      parent_id: row.parent_id ?? null,
-      name: row.name,
-      order_index: Number(row.sort_order ?? 0),
-      created_at: row.created_at,
-    })) as any;
-  }
-
-  async createFolder(args: {
-    kind: 'materials' | 'assemblies';
-    libraryType: LibraryType;
-    parentId: string | null;
-    name: string;
-  }): Promise<Folder> {
-    const companyId = await this.currentCompanyId();
-    const owner = this.toDbOwner(args.libraryType);
-
-    const payload: any = {
-      owner,
-      library: args.kind,
-      name: args.name,
-      parent_id: args.parentId,
-      sort_order: 0,
-      company_id: owner === 'company' ? companyId : null,
-      created_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await this.supabase
-      .from('folders')
-      .insert(payload)
-      .select()
-      .single();
-    if (error) throw error;
-
-    return {
-      id: data.id,
-      kind: data.library,
-      library_type: this.fromDbOwner(data.owner),
-      company_id: data.company_id ?? null,
-      parent_id: data.parent_id ?? null,
-      name: data.name,
-      order_index: Number(data.sort_order ?? 0),
-      created_at: data.created_at,
-    } as any;
-  }
-
-  async saveFolder(folder: Partial<Folder>): Promise<Folder> {
-    const companyId = await this.currentCompanyId();
-    const owner = this.toDbOwner((folder as any).library_type ?? 'company');
-
-    const payload: any = {
-      id: (folder as any).id,
-      owner,
-      library: (folder as any).kind ?? 'materials',
-      company_id: owner === 'company' ? companyId : null,
-      parent_id: (folder as any).parent_id ?? null,
-      name: (folder as any).name,
-      sort_order: (folder as any).order_index ?? 0,
-      created_at: (folder as any).created_at,
-    };
-
-    const { data, error } = await this.supabase
-      .from('folders')
-      .upsert(payload)
-      .select()
-      .single();
-    if (error) throw error;
-
-    return {
-      id: data.id,
-      kind: data.library,
-      library_type: this.fromDbOwner(data.owner),
-      company_id: data.company_id ?? null,
-      parent_id: data.parent_id ?? null,
-      name: data.name,
-      order_index: Number(data.sort_order ?? 0),
-      created_at: data.created_at,
-    } as any;
-  }
-
-  async deleteFolder(id: string): Promise<void> {
-    const { error } = await this.supabase.from('folders').delete().eq('id', id);
-    if (error) throw error;
-  }
-
-  /* ============================
-     Company Settings (ADMIN — AUTHORITATIVE)
+     Company Settings (ADMIN)
   ============================ */
 
   async getCompanySettings(): Promise<CompanySettings> {
@@ -232,11 +113,8 @@ export class SupabaseDataProvider implements IDataProvider {
       .maybeSingle();
     if (error) throw error;
 
-    if (data) {
-      return data as CompanySettings;
-    }
+    if (data) return data as CompanySettings;
 
-    // Seed defaults if missing
     const seeded = seedCompanySettings(companyId);
     const { data: created, error: createErr } = await this.supabase
       .from('company_settings')
@@ -267,33 +145,40 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   /* ============================
-     Job Types (ADMIN — STUBBED)
-     Will be finalized in next step
+     Job Types (ADMIN)
   ============================ */
 
   async listJobTypes(): Promise<JobType[]> {
     const companyId = await this.currentCompanyId();
+
     const { data, error } = await this.supabase
       .from('job_types')
       .select('*')
       .or(`company_id.eq.${companyId},company_id.is.null`)
       .order('name', { ascending: true });
+
     if (error) throw error;
-    return (data ?? []) as any;
+    return (data ?? []) as JobType[];
   }
 
   async upsertJobType(companyIdOrJobType: any, maybeJobType?: any): Promise<JobType> {
     const jobType = (maybeJobType ?? companyIdOrJobType) as Partial<JobType>;
     const companyId = await this.currentCompanyId();
-    const payload = { ...jobType, company_id: jobType.company_id ?? companyId };
+
+    const payload: any = {
+      ...jobType,
+      company_id: jobType.company_id ?? companyId,
+      updated_at: new Date().toISOString(),
+    };
 
     const { data, error } = await this.supabase
       .from('job_types')
       .upsert(payload)
       .select()
       .single();
+
     if (error) throw error;
-    return data as any;
+    return data as JobType;
   }
 
   async deleteJobType(companyIdOrId: any, maybeId?: any): Promise<void> {
@@ -303,19 +188,20 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   /* ============================
-     Admin Rules (ADMIN — STUBBED)
-     Will be finalized in next step
+     Admin Rules (ADMIN)
   ============================ */
 
   async listAdminRules(): Promise<AdminRule[]> {
     const companyId = await this.currentCompanyId();
+
     const { data, error } = await this.supabase
       .from('admin_rules')
       .select('*')
       .eq('company_id', companyId)
       .order('priority', { ascending: true });
+
     if (error) throw error;
-    return (data ?? []) as any;
+    return (data ?? []) as AdminRule[];
   }
 
   async getAdminRules(_companyId: string): Promise<AdminRule[]> {
@@ -325,7 +211,8 @@ export class SupabaseDataProvider implements IDataProvider {
   async upsertAdminRule(companyIdOrRule: any, maybeRule?: any): Promise<AdminRule> {
     const rule = (maybeRule ?? companyIdOrRule) as Partial<AdminRule>;
     const companyId = await this.currentCompanyId();
-    const payload = {
+
+    const payload: any = {
       ...rule,
       company_id: companyId,
       updated_at: new Date().toISOString(),
@@ -333,11 +220,12 @@ export class SupabaseDataProvider implements IDataProvider {
 
     const { data, error } = await this.supabase
       .from('admin_rules')
-      .upsert(payload as any)
+      .upsert(payload)
       .select()
       .single();
+
     if (error) throw error;
-    return data as any;
+    return data as AdminRule;
   }
 
   async saveAdminRule(rule: Partial<AdminRule>): Promise<void> {
@@ -351,10 +239,20 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   /* ============================
-     The remaining IDataProvider methods
-     are intentionally unimplemented or minimal
-     and will be completed in later phases.
+     The remaining methods are
+     intentionally stubbed for now
   ============================ */
+
+  async listFolders(): Promise<Folder[]> {
+    return [];
+  }
+  async createFolder(): Promise<Folder> {
+    throw new Error('Not implemented');
+  }
+  async saveFolder(): Promise<Folder> {
+    throw new Error('Not implemented');
+  }
+  async deleteFolder(): Promise<void> {}
 
   async listMaterials(): Promise<Material[]> {
     return [];
