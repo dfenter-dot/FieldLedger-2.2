@@ -288,7 +288,15 @@ export function AssemblyEditorPage() {
         title={`Assembly • ${a.name}`}
         right={
           <div className="row">
-            <Button onClick={() => nav(-1)}>Back</Button>
+            <Button
+              onClick={() => {
+                // Always return to the assemblies library (not browser history),
+                // because picker flows push `/materials` into history.
+                nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}`);
+              }}
+            >
+              Back
+            </Button>
             <Button onClick={duplicate}>Duplicate</Button>
             <Button variant="danger" onClick={remove}>
               Delete
