@@ -1,43 +1,23 @@
-import { CompanySettings, JobType, Material, Folder } from '../types';
+import type { CompanySettings } from '../types';
 
-function makeId(): string {
-  // Browser-safe UUID (Vite builds for browsers). Fallback included.
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID();
-  }
-
-  // Fallback: not a true UUID, but stable enough for local-only seed usage
-  return `id_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
-}
-
-/* ------------------------------------------------------------------ */
-/* Default Job Type                                                    */
-/* ------------------------------------------------------------------ */
-
-export function seedDefaultJobType(companyId: string): JobType {
-  return {
-    id: makeId(),
-    company_id: companyId,
-    name: 'Service',
-    enabled: true,
-    profit_margin_percent: 70,
-    efficiency_percent: 50,
-    allow_discounts: true,
-    billing_mode: 'flat',
-    is_default: true,
-    created_at: new Date().toISOString(),
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Company Settings Defaults                                           */
-/* ------------------------------------------------------------------ */
-
+/**
+ * seedCompanySettings
+ *
+ * Creates a complete, safe default CompanySettings row.
+ * This MUST match what CompanySetupPage.tsx expects to exist.
+ *
+ * IMPORTANT:
+ * - Arrays must always be initialized (never null)
+ * - Numeric defaults must be sane to avoid divide-by-zero
+ */
 export function seedCompanySettings(companyId: string): CompanySettings {
+  const now = new Date().toISOString();
+
   return {
-    id: makeId(),
+    id: crypto.randomUUID(),
     company_id: companyId,
 
+    // Work assumptions
     workdays_per_week: 5,
     work_hours_per_day: 8,
     technicians: 1,
@@ -45,6 +25,9 @@ export function seedCompanySettings(companyId: string): CompanySettings {
     vacation_days_per_year: 10,
     sick_days_per_year: 5,
 
+    avg_jobs_per_tech_per_day: 2,
+
+    // Pricing defaults
     material_purchase_tax_percent: 8.25,
     misc_material_percent: 10,
     default_discount_percent: 10,
@@ -54,75 +37,47 @@ export function seedCompanySettings(companyId: string): CompanySettings {
     estimate_validity_days: 30,
     starting_estimate_number: 1,
 
+    // Markup tiers (safe defaults)
     material_markup_tiers: [
-      { min: 0, max: 5, markup_percent: 200 },
-      { min: 5.01, max: 50, markup_percent: 125 },
-      { min: 50.01, max: 100, markup_percent: 50 },
-      { min: 100.01, max: 500, markup_percent: 25 },
-      { min: 500.01, max: 99999, markup_percent: 10 },
+      { min: 0, max: 100, markup_percent: 100 },
+      { min: 100, max: 500, markup_percent: 75 },
+      { min: 500, max: 999999, markup_percent: 50 },
     ],
 
     misc_applies_when_customer_supplies: false,
 
-    technician_wages: [],
+    // Technician wages
+    technician_wages: [
+      {
+        name: 'Technician 1',
+        hourly_rate: 35,
+      },
+    ],
 
+    // Business expenses
     business_expenses_mode: 'lump',
-    business_expenses_lump_sum_monthly: 0,
+    business_expenses_lump_sum_monthly: 2000,
     business_expenses_itemized: [],
     business_apply_itemized: false,
 
+    // Personal expenses
     personal_expenses_mode: 'lump',
-    personal_expenses_lump_sum_monthly: 0,
+    personal_expenses_lump_sum_monthly: 3000,
     personal_expenses_itemized: [],
     personal_apply_itemized: false,
 
+    // Profit goals
     net_profit_goal_mode: 'percent',
     net_profit_goal_amount_monthly: 0,
-    net_profit_goal_percent_of_revenue: 0,
+    net_profit_goal_percent_of_revenue: 20,
+
     revenue_goal_monthly: 0,
 
+    // Legal / branding text (used later)
     company_license_text: '',
     company_warranty_text: '',
 
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    created_at: now,
+    updated_at: now,
   };
-}
-
-/* ------------------------------------------------------------------ */
-/* Optional: App-Owned Seed Data (materials/folders)                   */
-/* ------------------------------------------------------------------ */
-
-export function seedAppMaterialFolder(): Folder {
-  return {
-    id: makeId(),
-    company_id: null,
-    kind: 'materials',
-    library_type: 'company',
-    parent_id: null,
-    name: 'App Materials',
-    order_index: 0,
-    created_at: new Date().toISOString(),
-  };
-}
-
-export function seedAppMaterials(folderId: string): Material[] {
-  return [
-    {
-      id: makeId(),
-      company_id: null,
-      name: 'Standard Outlet',
-      sku: 'OUT-STD',
-      description: '15A 120V duplex outlet',
-      unit_cost: 2.5,
-      custom_cost: null,
-      use_custom_cost: false,
-      taxable: true,
-      labor_minutes: 15,
-      job_type_id: null,
-      folder_id: folderId,
-      order_index: 0,
-      created_at: new Date().toISOString(),
-    },
-  ];
 }
