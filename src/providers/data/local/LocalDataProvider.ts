@@ -17,13 +17,8 @@ import { seedCompanySettings } from './seed';
 /**
  * LocalDataProvider
  *
- * In-memory provider used for:
- * - local mode
- * - UI development
- * - fallback behavior
- *
- * This MUST mirror SupabaseDataProvider behavior closely
- * so UI logic does not diverge.
+ * Mirrors Supabase behavior for UI development.
+ * Assemblies are now authoritative in this provider.
  */
 export class LocalDataProvider implements IDataProvider {
   private companyId = 'local-company';
@@ -34,6 +29,8 @@ export class LocalDataProvider implements IDataProvider {
 
   private folders: Folder[] = [];
   private materials: Material[] = [];
+  private assemblies: Assembly[] = [];
+  private assemblyItems: Record<string, any[]> = [];
   private appMaterialOverrides: AppMaterialOverride[] = [];
 
   /* ============================
@@ -75,13 +72,9 @@ export class LocalDataProvider implements IDataProvider {
 
   async upsertJobType(companyIdOrJobType: any, maybeJobType?: any): Promise<JobType> {
     const jobType = (maybeJobType ?? companyIdOrJobType) as JobType;
-
     const idx = this.jobTypes.findIndex(j => j.id === jobType.id);
-    if (idx >= 0) {
-      this.jobTypes[idx] = { ...this.jobTypes[idx], ...jobType };
-    } else {
-      this.jobTypes.push({ ...jobType, id: jobType.id ?? crypto.randomUUID() });
-    }
+    if (idx >= 0) this.jobTypes[idx] = { ...this.jobTypes[idx], ...jobType };
+    else this.jobTypes.push({ ...jobType, id: jobType.id ?? crypto.randomUUID() });
     return jobType as JobType;
   }
 
@@ -98,19 +91,15 @@ export class LocalDataProvider implements IDataProvider {
     return [...this.adminRules].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
   }
 
-  async getAdminRules(_companyId: string): Promise<AdminRule[]> {
+  async getAdminRules(): Promise<AdminRule[]> {
     return this.listAdminRules();
   }
 
   async upsertAdminRule(companyIdOrRule: any, maybeRule?: any): Promise<AdminRule> {
     const rule = (maybeRule ?? companyIdOrRule) as AdminRule;
-
     const idx = this.adminRules.findIndex(r => r.id === rule.id);
-    if (idx >= 0) {
-      this.adminRules[idx] = { ...this.adminRules[idx], ...rule };
-    } else {
-      this.adminRules.push({ ...rule, id: rule.id ?? crypto.randomUUID() });
-    }
+    if (idx >= 0) this.adminRules[idx] = { ...this.adminRules[idx], ...rule };
+    else this.adminRules.push({ ...rule, id: rule.id ?? crypto.randomUUID() });
     return rule as AdminRule;
   }
 
@@ -174,7 +163,7 @@ export class LocalDataProvider implements IDataProvider {
   }
 
   /* ============================
-     Materials (AUTHORITATIVE)
+     Materials
   ============================ */
 
   async listMaterials(args: {
@@ -216,57 +205,70 @@ export class LocalDataProvider implements IDataProvider {
   }
 
   /* ============================
-     App Material Overrides
+     Assemblies (AUTHORITATIVE)
   ============================ */
 
-  async getAppMaterialOverride(
-    materialId: string,
-    companyId: string
-  ): Promise<AppMaterialOverride | null> {
-    return (
-      this.appMaterialOverrides.find(
-        o => o.material_id === materialId && o.company_id === companyId
-      ) ?? null
+  async listAssemblies(args: {
+    libraryType: LibraryType;
+    folderId: string | null;
+  }): Promise<Assembly[]> {
+    return this.assemblies.filter(
+      a => a.library_type === args.libraryType && a.folder_id === args.folderId
     );
   }
 
-  async upsertAppMaterialOverride(
-    override: Partial<AppMaterialOverride>
-  ): Promise<AppMaterialOverride> {
-    const idx = this.appMaterialOverrides.findIndex(
-      o => o.material_id === override.material_id && o.company_id === override.company_id
-    );
+  async getAssembly(id: string): Promise<any | null> {
+    const assembly = this.assemblies.find(a => a.id === id);
+    if (!assembly) return null;
 
+    return {
+      ...assembly,
+      items: this.assemblyItems[id] ?? [],
+    };
+  }
+
+  async upsertAssembly(arg: any): Promise<any> {
+    const assembly = arg?.assembly ?? arg;
+    const items = arg?.items ?? assembly?.items ?? [];
+
+    let record: Assembly;
+
+    const idx = this.assemblies.findIndex(a => a.id === assembly.id);
     if (idx >= 0) {
-      this.appMaterialOverrides[idx] = {
-        ...this.appMaterialOverrides[idx],
-        ...override,
-      } as AppMaterialOverride;
-      return this.appMaterialOverrides[idx];
+      this.assemblies[idx] = { ...this.assemblies[idx], ...assembly };
+      record = this.assemblies[idx];
+    } else {
+      record = {
+        ...assembly,
+        id: assembly.id ?? crypto.randomUUID(),
+        company_id: this.companyId,
+        library_type: assembly.library_type ?? 'company',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as Assembly;
+      this.assemblies.push(record);
     }
 
-    const created: AppMaterialOverride = {
-      ...(override as AppMaterialOverride),
-      id: crypto.randomUUID(),
+    this.assemblyItems[record.id] = items.map((it: any, i: number) => ({
+      ...it,
+      id: it.id ?? crypto.randomUUID(),
+      sort_order: i,
+    }));
+
+    return {
+      ...record,
+      items: this.assemblyItems[record.id],
     };
-    this.appMaterialOverrides.push(created);
-    return created;
+  }
+
+  async deleteAssembly(id: string): Promise<void> {
+    this.assemblies = this.assemblies.filter(a => a.id !== id);
+    delete this.assemblyItems[id];
   }
 
   /* ============================
-     Stubbed sections (later phases)
+     Stubbed sections (later)
   ============================ */
-
-  async listAssemblies(): Promise<Assembly[]> {
-    return [];
-  }
-  async getAssembly(): Promise<any | null> {
-    return null;
-  }
-  async upsertAssembly(arg: any): Promise<any> {
-    return arg;
-  }
-  async deleteAssembly(): Promise<void> {}
 
   async getEstimates(): Promise<Estimate[]> {
     return [];
