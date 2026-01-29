@@ -31,7 +31,9 @@ export function MaterialEditorPage() {
       .getMaterial(materialId)
       .then((mat) => {
         setM(mat);
-        setUnitCostText(mat.unit_cost === null || mat.unit_cost === undefined ? '' : String(mat.unit_cost));
+        // NOTE: Our Material model stores the editable cost as `base_cost`.
+        // If this input is blank on load, clicking Save will overwrite the DB value with 0.
+        setUnitCostText(mat.base_cost === null || mat.base_cost === undefined ? '' : String(mat.base_cost));
         setCustomCostText(mat.custom_cost === null || mat.custom_cost === undefined ? '' : String(mat.custom_cost));
         const lm = Number(mat.labor_minutes ?? 0) || 0;
         const h = Math.floor(lm / 60);
@@ -65,7 +67,8 @@ export function MaterialEditorPage() {
     try {
       setStatus('Saving...');
 
-      const unit_cost = unitCostText.trim() === '' ? 0 : Number(unitCostText);
+      // If the user leaves Base Cost blank, do NOT overwrite the existing value.
+      const base_cost = unitCostText.trim() === '' ? Number((m as any).base_cost ?? 0) : Number(unitCostText);
       const custom_cost = customCostText.trim() === '' ? null : Number(customCostText);
 
       const lh = laborHoursText.trim() === '' ? null : Number(laborHoursText);
@@ -89,7 +92,7 @@ export function MaterialEditorPage() {
         const refreshed = await data.getMaterial(materialId);
         setM(refreshed);
 
-        setUnitCostText(refreshed.unit_cost === null || refreshed.unit_cost === undefined ? '' : String(refreshed.unit_cost));
+        setUnitCostText(refreshed.base_cost === null || refreshed.base_cost === undefined ? '' : String(refreshed.base_cost));
         setCustomCostText(refreshed.custom_cost === null || refreshed.custom_cost === undefined ? '' : String(refreshed.custom_cost));
         const savedLm = Number(refreshed.labor_minutes ?? 0) || 0;
         const sh = Math.floor(savedLm / 60);
@@ -105,7 +108,8 @@ export function MaterialEditorPage() {
       // User Materials + App Owner edit path
       const payload: Material = {
         ...m,
-        unit_cost: Number.isFinite(unit_cost) ? unit_cost : 0,
+        // Persist to the actual DB-backed field.
+        base_cost: Number.isFinite(base_cost) ? base_cost : Number((m as any).base_cost ?? 0),
         custom_cost: Number.isFinite(custom_cost as any) ? (custom_cost as any) : null,
         use_custom_cost: Boolean(m.use_custom_cost),
         labor_minutes: Number.isFinite(labor_minutes) ? labor_minutes : 0,
@@ -113,7 +117,7 @@ export function MaterialEditorPage() {
 
       const saved = await data.upsertMaterial(payload);
       setM(saved);
-      setUnitCostText(saved.unit_cost === null || saved.unit_cost === undefined ? '' : String(saved.unit_cost));
+      setUnitCostText(saved.base_cost === null || saved.base_cost === undefined ? '' : String(saved.base_cost));
       setCustomCostText(saved.custom_cost === null || saved.custom_cost === undefined ? '' : String(saved.custom_cost));
       const savedLm = Number(saved.labor_minutes ?? 0) || 0;
       const sh = Math.floor(savedLm / 60);
@@ -247,5 +251,6 @@ export function MaterialEditorPage() {
     </div>
   );
 }
+
 
 
