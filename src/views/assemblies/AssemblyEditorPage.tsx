@@ -675,20 +675,34 @@ export function AssemblyEditorPage() {
         {totals ? (
           <div className="mt">
             <div className="muted small">Cost & Pricing Breakdown</div>
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <div className="pill">Actual Labor: {Math.round(Number((totals as any).labor_minutes_actual ?? 0))} min</div>
-              <div className="pill">Expected Labor: {Math.round(Number((totals as any).labor_minutes_expected ?? 0))} min</div>
-              <div className="pill">Material Cost: ${Number((totals as any).material_cost ?? 0).toFixed(2)}</div>
-              <div className="pill">Material Price: ${Number((totals as any).material_price ?? 0).toFixed(2)}</div>
-              <div className="pill">Labor Price: ${Number((totals as any).labor_price ?? 0).toFixed(2)}</div>
-              <div className="pill">Total: ${Number((totals as any).total ?? 0).toFixed(2)}</div>
-              {totals.gross_margin_target_percent != null ? (
-                <div className="pill">Target GM: {Number((totals as any).gross_margin_target_percent ?? 0).toFixed(0)}%</div>
-              ) : null}
-              {totals.gross_margin_expected_percent != null ? (
-                <div className="pill">Expected GM: {Number((totals as any).gross_margin_expected_percent ?? 0).toFixed(0)}%</div>
-              ) : null}
-            </div>
+            {(() => {
+              // computeAssemblyPricing returns:
+              // - labor_minutes_total: expected minutes (efficiency-adjusted + min labor when flat-rate)
+              // - material_cost_total / material_price_total / labor_price_total / misc_material_price / total_price
+              // Lines keep raw labor_minutes (baseline) so we can show both.
+              const t: any = totals;
+              const baselineMinutes = Math.round(
+                (Array.isArray(t.lines) ? t.lines : []).reduce((sum: number, ln: any) => sum + (Number(ln?.labor_minutes ?? 0) || 0), 0)
+              );
+              const expectedMinutes = Math.round(Number(t.labor_minutes_total ?? 0) || 0);
+              const materialCost = Number(t.material_cost_total ?? 0) || 0;
+              const materialPrice = Number(t.material_price_total ?? 0) || 0;
+              const laborPrice = Number(t.labor_price_total ?? 0) || 0;
+              const misc = Number(t.misc_material_price ?? 0) || 0;
+              const total = Number(t.total_price ?? 0) || 0;
+
+              return (
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <div className="pill">Actual Labor: {baselineMinutes} min</div>
+                  <div className="pill">Expected Labor: {expectedMinutes} min</div>
+                  <div className="pill">Material Cost: ${materialCost.toFixed(2)}</div>
+                  <div className="pill">Material Price: ${materialPrice.toFixed(2)}</div>
+                  <div className="pill">Labor Price: ${laborPrice.toFixed(2)}</div>
+                  <div className="pill">Misc Material: ${misc.toFixed(2)}</div>
+                  <div className="pill">Total: ${total.toFixed(2)}</div>
+                </div>
+              );
+            })()}
           </div>
         ) : (
           <div className="mt muted small">Totals will appear after Company Setup loads.</div>
