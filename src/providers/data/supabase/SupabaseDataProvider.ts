@@ -18,16 +18,16 @@ import { seedCompanySettings } from '../local/seed';
 /**
  * SupabaseDataProvider
  *
- * ADMIN PHASE SCOPE:
- * - Company Setup
- * - Job Types
- * - Rules
+ * PHASE SCOPE (current):
+ * - Admin (Company Setup, Job Types, Rules) ✅
+ * - Materials ✅ (authoritative)
  *
- * Other sections are intentionally present only to satisfy
- * IDataProvider and will be completed later.
+ * Assemblies / Estimates / CSV / Branding are intentionally
+ * stubbed and will be completed in later phases.
  */
 
 type DbOwner = 'company' | 'app';
+type DbLibrary = 'materials' | 'assemblies';
 
 export class SupabaseDataProvider implements IDataProvider {
   constructor(private supabase: SupabaseClient) {}
@@ -89,14 +89,12 @@ export class SupabaseDataProvider implements IDataProvider {
     return false;
   }
 
-  private toDbOwner(libraryType: any): DbOwner {
-    const v = String(libraryType ?? '').toLowerCase().trim();
-    if (v === 'company' || v === 'user') return 'company';
-    return 'app';
+  private toDbOwner(libraryType: LibraryType): DbOwner {
+    return libraryType === 'company' ? 'company' : 'app';
   }
 
   private fromDbOwner(owner: DbOwner): LibraryType {
-    return (owner === 'company' ? 'company' : 'app') as any;
+    return owner === 'company' ? 'company' : 'app';
   }
 
   /* ============================
@@ -176,8 +174,8 @@ export class SupabaseDataProvider implements IDataProvider {
       .upsert(payload)
       .select()
       .single();
-
     if (error) throw error;
+
     return data as JobType;
   }
 
@@ -199,8 +197,8 @@ export class SupabaseDataProvider implements IDataProvider {
       .select('*')
       .eq('company_id', companyId)
       .order('priority', { ascending: true });
-
     if (error) throw error;
+
     return (data ?? []) as AdminRule[];
   }
 
@@ -223,8 +221,8 @@ export class SupabaseDataProvider implements IDataProvider {
       .upsert(payload)
       .select()
       .single();
-
     if (error) throw error;
+
     return data as AdminRule;
   }
 
@@ -239,38 +237,295 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   /* ============================
-     The remaining methods are
-     intentionally stubbed for now
+     Folders (Materials)
   ============================ */
 
-  async listFolders(): Promise<Folder[]> {
-    return [];
-  }
-  async createFolder(): Promise<Folder> {
-    throw new Error('Not implemented');
-  }
-  async saveFolder(): Promise<Folder> {
-    throw new Error('Not implemented');
-  }
-  async deleteFolder(): Promise<void> {}
+  async listFolders(args: {
+    kind: 'materials' | 'assemblies';
+    libraryType: LibraryType;
+    parentId: string | null;
+  }): Promise<Folder[]> {
+    const companyId = await this.currentCompanyId();
+    const owner = this.toDbOwner(args.libraryType);
 
-  async listMaterials(): Promise<Material[]> {
-    return [];
+    let q = this.supabase
+      .from('folders')
+      .select('*')
+      .eq('library', args.kind)
+      .eq('owner', owner)
+      .order('sort_order', { ascending: true });
+
+    q = args.parentId ? q.eq('parent_id', args.parentId) : q.is('parent_id', null);
+    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      kind: row.library,
+      library_type: this.fromDbOwner(row.owner),
+      company_id: row.company_id ?? null,
+      parent_id: row.parent_id ?? null,
+      name: row.name,
+      order_index: Number(row.sort_order ?? 0),
+      created_at: row.created_at,
+    })) as any;
   }
-  async getMaterial(): Promise<Material | null> {
-    return null;
+
+  async createFolder(args: {
+    kind: 'materials' | 'assemblies';
+    libraryType: LibraryType;
+    parentId: string | null;
+    name: string;
+  }): Promise<Folder> {
+    const companyId = await this.currentCompanyId();
+    const owner = this.toDbOwner(args.libraryType);
+
+    const payload: any = {
+      owner,
+      library: args.kind as DbLibrary,
+      name: args.name,
+      parent_id: args.parentId,
+      sort_order: 0,
+      company_id: owner === 'company' ? companyId : null,
+      created_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await this.supabase
+      .from('folders')
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw error;
+
+    return {
+      id: data.id,
+      kind: data.library,
+      library_type: this.fromDbOwner(data.owner),
+      company_id: data.company_id ?? null,
+      parent_id: data.parent_id ?? null,
+      name: data.name,
+      order_index: Number(data.sort_order ?? 0),
+      created_at: data.created_at,
+    } as any;
   }
+
+  async saveFolder(folder: Partial<Folder>): Promise<Folder> {
+    const companyId = await this.currentCompanyId();
+    const owner = this.toDbOwner(folder.library_type ?? 'company');
+
+    const payload: any = {
+      id: folder.id,
+      owner,
+      library: folder.kind ?? 'materials',
+      company_id: owner === 'company' ? companyId : null,
+      parent_id: folder.parent_id ?? null,
+      name: folder.name,
+      sort_order: folder.order_index ?? 0,
+      created_at: folder.created_at,
+    };
+
+    const { data, error } = await this.supabase
+      .from('folders')
+      .upsert(payload)
+      .select()
+      .single();
+    if (error) throw error;
+
+    return {
+      id: data.id,
+      kind: data.library,
+      library_type: this.fromDbOwner(data.owner),
+      company_id: data.company_id ?? null,
+      parent_id: data.parent_id ?? null,
+      name: data.name,
+      order_index: Number(data.sort_order ?? 0),
+      created_at: data.created_at,
+    } as any;
+  }
+
+  async deleteFolder(id: string): Promise<void> {
+    const { error } = await this.supabase.from('folders').delete().eq('id', id);
+    if (error) throw error;
+  }
+
+  /* ============================
+     Materials (AUTHORITATIVE)
+  ============================ */
+
+  async listMaterials(args: {
+    libraryType: LibraryType;
+    folderId: string | null;
+  }): Promise<Material[]> {
+    const companyId = await this.currentCompanyId();
+    const owner = this.toDbOwner(args.libraryType);
+
+    let q = this.supabase
+      .from('materials')
+      .select('*')
+      .eq('owner', owner)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true });
+
+    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
+    q = args.folderId ? q.eq('folder_id', args.folderId) : q.is('folder_id', null);
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      company_id: row.company_id ?? null,
+      folder_id: row.folder_id ?? null,
+      name: row.name,
+      sku: row.sku ?? null,
+      description: row.description ?? null,
+      base_cost: Number(row.base_cost ?? 0),
+      taxable: Boolean(row.taxable ?? false),
+      job_type_id: row.job_type_id ?? null,
+      labor_minutes: Number(row.labor_minutes ?? 0),
+      labor_hours: 0, // DB does not store hours
+      order_index: Number(row.sort_order ?? 0),
+      updated_at: row.updated_at ?? null,
+      created_at: row.created_at ?? null,
+      library_type: this.fromDbOwner(row.owner),
+    })) as any;
+  }
+
+  async getMaterial(id: string): Promise<Material | null> {
+    const { data, error } = await this.supabase
+      .from('materials')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      company_id: data.company_id ?? null,
+      folder_id: data.folder_id ?? null,
+      name: data.name,
+      sku: data.sku ?? null,
+      description: data.description ?? null,
+      base_cost: Number(data.base_cost ?? 0),
+      taxable: Boolean(data.taxable ?? false),
+      job_type_id: data.job_type_id ?? null,
+      labor_minutes: Number(data.labor_minutes ?? 0),
+      labor_hours: 0,
+      order_index: Number(data.sort_order ?? 0),
+      updated_at: data.updated_at ?? null,
+      created_at: data.created_at ?? null,
+      library_type: this.fromDbOwner(data.owner),
+    } as any;
+  }
+
   async saveMaterial(material: Partial<Material>): Promise<Material> {
-    return material as Material;
-  }
-  async deleteMaterial(): Promise<void> {}
+    const companyId = await this.currentCompanyId();
 
-  async getAppMaterialOverride(): Promise<AppMaterialOverride | null> {
-    return null;
+    if (material.company_id === null) {
+      const isOwner = await this.isAppOwner();
+      if (!isOwner) {
+        throw new Error('App materials cannot be edited directly');
+      }
+    }
+
+    const owner = this.toDbOwner(material.library_type ?? 'company');
+
+    const payload: any = {
+      id: material.id,
+      owner,
+      company_id: owner === 'company' ? (material.company_id ?? companyId) : null,
+      folder_id: material.folder_id ?? null,
+      name: material.name,
+      sku: material.sku ?? null,
+      description: material.description ?? null,
+      base_cost: material.base_cost ?? 0,
+      taxable: material.taxable ?? false,
+      job_type_id: material.job_type_id ?? null,
+      labor_minutes: material.labor_minutes ?? 0,
+      sort_order: material.order_index ?? 0,
+      updated_at: new Date().toISOString(),
+      created_at: material.created_at,
+    };
+
+    if (!payload.id) delete payload.id;
+
+    const { data, error } = await this.supabase
+      .from('materials')
+      .upsert(payload)
+      .select()
+      .single();
+    if (error) throw error;
+
+    return {
+      id: data.id,
+      company_id: data.company_id ?? null,
+      folder_id: data.folder_id ?? null,
+      name: data.name,
+      sku: data.sku ?? null,
+      description: data.description ?? null,
+      base_cost: Number(data.base_cost ?? 0),
+      taxable: Boolean(data.taxable ?? false),
+      job_type_id: data.job_type_id ?? null,
+      labor_minutes: Number(data.labor_minutes ?? 0),
+      labor_hours: 0,
+      order_index: Number(data.sort_order ?? 0),
+      updated_at: data.updated_at ?? null,
+      created_at: data.created_at ?? null,
+      library_type: this.fromDbOwner(data.owner),
+    } as any;
   }
-  async upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride> {
-    return override as AppMaterialOverride;
+
+  async deleteMaterial(id: string): Promise<void> {
+    const { error } = await this.supabase.from('materials').delete().eq('id', id);
+    if (error) throw error;
   }
+
+  /* ============================
+     App Material Overrides
+  ============================ */
+
+  async getAppMaterialOverride(
+    materialId: string,
+    companyId: string
+  ): Promise<AppMaterialOverride | null> {
+    const { data, error } = await this.supabase
+      .from('app_material_overrides')
+      .select('*')
+      .eq('material_id', materialId)
+      .eq('company_id', companyId)
+      .maybeSingle();
+    if (error) throw error;
+
+    return (data as any) ?? null;
+  }
+
+  async upsertAppMaterialOverride(
+    override: Partial<AppMaterialOverride>
+  ): Promise<AppMaterialOverride> {
+    const companyId = await this.currentCompanyId();
+
+    const payload: any = {
+      ...override,
+      company_id: override.company_id ?? companyId,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await this.supabase
+      .from('app_material_overrides')
+      .upsert(payload)
+      .select()
+      .single();
+    if (error) throw error;
+
+    return data as AppMaterialOverride;
+  }
+
+  /* ============================
+     Stubbed sections (later)
+  ============================ */
 
   async listAssemblies(): Promise<Assembly[]> {
     return [];
