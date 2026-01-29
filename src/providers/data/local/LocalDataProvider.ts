@@ -1,7 +1,6 @@
-import {
+import type {
   AdminRule,
   Assembly,
-  AssemblyItem,
   BrandingSettings,
   CompanySettings,
   CsvSettings,
@@ -12,14 +11,18 @@ import {
   Material,
   AppMaterialOverride,
 } from '../types';
-import { IDataProvider } from '../IDataProvider';
+import type { IDataProvider } from '../IDataProvider';
 
 /**
  * LocalDataProvider
  *
- * Non-persistent, in-memory provider.
- * Used ONLY for local/dev scenarios.
- * Must match IDataProvider shape exactly.
+ * In-memory provider used only for dev/testing.
+ * MUST satisfy IDataProvider signatures so pages compile.
+ *
+ * For the Admin phase, this intentionally focuses on:
+ * - Company Setup
+ * - Job Types
+ * - Rules
  */
 export class LocalDataProvider implements IDataProvider {
   /* ============================
@@ -38,19 +41,28 @@ export class LocalDataProvider implements IDataProvider {
      Folders
   ============================ */
 
-  async listFolders(): Promise<Folder[]> {
+  async listFolders(_args: {
+    kind: 'materials' | 'assemblies';
+    libraryType: LibraryType;
+    parentId: string | null;
+  }): Promise<Folder[]> {
     return [];
   }
 
-  async createFolder(): Promise<Folder> {
+  async createFolder(_args: {
+    kind: 'materials' | 'assemblies';
+    libraryType: LibraryType;
+    parentId: string | null;
+    name: string;
+  }): Promise<Folder> {
     throw new Error('LocalDataProvider.createFolder not implemented');
   }
 
-  async saveFolder(): Promise<Folder> {
+  async saveFolder(_folder: Partial<Folder>): Promise<Folder> {
     throw new Error('LocalDataProvider.saveFolder not implemented');
   }
 
-  async deleteFolder(): Promise<void> {
+  async deleteFolder(_id: string): Promise<void> {
     return;
   }
 
@@ -58,11 +70,11 @@ export class LocalDataProvider implements IDataProvider {
      Materials
   ============================ */
 
-  async listMaterials(): Promise<Material[]> {
+  async listMaterials(_args: { libraryType: LibraryType; folderId: string | null }): Promise<Material[]> {
     return [];
   }
 
-  async getMaterial(): Promise<Material | null> {
+  async getMaterial(_id: string): Promise<Material | null> {
     return null;
   }
 
@@ -70,17 +82,15 @@ export class LocalDataProvider implements IDataProvider {
     return material as Material;
   }
 
-  async deleteMaterial(): Promise<void> {
+  async deleteMaterial(_id: string): Promise<void> {
     return;
   }
 
-  async getAppMaterialOverride(): Promise<AppMaterialOverride | null> {
+  async getAppMaterialOverride(_materialId: string, _companyId: string): Promise<AppMaterialOverride | null> {
     return null;
   }
 
-  async upsertAppMaterialOverride(
-    override: Partial<AppMaterialOverride>
-  ): Promise<AppMaterialOverride> {
+  async upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride> {
     return override as AppMaterialOverride;
   }
 
@@ -88,25 +98,19 @@ export class LocalDataProvider implements IDataProvider {
      Assemblies
   ============================ */
 
-  async listAssemblies(): Promise<Assembly[]> {
+  async listAssemblies(_args: { libraryType: LibraryType; folderId: string | null }): Promise<Assembly[]> {
     return [];
   }
 
-  async getAssembly(): Promise<Assembly | null> {
+  async getAssembly(_id: string): Promise<any | null> {
     return null;
   }
 
-  async saveAssembly(args: {
-    assembly: Partial<Assembly>;
-    items?: AssemblyItem[];
-  }): Promise<Assembly> {
-    return {
-      ...(args.assembly as Assembly),
-      items: args.items ?? [],
-    };
+  async upsertAssembly(arg: any): Promise<any> {
+    return arg;
   }
 
-  async deleteAssembly(): Promise<void> {
+  async deleteAssembly(_id: string): Promise<void> {
     return;
   }
 
@@ -114,79 +118,89 @@ export class LocalDataProvider implements IDataProvider {
      Estimates
   ============================ */
 
+  async getEstimates(): Promise<Estimate[]> {
+    return [];
+  }
+
   async listEstimates(): Promise<Estimate[]> {
     return [];
   }
 
-  async getEstimate(): Promise<Estimate | null> {
+  async getEstimate(_id: string): Promise<Estimate | null> {
     return null;
   }
 
-  async saveEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
+  async upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
     return estimate as Estimate;
   }
 
-  async deleteEstimate(): Promise<void> {
+  async deleteEstimate(_id: string): Promise<void> {
     return;
   }
 
   /* ============================
-     Job Types
+     Job Types (Admin)
   ============================ */
 
   async listJobTypes(): Promise<JobType[]> {
     return [];
   }
 
-  async saveJobType(jobType: Partial<JobType>): Promise<JobType> {
+  async upsertJobType(companyIdOrJobType: any, maybeJobType?: any): Promise<JobType> {
+    const jobType = (maybeJobType ?? companyIdOrJobType) as Partial<JobType>;
     return jobType as JobType;
   }
 
-  async deleteJobType(): Promise<void> {
+  async deleteJobType(_companyIdOrId: any, _maybeId?: any): Promise<void> {
     return;
   }
 
   /* ============================
-     Admin Rules
-  ============================ */
-
-  async listAdminRules(): Promise<AdminRule[]> {
-    return [];
-  }
-
-  async saveAdminRule(rule: Partial<AdminRule>): Promise<AdminRule> {
-    return rule as AdminRule;
-  }
-
-  async deleteAdminRule(): Promise<void> {
-    return;
-  }
-
-  /* ============================
-     Company Settings
+     Company Settings (Admin)
   ============================ */
 
   async getCompanySettings(): Promise<CompanySettings> {
     throw new Error('LocalDataProvider.getCompanySettings not implemented');
   }
 
-  async saveCompanySettings(
-    settings: Partial<CompanySettings>
-  ): Promise<CompanySettings> {
+  async saveCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings> {
     return settings as CompanySettings;
   }
 
   /* ============================
-     CSV / Branding
+     Admin Rules (Admin)
+  ============================ */
+
+  async listAdminRules(): Promise<AdminRule[]> {
+    return [];
+  }
+
+  async getAdminRules(_companyId: string): Promise<AdminRule[]> {
+    return [];
+  }
+
+  async upsertAdminRule(companyIdOrRule: any, maybeRule?: any): Promise<AdminRule> {
+    const rule = (maybeRule ?? companyIdOrRule) as Partial<AdminRule>;
+    return rule as AdminRule;
+  }
+
+  async saveAdminRule(_rule: Partial<AdminRule>): Promise<void> {
+    return;
+  }
+
+  async deleteAdminRule(_companyIdOrId: any, _maybeId?: any): Promise<void> {
+    return;
+  }
+
+  /* ============================
+     CSV / Branding (not prioritized yet)
   ============================ */
 
   async getCsvSettings(): Promise<CsvSettings> {
     throw new Error('LocalDataProvider.getCsvSettings not implemented');
   }
 
-  async saveCsvSettings(
-    settings: Partial<CsvSettings>
-  ): Promise<CsvSettings> {
+  async saveCsvSettings(settings: Partial<CsvSettings>): Promise<CsvSettings> {
     return settings as CsvSettings;
   }
 
@@ -194,9 +208,7 @@ export class LocalDataProvider implements IDataProvider {
     throw new Error('LocalDataProvider.getBrandingSettings not implemented');
   }
 
-  async saveBrandingSettings(
-    settings: Partial<BrandingSettings>
-  ): Promise<BrandingSettings> {
+  async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
     return settings as BrandingSettings;
   }
 }
