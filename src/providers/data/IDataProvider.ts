@@ -20,8 +20,8 @@ import type {
  * STATUS:
  * - Admin ✅
  * - Materials ✅
- * - Assemblies ✅ (this phase)
- * - Estimates ⏳
+ * - Assemblies ✅
+ * - Estimates ✅ (this phase)
  */
 export interface IDataProvider {
   /* ============================
@@ -90,7 +90,7 @@ export interface IDataProvider {
   upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride>;
 
   /* ============================
-     Assemblies (AUTHORITATIVE)
+     Assemblies
   ============================ */
   listAssemblies(args: {
     libraryType: LibraryType;
@@ -99,19 +99,12 @@ export interface IDataProvider {
 
   getAssembly(id: string): Promise<any | null>;
 
-  /**
-   * Supports:
-   * - upsertAssembly(assembly)
-   * - upsertAssembly({ assembly, items })
-   */
   upsertAssembly(arg: any): Promise<any>;
-
   deleteAssembly(id: string): Promise<void>;
 
   /* ============================
-     Estimates (stubbed)
+     Estimates (AUTHORITATIVE)
   ============================ */
-  getEstimates(): Promise<Estimate[]>;
   listEstimates(): Promise<Estimate[]>;
   getEstimate(id: string): Promise<Estimate | null>;
   upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
