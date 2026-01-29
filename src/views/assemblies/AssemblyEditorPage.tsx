@@ -69,6 +69,7 @@ export function AssemblyEditorPage() {
 
   const [a, setA] = useState<Assembly | null>(null);
   const [status, setStatus] = useState('');
+  const [saving, setSaving] = useState(false);
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
@@ -182,7 +183,9 @@ export function AssemblyEditorPage() {
   }, [a, companySettings, jobTypes, materialCache]);
 
   async function save(next: Assembly) {
+    if (saving) return;
     try {
+      setSaving(true);
       setStatus('Saving…');
       const saved = await data.upsertAssembly(next);
       setA(saved);
@@ -191,6 +194,8 @@ export function AssemblyEditorPage() {
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -302,7 +307,7 @@ export function AssemblyEditorPage() {
               Delete
             </Button>
             {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
-            <Button variant="primary" onClick={saveAll}>
+            <Button variant="primary" onClick={saveAll} disabled={saving}>
               Save
             </Button>
           </div>
