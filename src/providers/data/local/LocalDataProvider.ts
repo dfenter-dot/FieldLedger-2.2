@@ -18,7 +18,7 @@ import { seedCompanySettings } from './seed';
  * LocalDataProvider
  *
  * Mirrors Supabase behavior for UI development.
- * Assemblies are now authoritative in this provider.
+ * Estimates are now authoritative in this provider.
  */
 export class LocalDataProvider implements IDataProvider {
   private companyId = 'local-company';
@@ -31,6 +31,9 @@ export class LocalDataProvider implements IDataProvider {
   private materials: Material[] = [];
   private assemblies: Assembly[] = [];
   private assemblyItems: Record<string, any[]> = [];
+
+  private estimates: Estimate[] = [];
+
   private appMaterialOverrides: AppMaterialOverride[] = [];
 
   /* ============================
@@ -205,7 +208,7 @@ export class LocalDataProvider implements IDataProvider {
   }
 
   /* ============================
-     Assemblies (AUTHORITATIVE)
+     Assemblies
   ============================ */
 
   async listAssemblies(args: {
@@ -267,26 +270,53 @@ export class LocalDataProvider implements IDataProvider {
   }
 
   /* ============================
-     Stubbed sections (later)
+     Estimates (AUTHORITATIVE)
   ============================ */
 
-  async getEstimates(): Promise<Estimate[]> {
-    return [];
-  }
   async listEstimates(): Promise<Estimate[]> {
-    return [];
+    return [...this.estimates];
   }
-  async getEstimate(): Promise<Estimate | null> {
-    return null;
+
+  async getEstimate(id: string): Promise<Estimate | null> {
+    return this.estimates.find(e => e.id === id) ?? null;
   }
+
   async upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
-    return estimate as Estimate;
+    const idx = this.estimates.findIndex(e => e.id === estimate.id);
+    if (idx >= 0) {
+      this.estimates[idx] = {
+        ...this.estimates[idx],
+        ...estimate,
+        updated_at: new Date().toISOString(),
+      } as Estimate;
+      return this.estimates[idx];
+    }
+
+    const created: Estimate = {
+      ...(estimate as Estimate),
+      id: estimate.id ?? crypto.randomUUID(),
+      company_id: this.companyId,
+      status: estimate.status ?? 'draft',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    this.estimates.push(created);
+    return created;
   }
-  async deleteEstimate(): Promise<void> {}
+
+  async deleteEstimate(id: string): Promise<void> {
+    this.estimates = this.estimates.filter(e => e.id !== id);
+  }
+
+  /* ============================
+     CSV / Branding (later)
+  ============================ */
 
   async getCsvSettings(): Promise<CsvSettings> {
     return {} as CsvSettings;
   }
+
   async saveCsvSettings(settings: Partial<CsvSettings>): Promise<CsvSettings> {
     return settings as CsvSettings;
   }
@@ -294,6 +324,7 @@ export class LocalDataProvider implements IDataProvider {
   async getBrandingSettings(): Promise<BrandingSettings> {
     return {} as BrandingSettings;
   }
+
   async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
     return settings as BrandingSettings;
   }
