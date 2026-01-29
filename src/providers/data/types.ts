@@ -1,258 +1,273 @@
-/* ============================
-   Core Shared Types — AUTHORITATIVE
-   ============================ */
+// src/providers/data/types.ts
+
+export type UUID = string;
 
 /**
- * Canonical ownership model.
- * DB uses owner = 'app' | 'company'
+ * UI ownership vocabulary still appears in a few places as "user".
+ * DB uses owner = 'company' | 'app'.
+ * Provider normalizes both.
  */
-export type OwnerType = 'app' | 'company';
+export type OwnerType = 'company' | 'user' | 'app';
+export type LibraryType = 'company' | 'user' | 'app';
 
-/**
- * Canonical library type used by UI.
- * This maps to DB owner via DataProvider.
- */
-export type LibraryType = 'app' | 'company';
-
-/**
- * Folder library kind
- */
 export type FolderKind = 'materials' | 'assemblies';
 
 /* ============================
-   Folder
-   ============================ */
+   Folders
+============================ */
 
-export interface Folder {
-  id: string;
-  kind: FolderKind;            // materials | assemblies
-  library_type: LibraryType;   // app | company
-  company_id: string | null;
-  parent_id: string | null;
+export type Folder = {
+  id: UUID;
+  kind: FolderKind; // maps to folders.library
+  library_type: LibraryType; // maps to folders.owner
+  company_id: UUID | null; // null for app-owned
+  parent_id: UUID | null;
   name: string;
   order_index: number;
-  created_at: string;
-}
+  created_at?: string;
+};
 
 /* ============================
-   Job Types
-   ============================ */
+   Job Types (matches Admin UI)
+============================ */
 
-export interface JobType {
-  id: string;
-  company_id: string | null;
+export type JobTypeBillingMode = 'flat' | 'hourly';
+
+export type JobType = {
+  id: UUID;
+  company_id: UUID | null;
+
   name: string;
-  enabled: boolean;
+  description?: string | null;
+
   is_default: boolean;
-  mode: 'flat-rate' | 'hourly';
-  gross_margin_target: number;
-  efficiency_percent: number | null;
+  enabled: boolean;
+
+  // Admin UI fields
+  profit_margin_percent: number | null; // “Gross Margin Target (%)”
+  efficiency_percent: number | null; // flat-rate only
   allow_discounts: boolean;
-  created_at: string;
-  updated_at: string | null;
-}
+
+  billing_mode: JobTypeBillingMode;
+
+  created_at?: string;
+  updated_at?: string | null;
+};
 
 /* ============================
-   Materials
-   ============================ */
+   Company Settings (matches seed.ts + CompanySetupPage)
+============================ */
 
-export interface Material {
-  id: string;
-  company_id: string | null;
-  folder_id: string | null;
-  library_type: LibraryType;
+export type MarkupTier = { min: number; max: number; markup_percent: number };
+export type TechnicianWage = { name: string; hourly_rate: number };
+
+export type ExpenseFrequency = 'monthly' | 'quarterly' | 'biannual' | 'annual';
+export type ExpenseItem = { name: string; amount: number; frequency: ExpenseFrequency };
+
+export type CompanySettings = {
+  id: UUID;
+  company_id: UUID;
+
+  workdays_per_week: number;
+  work_hours_per_day: number;
+  technicians: number;
+
+  vacation_days_per_year: number;
+  sick_days_per_year: number;
+
+  avg_jobs_per_tech_per_day: number;
+
+  material_purchase_tax_percent: number;
+  misc_material_percent: number;
+  default_discount_percent: number;
+  processing_fee_percent: number;
+
+  min_billable_labor_minutes_per_job: number;
+  estimate_validity_days: number;
+  starting_estimate_number: number;
+
+  material_markup_tiers: MarkupTier[];
+
+  misc_applies_when_customer_supplies: boolean;
+
+  technician_wages: TechnicianWage[];
+
+  business_expenses_mode: 'lump' | 'itemized';
+  business_expenses_lump_sum_monthly: number;
+  business_expenses_itemized: ExpenseItem[];
+  business_apply_itemized: boolean;
+
+  personal_expenses_mode: 'lump' | 'itemized';
+  personal_expenses_lump_sum_monthly: number;
+  personal_expenses_itemized: ExpenseItem[];
+  personal_apply_itemized: boolean;
+
+  net_profit_goal_mode: 'percent' | 'fixed';
+  net_profit_goal_amount_monthly: number;
+  net_profit_goal_percent_of_revenue: number;
+
+  revenue_goal_monthly: number;
+
+  company_license_text: string;
+  company_warranty_text: string;
+
+  created_at?: string;
+  updated_at?: string | null;
+};
+
+/* ============================
+   Admin Rules (matches AdminRulesPage)
+============================ */
+
+export type RuleOperator = '>=' | '>' | '<=' | '<' | '==' | '!=';
+
+export type RuleConditionType =
+  | 'expected_labor_hours'
+  | 'material_cost'
+  | 'line_item_count'
+  | 'any_line_item_qty';
+
+export type AdminRule = {
+  id: UUID;
+  company_id: UUID;
+
+  name: string;
+  description?: string | null;
+
+  enabled: boolean;
+  priority: number;
+
+  scope: 'estimate' | 'assembly' | 'both';
+
+  condition_type: RuleConditionType;
+  operator: RuleOperator;
+  threshold_value: number;
+
+  target_job_type_id: UUID | null;
+
+  created_at?: string;
+  updated_at?: string | null;
+};
+
+/* ============================
+   Materials / Assemblies / Estimates
+   (kept compatible with current app; will refine later)
+============================ */
+
+export type Material = {
+  id: UUID;
+  company_id: UUID | null;
+  library_type?: LibraryType;
+
+  folder_id?: UUID | null;
 
   name: string;
   sku?: string | null;
   description?: string | null;
 
-  base_cost: number;
-  taxable: boolean;
-  job_type_id: string | null;
+  base_cost?: number;
+  unit_cost?: number; // legacy UI support
+  custom_cost?: number | null;
+  use_custom_cost?: boolean;
 
-  // Canonical labor representation
-  labor_minutes: number;
+  taxable?: boolean;
+  job_type_id?: UUID | null;
 
-  // UI-only convenience (derived)
-  labor_hours?: number;
+  labor_minutes?: number;
+  labor_hours?: number; // UI-only / legacy, never sent to DB
 
-  order_index: number;
-  created_at: string | null;
-  updated_at: string | null;
-}
+  order_index?: number;
+  sort_order?: number;
 
-/* ============================
-   Assembly Items
-   ============================ */
+  created_at?: string | null;
+  updated_at?: string | null;
+};
 
 export type AssemblyItemType = 'material' | 'labor' | 'blank';
 
-export interface AssemblyItem {
-  id: string;
-  assembly_id: string;
-  item_type: AssemblyItemType;
+export type AssemblyItem = {
+  id: UUID;
+  assembly_id: UUID;
 
-  material_id?: string | null;
+  item_type: AssemblyItemType;
+  type?: any; // legacy support
+
+  material_id?: UUID | null;
   name?: string | null;
 
   quantity: number;
+
   material_cost_override?: number | null;
+  material_cost?: number | null; // legacy
 
   labor_minutes: number;
   sort_order: number;
-}
+};
 
-/* ============================
-   Assemblies
-   ============================ */
+export type Assembly = {
+  id: UUID;
+  company_id: UUID | null;
 
-export interface Assembly {
-  id: string;
-  company_id: string | null;
-  library_type: LibraryType;
-  folder_id: string;
+  library_type?: LibraryType;
+  folder_id: UUID | null;
 
   name: string;
   description?: string | null;
 
-  job_type_id: string | null;
-  use_admin_rules: boolean;
-  customer_supplied_materials: boolean;
-  taxable: boolean;
+  job_type_id?: UUID | null;
+  use_admin_rules?: boolean;
+
+  customer_supplied_materials?: boolean;
+  customer_supplies_materials?: boolean; // legacy
+  taxable?: boolean;
+
+  created_at?: string;
+  updated_at?: string | null;
 
   items?: AssemblyItem[];
+};
 
-  created_at: string;
-  updated_at: string | null;
-}
+export type Estimate = {
+  id: UUID;
+  company_id: UUID;
 
-/* ============================
-   Estimates
-   ============================ */
-
-export type EstimateStatus =
-  | 'draft'
-  | 'sent'
-  | 'approved'
-  | 'declined'
-  | 'archived';
-
-export interface Estimate {
-  id: string;
-  company_id: string;
-
-  estimate_number: number;
   name: string;
-  status: EstimateStatus;
 
-  customer_name?: string | null;
-  customer_phone?: string | null;
-  customer_email?: string | null;
-  customer_address?: string | null;
+  job_type_id?: UUID | null;
+  use_admin_rules?: boolean;
 
-  notes_private?: string | null;
-
-  job_type_id: string | null;
-  use_admin_rules: boolean;
-  customer_supplied_materials: boolean;
-
-  apply_discount: boolean;
-  discount_percent?: number | null;
-
-  apply_processing_fees: boolean;
-  apply_misc_material: boolean;
-
-  created_at: string;
-  updated_at: string | null;
-}
+  created_at?: string;
+  updated_at?: string | null;
+};
 
 /* ============================
-   Admin Rules
-   ============================ */
+   CSV / Branding / Overrides (kept for compilation)
+============================ */
 
-export interface AdminRule {
-  id: string;
-  company_id: string;
-  name: string;
-  priority: number;
-  scope: 'estimate' | 'assembly' | 'both';
-
-  min_labor_minutes?: number | null;
-  min_material_cost?: number | null;
-
-  job_type_id: string;
-  created_at: string;
-  updated_at: string | null;
-}
-
-/* ============================
-   Company Settings
-   ============================ */
-
-export interface CompanySettings {
-  company_id: string;
-
-  workdays_per_week: number;
-  work_hours_per_day: number;
-  tech_count: number;
-
-  vacation_days_per_year: number;
-  sick_days_per_year: number;
-
-  jobs_per_tech_per_day: number;
-
-  monthly_business_expenses: number;
-  monthly_personal_expenses: number;
-
-  average_tech_hourly_wage: number;
-
-  profit_goal_type: 'percent' | 'fixed';
-  profit_goal_value: number;
-
-  purchase_tax_percent: number;
-  misc_material_percent: number;
-  processing_fee_percent: number;
-
-  minimum_billable_labor_minutes: number;
-  estimate_validity_days: number;
-  starting_estimate_number: number;
-
-  created_at: string;
-  updated_at: string | null;
-}
-
-/* ============================
-   CSV / Branding
-   ============================ */
-
-export interface CsvSettings {
-  company_id: string;
+export type CsvSettings = {
+  company_id: UUID;
   allow_material_import: boolean;
   allow_assembly_import: boolean;
-  updated_at: string | null;
-}
+  updated_at?: string | null;
+};
 
-export interface BrandingSettings {
-  company_id: string;
-  logo_url?: string | null;
+export type BrandingSettings = {
+  company_id: UUID;
   primary_color?: string | null;
+  logo_url?: string | null;
   footer_text?: string | null;
-  updated_at: string | null;
-}
+  updated_at?: string | null;
+};
 
-/* ============================
-   App Material Overrides
-   ============================ */
+export type AppMaterialOverride = {
+  id: UUID;
+  material_id: UUID;
+  company_id: UUID;
 
-export interface AppMaterialOverride {
-  id: string;
-  material_id: string;
-  company_id: string;
-
-  job_type_id?: string | null;
+  job_type_id?: UUID | null;
   taxable?: boolean;
   custom_cost?: number | null;
   use_custom_cost?: boolean;
 
-  updated_at: string | null;
-}
+  updated_at?: string | null;
+};
