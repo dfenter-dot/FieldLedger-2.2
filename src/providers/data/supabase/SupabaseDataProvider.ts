@@ -529,8 +529,27 @@ export class SupabaseDataProvider implements IDataProvider {
     // we replace the entire item list on every save.
     // This also guarantees removed rows are actually removed.
     {
-      const { error: delErr } = await this.supabase.from('assembly_items').delete().eq('assembly_id', data.id);
+      // IMPORTANT: If RLS blocks DELETE, PostgREST can succeed with 0 rows affected.
+      // That would cause duplicates because we then INSERT a new set of rows.
+      // So we (1) count existing rows, (2) delete with `select()` returning, and
+      // (3) throw a clear error if nothing was deleted when rows existed.
+      const { count: existingCount, error: countErr } = await this.supabase
+        .from('assembly_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('assembly_id', data.id);
+      if (countErr) throw countErr;
+
+      const { data: deletedRows, error: delErr } = await this.supabase
+        .from('assembly_items')
+        .delete()
+        .eq('assembly_id', data.id)
+        .select('id');
       if (delErr) throw delErr;
+      if ((existingCount ?? 0) > 0 && (deletedRows?.length ?? 0) === 0) {
+        throw new Error(
+          'Save failed: existing assembly line items could not be cleared (likely an RLS DELETE policy issue on assembly_items).'
+        );
+      }
 
       const rows = (Array.isArray(items) ? items : []).map((it, idx) => {
         const hours = Number((it.labor_hours ?? it.laborHours) ?? 0);
