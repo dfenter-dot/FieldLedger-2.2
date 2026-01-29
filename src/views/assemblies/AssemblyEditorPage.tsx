@@ -5,7 +5,7 @@ import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
-import type { Assembly, Material } from '../../providers/data/types';
+import type { Assembly, AssemblyItem, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
 import { computeAssemblyPricing } from '../../providers/data/pricing';
@@ -14,8 +14,46 @@ type AssemblyMaterialRow = {
   itemId: string;
   materialId: string;
   quantity: number;
+  rawItem: any;
   material?: Material | null;
 };
+
+function normalizeAssemblyResponse(resp: any): {
+  assembly: Assembly;
+  items: AssemblyItem[];
+  appOverride?: any | null;
+} | null {
+  if (!resp) return null;
+
+  // Preferred shape per IDataProvider
+  if (resp.assembly && Array.isArray(resp.items)) {
+    return {
+      assembly: resp.assembly as Assembly,
+      items: (resp.items ?? []) as AssemblyItem[],
+      appOverride: resp.appOverride ?? null,
+    };
+  }
+
+  // Legacy/alternate shape used by older providers:
+  // { ...assemblyFields, items: [...] }
+  const { items, ...rest } = resp;
+  const asm = rest as Assembly;
+  const normalizedItems: AssemblyItem[] = Array.isArray(items)
+    ? items.map((it: any, idx: number) => ({
+        ...it,
+        // Normalize to `type` for UI
+        type: (it.type ?? it.item_type ?? it.itemType ?? 'material') as any,
+        material_id: it.material_id ?? it.materialId ?? null,
+        assembly_id: it.assembly_id ?? asm.id,
+        name: it.name ?? '',
+        quantity: Number(it.quantity ?? 1) || 1,
+        labor_minutes: Number(it.labor_minutes ?? 0) || 0,
+        sort_order: Number(it.sort_order ?? idx) || 0,
+      }))
+    : [];
+
+  return { assembly: asm, items: normalizedItems, appOverride: resp.appOverride ?? null };
+}
 
 function fmtLaborHM(totalMinutes: number) {
   const mins = Math.max(0, Math.floor(Number(totalMinutes || 0)));
@@ -34,7 +72,11 @@ export function AssemblyEditorPage() {
   const { setMode } = useSelection();
   const dialogs = useDialogs();
 
-  const [a, setA] = useState<Assembly | null>(null);
+  const [a, setA] = useState<{
+    assembly: Assembly;
+    items: AssemblyItem[];
+    appOverride?: any | null;
+  } | null>(null);
   const [status, setStatus] = useState('');
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
@@ -59,9 +101,11 @@ export function AssemblyEditorPage() {
   }, [data]);
 
   async function refreshAssembly(id: string) {
-    const asm = await data.getAssembly(id);
-    setA(asm);
-    setLaborMinutesText(asm?.labor_minutes == null ? '' : String(asm.labor_minutes));
+    const raw = await data.getAssembly(id);
+    const asm = normalizeAssemblyResponse(raw);
+    setA(asm as any);
+    const lm = (asm as any)?.assembly?.labor_minutes;
+    setLaborMinutesText(lm == null ? '' : String(lm));
   }
 
   useEffect(() => {
@@ -74,7 +118,7 @@ export function AssemblyEditorPage() {
   }, [assemblyId, data, location.key]);
 
   const materialRows = useMemo<AssemblyMaterialRow[]>(() => {
-    const items = (a?.items ?? []) as any[];
+    const items = ((a?.items ?? []) as any[]) ?? [];
     return items
       // Items can come from different providers:
       // - UI-created: { type: 'material', material_id: ... }
@@ -84,6 +128,7 @@ export function AssemblyEditorPage() {
         itemId: it.id,
         materialId: it.material_id ?? it.materialId,
         quantity: Number(it.quantity ?? 1) || 1,
+        rawItem: it,
       }));
   }, [a?.items]);
 
@@ -134,19 +179,22 @@ export function AssemblyEditorPage() {
     ) as any;
 
     return computeAssemblyPricing({
-      assembly: a,
-      items: ((a as any).items ?? []) as any,
+      assembly: a.assembly as any,
+      items: (a.items ?? []) as any,
       materialsById,
       jobTypesById,
       companySettings,
     });
   }, [a, companySettings, jobTypes, materialCache]);
 
-  async function save(next: Assembly) {
+  async function save(next: { assembly: Assembly; items: AssemblyItem[] }) {
     try {
       setStatus('Saving…');
-      const saved = await data.upsertAssembly(next);
-      setA(saved);
+      const saved = await data.upsertAssembly({
+        assembly: next.assembly,
+        items: next.items,
+      } as any);
+      await refreshAssembly((saved as any).id ?? next.assembly.id);
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
@@ -159,22 +207,32 @@ export function AssemblyEditorPage() {
     if (!a) return;
     const lm = laborMinutesText.trim() === '' ? 0 : Number(laborMinutesText);
     await save({
-      ...a,
-      labor_minutes: Number.isFinite(lm) ? lm : 0,
-    } as any);
+      assembly: {
+        ...(a.assembly as any),
+        labor_minutes: Number.isFinite(lm) ? lm : 0,
+      },
+      items: a.items,
+    });
   }
 
   async function duplicate() {
     if (!a) return;
     try {
       setStatus('Duplicating…');
-      const copy = await data.upsertAssembly({
-        ...a,
-        id: crypto.randomUUID?.() ?? `asm_${Date.now()}`,
-        name: `${a.name} (Copy)`,
+      const newId = crypto.randomUUID?.() ?? `asm_${Date.now()}`;
+      const copyAsm: any = {
+        ...(a.assembly as any),
+        id: newId,
+        name: `${a.assembly.name} (Copy)`,
         created_at: new Date().toISOString(),
-      } as any);
-      nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${copy.id}`);
+      };
+      const copyItems: any[] = (a.items ?? []).map((it: any) => ({
+        ...it,
+        id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+        assembly_id: newId,
+      }));
+      const saved = await data.upsertAssembly({ assembly: copyAsm, items: copyItems } as any);
+      nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${(saved as any).id ?? newId}`);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
@@ -192,7 +250,7 @@ export function AssemblyEditorPage() {
     if (!ok) return;
     try {
       setStatus('Deleting…');
-      await data.deleteAssembly(a.id);
+      await data.deleteAssembly(a.assembly.id);
       nav(-1);
     } catch (e: any) {
       console.error(e);
@@ -202,30 +260,32 @@ export function AssemblyEditorPage() {
 
   function updateItemQuantity(itemId: string, quantity: number) {
     if (!a) return;
-    const nextItems = (a.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
+    const nextItems = (a.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it)) as any;
     setA({ ...a, items: nextItems } as any);
   }
 
   function removeItem(itemId: string) {
     if (!a) return;
-    const nextItems = (a.items ?? []).filter((it: any) => it.id !== itemId);
+    const nextItems = (a.items ?? []).filter((it: any) => it.id !== itemId) as any;
     setA({ ...a, items: nextItems } as any);
   }
 
   if (!a) return <div className="muted">Loading…</div>;
 
   async function applyAdminRules() {
-    if (!a || !a.use_admin_rules) return;
+    if (!a || !a.assembly.use_admin_rules) return;
     try {
       setStatus('Applying rules...');
       const rules = await data.listAdminRules();
       const match = rules
         .filter((r) => r.enabled && r.applies_to === 'assembly' && (r.match_text ?? '').trim().length > 0)
         .sort((x, y) => x.priority - y.priority)
-        .find((r) => (a.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
+        .find((r) => (a.assembly.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
       if (match?.set_job_type_id) {
-        const saved = await data.upsertAssembly({ ...a, job_type_id: match.set_job_type_id } as any);
-        setA(saved as any);
+        await save({
+          assembly: { ...(a.assembly as any), job_type_id: match.set_job_type_id },
+          items: a.items,
+        });
         setStatus('Rules applied.');
       } else {
         setStatus('No matching rules.');
@@ -240,7 +300,7 @@ export function AssemblyEditorPage() {
   return (
     <div className="stack">
       <Card
-        title={`Assembly • ${a.name}`}
+        title={`Assembly • ${a.assembly.name}`}
         right={
           <div className="row">
             <Button onClick={() => nav(-1)}>Back</Button>
@@ -248,7 +308,7 @@ export function AssemblyEditorPage() {
             <Button variant="danger" onClick={remove}>
               Delete
             </Button>
-            {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
+            {a.assembly.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll}>
               Save
             </Button>
@@ -258,15 +318,18 @@ export function AssemblyEditorPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Assembly Name</label>
-            <Input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
+            <Input
+              value={a.assembly.name}
+              onChange={(e) => setA({ ...a, assembly: { ...a.assembly, name: e.target.value } } as any)}
+            />
           </div>
 
           <div className="stack">
             <label className="label">Use Admin Rules</label>
             <Toggle
-              checked={Boolean(a.use_admin_rules)}
-              onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
-              label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
+              checked={Boolean(a.assembly.use_admin_rules)}
+              onChange={(v) => setA({ ...a, assembly: { ...a.assembly, use_admin_rules: v } } as any)}
+              label={a.assembly.use_admin_rules ? 'Yes (locks job type)' : 'No'}
             />
           </div>
 
@@ -274,9 +337,9 @@ export function AssemblyEditorPage() {
             <label className="label">Job Type</label>
             <select
               className="input"
-              disabled={Boolean(a.use_admin_rules)}
-              value={a.job_type_id ?? ''}
-              onChange={(ev) => setA({ ...a, job_type_id: ev.target.value || null } as any)}
+              disabled={Boolean(a.assembly.use_admin_rules)}
+              value={a.assembly.job_type_id ?? ''}
+              onChange={(ev) => setA({ ...a, assembly: { ...a.assembly, job_type_id: ev.target.value || null } } as any)}
             >
               <option value="">(Select)</option>
               {jobTypes
@@ -293,8 +356,13 @@ export function AssemblyEditorPage() {
             <label className="label">Customer Supplies Materials</label>
             <select
               className="input"
-              value={String(Boolean(a.customer_supplies_materials))}
-              onChange={(ev) => setA({ ...a, customer_supplies_materials: ev.target.value === 'true' } as any)}
+              value={String(Boolean(a.assembly.customer_supplied_materials))}
+              onChange={(ev) =>
+                setA({
+                  ...a,
+                  assembly: { ...a.assembly, customer_supplied_materials: ev.target.value === 'true' },
+                } as any)
+              }
             >
               <option value="false">No</option>
               <option value="true">Yes</option>
@@ -308,7 +376,10 @@ export function AssemblyEditorPage() {
 
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Description</label>
-            <Input value={a.description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
+            <Input
+              value={a.assembly.description ?? ''}
+              onChange={(e) => setA({ ...a, assembly: { ...a.assembly, description: e.target.value } } as any)}
+            />
           </div>
         </div>
 
@@ -317,7 +388,11 @@ export function AssemblyEditorPage() {
             variant="primary"
             onClick={() => {
               const lt = libraryType === 'app' ? 'app' : 'user';
-              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, returnTo: `/assemblies/${lt}/${a.id}` });
+              setMode({
+                type: 'add-materials-to-assembly',
+                assemblyId: a.assembly.id,
+                returnTo: `/assemblies/${lt}/${a.assembly.id}`,
+              } as any);
               nav('/materials');
             }}
           >
@@ -330,6 +405,7 @@ export function AssemblyEditorPage() {
               const items = [...((a.items ?? []) as any[])];
               items.push({
                 id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+                assembly_id: a.assembly.id,
                 type: 'blank_material',
                 name: 'New Material',
                 quantity: 1,
@@ -349,6 +425,7 @@ export function AssemblyEditorPage() {
               const items = [...((a.items ?? []) as any[])];
               items.push({
                 id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+                assembly_id: a.assembly.id,
                 type: 'labor',
                 name: 'Labor',
                 quantity: 1,
@@ -367,16 +444,35 @@ export function AssemblyEditorPage() {
             {materialRows.map((r) => {
               const mat = materialCache[r.materialId];
 
-              const unitCost = Number((mat as any)?.unit_cost ?? 0) || 0;
-              const customCostRaw = (mat as any)?.custom_cost;
+              // Prefer item overrides when present, otherwise fall back to material fields.
+              const it = r.rawItem ?? {};
+
+              const baseCost =
+                Number((mat as any)?.base_cost ?? (mat as any)?.unit_cost ?? (mat as any)?.cost ?? 0) || 0;
+              const customCostRaw =
+                (mat as any)?.custom_cost ?? (mat as any)?.customCost ?? (mat as any)?.override_custom_cost ?? null;
               const customCost = customCostRaw == null ? null : Number(customCostRaw);
-              const useCustom = Boolean((mat as any)?.use_custom_cost);
-              const chosenCost = useCustom && customCost != null ? customCost : unitCost;
+              const useCustom = Boolean((mat as any)?.use_custom_cost ?? (mat as any)?.useCustomCost ?? false);
+              const materialCost = useCustom && customCost != null && Number.isFinite(customCost) ? customCost : baseCost;
 
-              const taxable = Boolean((mat as any)?.taxable);
-              const laborMins = Number((mat as any)?.labor_minutes ?? 0) || 0;
+              const overrideCostRaw =
+                it.material_cost_override ?? it.material_cost ?? it.cost ?? (it.materialCostOverride ?? null);
+              const overrideCost = overrideCostRaw == null ? null : Number(overrideCostRaw);
+              const chosenCost = overrideCost != null && Number.isFinite(overrideCost) ? overrideCost : materialCost;
 
-              const jtId = (mat as any)?.job_type_id ?? null;
+              const taxable = Boolean(it.taxable ?? (mat as any)?.taxable);
+              const laborMins =
+                Number(
+                  it.labor_minutes ??
+                    it.laborMinutes ??
+                    (Number(it.labor_hours ?? it.laborHours ?? 0) * 60 + Number(it.labor_minutes ?? 0)) ??
+                    (mat as any)?.labor_minutes ??
+                    (mat as any)?.laborMinutes ??
+                    (mat as any)?.labor_time_minutes ??
+                    0
+                ) || 0;
+
+              const jtId = it.job_type_id ?? (mat as any)?.job_type_id ?? (mat as any)?.jobTypeId ?? null;
               const jtName = jtId ? jobTypes.find((j: any) => j.id === jtId)?.name : null;
               return (
                 <div key={r.itemId} className="listRow">
@@ -384,7 +480,8 @@ export function AssemblyEditorPage() {
                     <div className="listTitle">{mat?.name ?? `Material ${r.materialId}`}</div>
                     <div className="listSub">{mat?.description ?? '—'}</div>
                     <div className="listSub">
-                      Labor: {fmtLaborHM(laborMins)} • Cost: ${chosenCost.toFixed(2)}{useCustom ? ' (custom)' : ' (base)'} • Taxable:{' '}
+                      Labor: {fmtLaborHM(laborMins)} • Cost: ${chosenCost.toFixed(2)}
+                      {overrideCost != null ? ' (override)' : useCustom ? ' (custom)' : ' (base)'} • Taxable:{' '}
                       {taxable ? 'Yes' : 'No'} • Job Type: {jtName ?? '(None)'}
                     </div>
                   </div>
