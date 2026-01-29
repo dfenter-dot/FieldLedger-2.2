@@ -416,6 +416,9 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
       const created = await data.upsertAssembly({
         id: crypto.randomUUID?.() ?? `asm_${Date.now()}`,
         company_id: lib === 'personal' ? null : undefined,
+        // IMPORTANT: tell the provider which library this record belongs to.
+        // App libraries use LibraryType 'personal' (DB owner='app'); User libraries use 'company' (DB owner='company').
+        library_type: lib,
         name,
         description: null,
         items: [],
@@ -858,6 +861,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     </div>
   );
 }
+
 
 
 
