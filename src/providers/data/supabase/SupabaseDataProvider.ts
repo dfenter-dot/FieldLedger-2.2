@@ -86,12 +86,27 @@ export class SupabaseDataProvider implements IDataProvider {
     return false;
   }
 
-  private toDbOwner(libraryType: LibraryType): DbOwner {
-    return libraryType === 'company' ? 'company' : 'app';
+  /**
+   * IMPORTANT:
+   * Your UI/types have historically used various strings for libraries:
+   * - company/user library: 'company' or 'user'
+   * - app/system library: 'app' or 'personal'
+   *
+   * The DB is authoritative: owner is only 'company' | 'app'
+   * So we normalize any incoming value to those DB enums.
+   */
+  private toDbOwner(libraryType: any): DbOwner {
+    const v = String(libraryType ?? '').toLowerCase().trim();
+    // Treat "company" AND "user" as company-owned rows
+    if (v === 'company' || v === 'user') return 'company';
+    // Everything else routes to app-owned rows
+    return 'app';
   }
 
-  private fromDbOwner(owner: DbOwner): LibraryType {
-    return owner === 'company' ? 'company' : 'personal';
+  private fromDbOwner(owner: DbOwner): any {
+    // Always emit 'company' for company-owned.
+    // For app-owned, emit 'app' (NOT 'personal') to match the app's conceptual model.
+    return owner === 'company' ? ('company' as any) : ('app' as any);
   }
 
   /* ============================
@@ -102,7 +117,7 @@ export class SupabaseDataProvider implements IDataProvider {
     return {
       id: row.id,
       kind: row.library,
-      library_type: this.fromDbOwner(row.owner),
+      library_type: this.fromDbOwner(row.owner as DbOwner),
       company_id: row.company_id ?? null,
       parent_id: row.parent_id ?? null,
       name: row.name,
@@ -145,7 +160,7 @@ export class SupabaseDataProvider implements IDataProvider {
       labor_minutes: Number(row.labor_minutes ?? 0),
 
       // DB does NOT have labor_hours; keep for UI/types but always 0
-      labor_hours: Number(row.labor_hours ?? 0) || 0,
+      labor_hours: Number((row as any).labor_hours ?? 0) || 0,
 
       order_index: Number(row.sort_order ?? 0),
       updated_at: row.updated_at ?? null,
@@ -191,7 +206,6 @@ export class SupabaseDataProvider implements IDataProvider {
       .from('job_types')
       .select('*')
       .or(`company_id.eq.${companyId},company_id.is.null`)
-      // IMPORTANT: your DB doesn't have `priority`, so ordering by it 400s and breaks Company Setup.
       .order('name', { ascending: true });
     if (error) throw error;
     return (data ?? []) as any;
@@ -287,7 +301,6 @@ export class SupabaseDataProvider implements IDataProvider {
       sort_order: 0,
       company_id: owner === 'company' ? companyId : null,
       created_at: new Date().toISOString(),
-      // NO updated_at
     };
 
     const { data, error } = await this.supabase.from('folders').insert(payload).select().single();
@@ -302,7 +315,6 @@ export class SupabaseDataProvider implements IDataProvider {
     if (payload.owner === 'company') payload.company_id = payload.company_id ?? companyId;
     else payload.company_id = null;
 
-    // ensure we don't send updated_at to folders ever
     delete payload.updated_at;
 
     const { data, error } = await this.supabase.from('folders').upsert(payload).select().single();
@@ -358,7 +370,6 @@ export class SupabaseDataProvider implements IDataProvider {
     if (payload.owner === 'company') payload.company_id = payload.company_id ?? companyId;
     else payload.company_id = null;
 
-    // If client didn't provide an id, let DB generate one (works for inserts)
     if (!payload.id) delete payload.id;
 
     const { data, error } = await this.supabase.from('materials').upsert(payload).select().single();
@@ -377,7 +388,7 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   /* ============================
-     Assemblies (FIXED to match your DB)
+     Assemblies
   ============================ */
 
   async listAssemblies(args: { libraryType: LibraryType; folderId: string | null }): Promise<Assembly[]> {
@@ -401,6 +412,7 @@ export class SupabaseDataProvider implements IDataProvider {
       id: row.id,
       company_id: row.company_id ?? null,
       owner_type: row.owner,
+      library_type: this.fromDbOwner(row.owner as DbOwner), // critical for UI filters
       folder_id: row.folder_id ?? null,
       name: row.name,
       description: row.description ?? null,
@@ -429,6 +441,7 @@ export class SupabaseDataProvider implements IDataProvider {
       id: data.id,
       company_id: data.company_id ?? null,
       owner_type: data.owner,
+      library_type: this.fromDbOwner(data.owner as DbOwner),
       folder_id: data.folder_id ?? null,
       name: data.name,
       description: data.description ?? null,
@@ -461,7 +474,13 @@ export class SupabaseDataProvider implements IDataProvider {
     const assembly: any = arg?.assembly ? arg.assembly : arg;
     const items: any[] = arg?.items ?? assembly?.items ?? [];
 
-    const owner: DbOwner = this.toDbOwner((assembly.library_type ?? assembly.libraryType ?? 'company') as any);
+    const owner: DbOwner = this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
+
+    // SPEC: assemblies must belong to a folder
+    const folderId = assembly.folder_id ?? null;
+    if (!folderId) {
+      throw new Error('Assembly must be saved inside a folder (folder_id is required)');
+    }
 
     // Permissions: prevent non-app-owner from mutating app-owned base
     if ((assembly.company_id === null || owner === 'app') && !(await this.isAppOwner())) {
@@ -472,7 +491,7 @@ export class SupabaseDataProvider implements IDataProvider {
       id: assembly.id,
       owner,
       company_id: owner === 'company' ? (assembly.company_id ?? companyId) : null,
-      folder_id: assembly.folder_id ?? null,
+      folder_id: folderId,
       name: assembly.name,
       description: assembly.description ?? null,
       job_type_id: assembly.job_type_id ?? null,
@@ -485,7 +504,6 @@ export class SupabaseDataProvider implements IDataProvider {
       created_at: assembly.created_at ?? new Date().toISOString(),
     };
 
-    // Allow DB to generate uuid when creating
     if (!payload.id) delete payload.id;
 
     const { data, error } = await this.supabase.from('assemblies').upsert(payload).select().single();
@@ -502,10 +520,7 @@ export class SupabaseDataProvider implements IDataProvider {
           name: it.name ?? null,
           quantity: Number(it.quantity ?? 1),
           material_cost_override: it.material_cost_override ?? it.cost ?? null,
-          labor_minutes: Number(
-            it.labor_minutes ??
-              (Number(it.labor_hours ?? 0) * 60 + Number(it.labor_minutes ?? 0))
-          ),
+          labor_minutes: Number(it.labor_minutes ?? 0),
           sort_order: Number(it.sort_order ?? 0),
         };
         if (!itPayload.id) delete itPayload.id;
@@ -519,6 +534,7 @@ export class SupabaseDataProvider implements IDataProvider {
       id: data.id,
       company_id: data.company_id ?? null,
       owner_type: data.owner,
+      library_type: this.fromDbOwner(data.owner as DbOwner),
       folder_id: data.folder_id ?? null,
       name: data.name,
       description: data.description ?? null,
