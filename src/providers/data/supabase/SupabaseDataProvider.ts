@@ -399,9 +399,11 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.currentCompanyId();
     const owner = this.toDbOwner(args.libraryType);
 
+    // Include a lightweight item count so folder lists can show "N items" without loading all lines.
+    // Supabase returns this as: assembly_items: [{ count: number }]
     let q = this.supabase
       .from('assemblies')
-      .select('*')
+      .select('*, assembly_items(count)')
       .eq('owner', owner)
       .order('name', { ascending: true })
       .order('created_at', { ascending: false });
@@ -424,8 +426,12 @@ export class SupabaseDataProvider implements IDataProvider {
       use_admin_rules: Boolean(row.use_admin_rules ?? false),
       customer_supplied_materials: Boolean(row.customer_supplies_materials ?? false),
       taxable: Boolean(row.taxable ?? false),
+      // NOTE: used by LibraryFolderPage; safe to ignore elsewhere
+      item_count: Number(row?.assembly_items?.[0]?.count ?? 0),
       created_at: row.created_at,
       updated_at: row.updated_at,
+      // convenience for folder list UI
+      item_count: Number(row?.assembly_items?.[0]?.count ?? 0),
     })) as any;
   }
 
