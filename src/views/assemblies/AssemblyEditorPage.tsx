@@ -367,8 +367,12 @@ export function AssemblyEditorPage() {
             <label className="label">Customer Supplies Materials</label>
             <select
               className="input"
-              value={String(Boolean(a.customer_supplies_materials))}
-              onChange={(ev) => setA({ ...a, customer_supplies_materials: ev.target.value === 'true' } as any)}
+              value={String(Boolean((a as any).customer_supplied_materials ?? (a as any).customer_supplies_materials))}
+              onChange={(ev) => {
+                const v = ev.target.value === 'true';
+                // Keep both spellings in sync to prevent save/reload drift.
+                setA({ ...a, customer_supplied_materials: v, customer_supplies_materials: v } as any);
+              }}
             >
               <option value="false">No</option>
               <option value="true">Yes</option>
