@@ -175,32 +175,13 @@ export function EstimateEditorPage() {
   const totals = useMemo(() => {
     if (!e || !companySettings) return null;
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
-    const t = computeEstimatePricing({
+    return computeEstimatePricing({
       estimate: e,
       materialsById: materialCache,
       assembliesById: assemblyCache,
       jobTypesById,
       companySettings,
     });
-    // Adapter: pricing engine returns *_total and total_price.
-    // The Estimates UI previously expected a richer totals shape.
-    // For now, map the available values to keep the editor stable.
-    return {
-      labor_minutes_actual: t.labor_minutes_total,
-      labor_minutes_expected: t.labor_minutes_total,
-      material_cost: t.material_cost_total,
-      material_price: t.material_price_total,
-      labor_price: t.labor_price_total,
-      subtotal_before_processing: t.total_price,
-      processing_fee: 0,
-      total: t.total_price,
-      // Not yet wired (discount/GM targets) — keep zero/null to avoid UI crashes.
-      discount_percent: 0,
-      pre_discount_total: t.total_price,
-      discount_amount: 0,
-      gross_margin_target_percent: null,
-      gross_margin_expected_percent: null,
-    };
   }, [e, companySettings, jobTypes, materialCache, assemblyCache]);
 
   async function save(next: Estimate) {
@@ -462,7 +443,8 @@ export function EstimateEditorPage() {
             disabled={isLocked}
             onClick={() => {
               setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
-              nav('/materials/user');
+              // Send to the Materials home page so the user can choose App vs User libraries.
+              nav('/materials');
             }}
           >
             Add Materials
@@ -472,7 +454,8 @@ export function EstimateEditorPage() {
             disabled={isLocked}
             onClick={() => {
               setMode({ type: 'add-assemblies-to-estimate', estimateId: e.id });
-              nav('/assemblies/user');
+              // Send to the Assemblies home page so the user can choose App vs User libraries.
+              nav('/assemblies');
             }}
           >
             Add Assemblies
