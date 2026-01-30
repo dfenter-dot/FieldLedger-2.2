@@ -544,6 +544,28 @@ export function computeEstimatePricing(params: {
     : materialPriceTotal;
   const miscMaterial = miscBase * (miscPct / 100);
 
+  // Discount (preload) + Processing Fees sequencing (per spec)
+  const baseTotal = materialPriceTotal + laborPriceTotal + miscMaterial;
+
+  const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
+  const discountPct = Number((companySettings as any)?.discount_percent_default ?? 0) || 0;
+
+  let displayedSubtotal = baseTotal;
+  let discountAmount = 0;
+  let totalAfterDiscount = baseTotal;
+
+  if (applyDiscount && discountPct > 0 && discountPct < 100) {
+    displayedSubtotal = baseTotal / (1 - discountPct / 100);
+    discountAmount = displayedSubtotal - baseTotal;
+    totalAfterDiscount = baseTotal; // preload keeps final equal to target
+  }
+
+  const applyProcessing = Boolean(estimate?.apply_processing_fees ?? estimate?.applyProcessingFees ?? false);
+  const processingPct = Number((companySettings as any)?.processing_fee_percent ?? 0) || 0;
+  const processingFee = applyProcessing && processingPct > 0 ? totalAfterDiscount * (processingPct / 100) : 0;
+
+  const totalPrice = totalAfterDiscount + processingFee;
+
   const totalPrice = materialPriceTotal + laborPriceTotal + miscMaterial;
 
   return {
