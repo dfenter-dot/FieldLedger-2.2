@@ -11,23 +11,8 @@ import { useDialogs } from '../../providers/dialogs/DialogContext';
 import { computeEstimatePricing } from '../../providers/data/pricing';
 
 type ItemRow =
-  | {
-      id: string;
-      type: 'material';
-      materialId: string;
-      quantity: number;
-      name?: string | null;
-      description?: string | null;
-      laborMinutes?: number | null;
-    }
-  | {
-      id: string;
-      type: 'assembly';
-      assemblyId: string;
-      quantity: number;
-      name?: string | null;
-      description?: string | null;
-    }
+  | { id: string; type: 'material'; materialId: string; quantity: number }
+  | { id: string; type: 'assembly'; assemblyId: string; quantity: number }
   | { id: string; type: 'labor'; name: string; minutes: number };
 
 export function EstimateEditorPage() {
@@ -243,14 +228,6 @@ export function EstimateEditorPage() {
     await save({ ...e, items: nextItems } as any);
   }
 
-  async function updateLaborMinutes(itemId: string, minutes: number) {
-    if (!e) return;
-    const nextItems = (e.items ?? []).map((it: any) =>
-      it.id === itemId ? { ...it, item_type: 'labor', type: 'labor', labor_minutes: minutes } : it
-    );
-    await save({ ...e, items: nextItems } as any);
-  }
-
   async function removeItem(itemId: string) {
     if (!e) return;
     const nextItems = (e.items ?? []).filter((it: any) => it.id !== itemId);
@@ -315,17 +292,250 @@ export function EstimateEditorPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Estimate Name</label>
+            <Input disabled={isLocked} value={e.name} onChange={(ev) => setE({ ...e, name: ev.target.value } as any)} />
+          </div>
+
+          <div className="stack">
+            <label className="label">Use Admin Rules</label>
+            <Toggle
+              checked={Boolean(e.use_admin_rules)}
+              onChange={(v) => setE({ ...e, use_admin_rules: v } as any)}
+              label={e.use_admin_rules ? 'Yes (locks job type)' : 'No'}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Job Type</label>
+            <select
+              className="input"
+              disabled={isLocked || Boolean(e.use_admin_rules)}
+              value={e.job_type_id ?? defaultJobTypeId ?? ''}
+              onChange={(ev) => setE({ ...e, job_type_id: ev.target.value || null } as any)}
+            >
+              <option value="">(Select)</option>
+              {jobTypeOptions.map((jt: any) => (
+                <option key={jt.id} value={jt.id}>
+                  {jt.name}
+                </option>
+              ))}
+            </select>
+            {!e.job_type_id && defaultJobTypeId ? (
+              <div className="muted small">Using default job type until you select one.</div>
+            ) : null}
+          </div>
+
+          <div className="stack">
+            <label className="label">Customer Supplies Materials</label>
+            <select
+              className="input"
+              disabled={isLocked}
+              value={String(Boolean(e.customer_supplies_materials))}
+              onChange={(ev) => setE({ ...e, customer_supplies_materials: ev.target.value === 'true' } as any)}
+            >
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+
+          <div className="stack">
+            <label className="label">Apply Misc Material</label>
+            <select
+              className="input"
+              disabled={isLocked}
+              value={String(Boolean(e.apply_misc_material))}
+              onChange={(ev) => setE({ ...e, apply_misc_material: ev.target.value === 'true' } as any)}
+            >
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+
+          <div className="stack">
+            <label className="label">Apply Processing Fees</label>
+            <select
+              className="input"
+              disabled={isLocked}
+              value={String(Boolean(e.apply_processing_fees))}
+              onChange={(ev) => setE({ ...e, apply_processing_fees: ev.target.value === 'true' } as any)}
+            >
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+
+          <div className="stack">
+            <label className="label">Discount %</label>
             <Input
+              disabled={isLocked || !allowDiscounts}
+              type="text"
+              inputMode="decimal"
+              value={String((e as any).discount_percent ?? '')}
+              placeholder={String(companySettings?.default_discount_percent ?? 10)}
+              onChange={(ev) => {
+                const raw = ev.target.value;
+                setE({ ...e, discount_percent: raw === '' ? null : Number(raw) } as any);
+              }}
+            />
+            {!allowDiscounts ? (
+              <div className="muted small">Discounts are disabled for this job type.</div>
+            ) : (
+              <div className="muted small">Leave blank to use 0% (or set a default in Company Setup).</div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 12 }}>
+          <div className="stack">
+            <label className="label">Customer Name</label>
+            <Input disabled={isLocked} value={e.customer_name ?? ''} onChange={(ev) => setE({ ...e, customer_name: ev.target.value || null } as any)} />
+          </div>
+          <div className="stack">
+            <label className="label">Customer Phone</label>
+            <Input disabled={isLocked} value={e.customer_phone ?? ''} onChange={(ev) => setE({ ...e, customer_phone: ev.target.value || null } as any)} />
+          </div>
+          <div className="stack">
+            <label className="label">Customer Email</label>
+            <Input disabled={isLocked} value={e.customer_email ?? ''} onChange={(ev) => setE({ ...e, customer_email: ev.target.value || null } as any)} />
+          </div>
+          <div className="stack">
+            <label className="label">Customer Address</label>
+            <Input disabled={isLocked} value={e.customer_address ?? ''} onChange={(ev) => setE({ ...e, customer_address: ev.target.value || null } as any)} />
+          </div>
+          <div className="stack" style={{ gridColumn: '1 / -1' }}>
+            <label className="label">Private Notes</label>
+            <Input disabled={isLocked} value={e.private_notes ?? ''} onChange={(ev) => setE({ ...e, private_notes: ev.target.value || null } as any)} />
+          </div>
+        </div>
+
+        <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <Button
+            variant="secondary"
+            disabled={!e || isLocked}
+            onClick={async () => {
+              const copy = await data.upsertEstimate({
+                ...e,
+                id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
+                estimate_number: e.estimate_number,
+                name: `${e.name} (Copy Option)`,
+                status: 'draft',
+                sent_at: null,
+                approved_at: null,
+                declined_at: null,
+                created_at: new Date().toISOString(),
+              } as any);
+              nav(`/estimates/${copy.id}`);
+            }}
+          >
+            Copy Option
+          </Button>
+          <Button
+            variant="primary"
+            disabled={isLocked}
+            onClick={() => {
+              setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
+              nav('/materials');
+            }}
+          >
+            Add Materials
+          </Button>
+          <Button
+            variant="primary"
+            disabled={isLocked}
+            onClick={() => {
+              setMode({ type: 'add-assemblies-to-estimate', estimateId: e.id });
+              nav('/assemblies');
+            }}
+          >
+            Add Assemblies
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={isLocked}
+            onClick={() => {
+              // Create a user material while staying in picker mode, so it can be added immediately after save.
+              setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
+              nav('/materials/user/new');
+            }}
+          >
+            Create Material
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={isLocked}
+            onClick={() => {
+              const next = {
+                id: crypto.randomUUID?.() ?? `labor_${Date.now()}`,
+                type: 'labor',
+                name: 'Labor',
+                labor_minutes: Math.max(0, Number(companySettings?.minimum_labor_minutes_per_job ?? 30)),
+                quantity: 1,
+              };
+              setE({ ...(e as any), items: [...((e as any).items ?? []), next] } as any);
+            }}
+          >
+            Add Labor Line
+          </Button>
+          <Button
+            onClick={() => setE({ ...e, status: 'sent', sent_at: new Date().toISOString() } as any)}
+            disabled={isLocked || (e.status ?? 'draft') !== 'draft'}
+          >
+            Mark Sent
+          </Button>
+          <Button
+            onClick={() => setE({ ...e, status: 'approved', approved_at: new Date().toISOString() } as any)}
+            disabled={isLocked || (e.status ?? 'draft') === 'declined'}
+          >
+            Approve
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => setE({ ...e, status: 'declined', declined_at: new Date().toISOString() } as any)}
+            disabled={isLocked}
+          >
+            Decline
+          </Button>
+        </div>
+
+        <div className="mt">
+          <div className="muted small">Line Items</div>
+          <div className="list">
+            {rows.map((r) => {
+              const title =
+                r.type === 'labor'
+                  ? (r as any).name ?? 'Labor'
+                  : r.type === 'material'
+                    ? materialCache[(r as any).materialId]?.name ?? `Material ${(r as any).materialId}`
+                    : assemblyCache[(r as any).assemblyId]?.name ?? `Assembly ${(r as any).assemblyId}`;
+              const sub =
+                r.type === 'labor'
+                  ? `${Math.max(0, Math.floor((r as any).minutes ?? 0))} min`
+                  : r.type === 'material'
+                    ? (() => {
+                        const m = materialCache[(r as any).materialId];
+                        const parts: string[] = [];
+                        if (m?.sku) parts.push(m.sku);
+                        if (m?.description) parts.push(m.description);
+                        if (m?.labor_minutes != null) parts.push(`Labor: ${Math.max(0, Math.floor(m.labor_minutes))} min`);
+                        return parts.length ? parts.join(' • ') : '—';
+                      })()
+                    : (() => {
+                        const a = assemblyCache[(r as any).assemblyId];
+                        return a?.description ?? '—';
+                      })();return (
+                <div key={r.id} className="listRow">
+                  <div className="listMain">
+                    <div className="listTitle">{title}</div>
+                    <div className="listSub">{sub}</div>
+                  </div>
+                  <div className="listRight" style={{ gap: 8 }}>
+                    <Input
                       style={{ width: 90 }}
                       type="text"
                       inputMode="numeric"
-                      value={r.type === 'labor' ? String((r as any).minutes ?? 0) : String((r as any).quantity ?? 1)}
+                      value={String(r.quantity)}
                       onChange={(ev) => {
-                        const raw = ev.target.value;
-                        const n = Math.max(0, Math.floor(Number(raw || 0)));
-                        if (!Number.isFinite(n)) return;
-                        if (r.type === 'labor') updateLaborMinutes(r.id, n);
-                        else updateQuantity(r.id, Math.max(1, n || 1));
+                        const q = Math.max(1, Number(ev.target.value || 1));
+                        if (Number.isFinite(q)) updateQuantity(r.id, q);
                       }}
                     />
                     <Button variant="danger" onClick={() => removeItem(r.id)}>
