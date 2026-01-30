@@ -80,13 +80,29 @@ export function EstimatePreviewPage() {
   const totals = useMemo(() => {
     if (!e || !companySettings) return null;
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
-    return computeEstimatePricing({
+    const t = computeEstimatePricing({
       estimate: e,
       materialsById: materialCache,
       assembliesById: assemblyCache,
       jobTypesById,
       companySettings,
     });
+    // Adapter: pricing engine returns *_total and total_price.
+    // Map to the legacy totals shape expected by this view.
+    return {
+      material_cost: t.material_cost_total,
+      labor_minutes_expected: t.labor_minutes_total,
+      labor_cost: 0,
+      material_price: t.material_price_total,
+      labor_price: t.labor_price_total,
+      misc_material: t.misc_material_price,
+      pre_discount_total: t.total_price,
+      discount_percent: 0,
+      discount_amount: 0,
+      subtotal_before_processing: t.total_price,
+      processing_fee: 0,
+      total: t.total_price,
+    };
   }, [assemblyCache, companySettings, e, jobTypes, materialCache]);
 
   if (!e) return <div className="muted">Loading…</div>;
@@ -225,4 +241,5 @@ export function EstimatePreviewPage() {
     </div>
   );
 }
+
 
