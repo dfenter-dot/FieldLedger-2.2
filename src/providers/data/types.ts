@@ -232,40 +232,31 @@ export interface Estimate {
 
   status?: 'draft' | 'sent' | 'approved' | 'declined' | 'archived';
 
-  customer_name?: string | null;
-  customer_phone?: string | null;
-  customer_email?: string | null;
-  customer_address?: string | null;
-  private_notes?: string | null;
-
   job_type_id?: UUID | null;
   use_admin_rules?: boolean;
 
-  // DB column is customer_supplies_materials; some UI uses customer_supplied_materials
-  customer_supplies_materials?: boolean;
   customer_supplied_materials?: boolean;
-
-  apply_discount?: boolean;
   apply_misc_material?: boolean;
   apply_processing_fees?: boolean;
 
   discount_percent?: number;
 
-  sent_at?: string | null;
-  approved_at?: string | null;
-  declined_at?: string | null;
-  valid_until?: string | null;
-
-  created_by?: UUID | null;
-
-  // Options + active option (v1 editor uses a single active option)
+  /** Multi-option support (Bronze/Silver/Gold). v1 UI may treat the first option as active. */
   options?: EstimateOption[];
-  active_option_id?: UUID;
+  active_option_id?: UUID | null;
 
   items?: EstimateItem[];
 
   created_at?: string;
   updated_at?: string;
+}
+
+export interface EstimateOption {
+  id: UUID;
+  estimate_id: UUID;
+  option_name: string;
+  sort_order: number;
+  created_at?: string;
 }
 
 export interface EstimateItem {
@@ -283,15 +274,6 @@ export interface EstimateItem {
 
   quantity: number;
 }
-
-export interface EstimateOption {
-  id: UUID;
-  estimate_id: UUID;
-  option_name: string;
-  sort_order: number;
-  created_at?: string;
-}
-
 
 /* ============================
    Pricing Output
