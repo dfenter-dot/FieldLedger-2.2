@@ -378,6 +378,19 @@ export function computeAssemblyPricing(params: {
     discount_amount: round2(discountAmount),
     processing_fee: round2(processingFee),
     total_price: round2(totalPrice),
+    // ---- Legacy UI compatibility fields (prevent blank screens due to undefined .toFixed())
+    material_cost: round2(materialCostTotal),
+    material_price: round2(materialPriceTotal),
+    labor_price: round2(laborPriceTotal),
+    misc_material: round2(miscMaterial),
+    labor_minutes_actual: Math.round(laborMinutesTotal),
+    labor_minutes_expected: Math.round(laborMinutesTotal),
+    discount_percent: applyDiscount ? round2(discountPct) : 0,
+    pre_discount_total: round2(displayedSubtotal),
+    subtotal_before_processing: round2(baseTotal),
+    total: round2(totalPrice),
+    gross_margin_target_percent: null,
+    gross_margin_expected_percent: null,
     lines,
   };
 }
@@ -577,6 +590,19 @@ export function computeEstimatePricing(params: {
     discount_amount: round2(discountAmount),
     processing_fee: round2(processingFee),
     total_price: round2(totalPrice),
+    // ---- Legacy UI compatibility fields (prevent blank screens due to undefined .toFixed())
+    material_cost: round2(materialCostTotal),
+    material_price: round2(materialPriceTotal),
+    labor_price: round2(laborPriceTotal),
+    misc_material: round2(miscMaterial),
+    labor_minutes_actual: Math.round(laborMinutesTotal),
+    labor_minutes_expected: Math.round(laborMinutesTotal),
+    discount_percent: applyDiscount ? round2(discountPct) : 0,
+    pre_discount_total: round2(displayedSubtotal),
+    subtotal_before_processing: round2(baseTotal),
+    total: round2(totalPrice),
+    gross_margin_target_percent: null,
+    gross_margin_expected_percent: null,
     lines,
   };
 }
@@ -676,4 +702,3 @@ function getProcessingFeePercentDefault(companySettings: CompanySettings): numbe
     0
   );
 }
-
