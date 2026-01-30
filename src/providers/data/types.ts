@@ -235,27 +235,11 @@ export interface Estimate {
   job_type_id?: UUID | null;
   use_admin_rules?: boolean;
 
-  // NOTE: DB column is `customer_supplies_materials` (present tense).
-  // Keep both spellings to avoid UI/pricing drift.
-  customer_supplies_materials?: boolean;
   customer_supplied_materials?: boolean;
-
-  customer_name?: string | null;
-  customer_phone?: string | null;
-  customer_email?: string | null;
-  customer_address?: string | null;
-  private_notes?: string | null;
-
-  apply_discount?: boolean;
   apply_misc_material?: boolean;
   apply_processing_fees?: boolean;
 
   discount_percent?: number;
-
-  sent_at?: string | null;
-  approved_at?: string | null;
-  declined_at?: string | null;
-  valid_until?: string | null;
 
   items?: EstimateItem[];
 
@@ -266,23 +250,17 @@ export interface Estimate {
 export interface EstimateItem {
   id?: UUID;
 
-  // DB column is `item_type`; keep both for UI/provider compatibility.
-  item_type?: 'material' | 'assembly' | 'labor' | 'blank';
-  type?: 'material' | 'assembly' | 'labor' | 'blank';
+  type: 'material' | 'assembly' | 'labor';
 
   material_id?: UUID;
   assembly_id?: UUID;
 
-  name?: string | null;
-  description?: string | null;
+  /** For labor lines */
+  name?: string;
+  description?: string;
+  labor_minutes?: number;
 
   quantity: number;
-
-  labor_minutes?: number;
-  material_cost_override?: number | null;
-  sort_order?: number;
-
-  assembly_snapshot?: any | null;
 }
 
 /* ============================
