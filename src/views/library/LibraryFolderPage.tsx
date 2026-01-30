@@ -58,9 +58,6 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   // Draft quantities for picker mode before a material is actually added
   const [draftQtyByMaterialId, setDraftQtyByMaterialId] = useState<Record<string, string>>({});
 
-  // Picker mode draft quantities for assemblies (estimate picker)
-  const [draftQtyByAssemblyId, setDraftQtyByAssemblyId] = useState<Record<string, string>>({});
-
   // Global search (materials only)
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState<Material[]>([]);
@@ -111,48 +108,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     };
   }, [data, kind, mode]);
 
-  const inMaterialPickerMode =
-    kind === 'materials' && (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
-  const inAssemblyPickerMode = kind === 'assemblies' && mode.type === 'add-assemblies-to-estimate';
-
-  async function updateAssemblyPickerQuantity(assemblyId: string, qtyText: string) {
-    if (!inAssemblyPickerMode) return;
-
-    const trimmed = (qtyText ?? '').trim();
-    const qty = trimmed === '' ? null : clampQty(Number(trimmed));
-
-    try {
-      const est = await data.getEstimate(mode.estimateId);
-      if (!est) throw new Error('Estimate not found');
-
-      const items = [...((est.items ?? []) as any[])];
-      const idx = items.findIndex((it) => it.assembly_id === assemblyId);
-
-      if (qty == null) {
-        if (idx >= 0) items.splice(idx, 1);
-      } else if (idx >= 0) {
-        items[idx] = {
-          ...items[idx],
-          type: items[idx]?.type ?? 'assembly',
-          assembly_id: items[idx]?.assembly_id ?? assemblyId,
-          quantity: qty,
-        };
-      } else {
-        items.push({
-          id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
-          type: 'assembly',
-          assembly_id: assemblyId,
-          quantity: qty,
-        });
-      }
-
-      const saved = await data.upsertEstimate({ ...est, items } as any);
-      setSelectedEstimateItems((saved?.items ?? items) as any[]);
-    } catch (e: any) {
-      console.error(e);
-      setStatus(String(e?.message ?? e));
-    }
-  }
+const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
 
   async function refresh() {
     try {
@@ -566,6 +522,46 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     }
   }
 
+  function clampAssemblyQty(n: number) {
+    const x = Math.floor(Number(n));
+    if (!Number.isFinite(x) || x <= 0) return 1;
+    return Math.max(1, x);
+  }
+
+  async function handlePickAssembly(assemblyId: string, qtyText: string) {
+    if (!(mode.type === 'add-assemblies-to-estimate' && kind === 'assemblies')) return;
+
+    const trimmed = (qtyText ?? '').trim();
+    const qty = trimmed === '' ? null : clampAssemblyQty(Number(trimmed));
+
+    try {
+      const est = await data.getEstimate(mode.estimateId);
+      if (!est) throw new Error('Estimate not found');
+
+      const items = [...((est.items ?? []) as any[])];
+      const idx = items.findIndex((it) => it.assembly_id === assemblyId);
+
+      if (qty == null) {
+        if (idx >= 0) items.splice(idx, 1);
+      } else if (idx >= 0) {
+        items[idx] = { ...items[idx], type: 'assembly', assembly_id: assemblyId, quantity: qty };
+      } else {
+        items.push({
+          id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+          type: 'assembly',
+          assembly_id: assemblyId,
+          quantity: qty,
+        });
+      }
+
+      const saved = await data.upsertEstimate({ ...est, items } as any);
+      setSelectedEstimateItems((saved?.items ?? items) as any[]);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
   // Global search dropdown (materials only)
   useEffect(() => {
     if (kind !== 'materials') return;
@@ -832,10 +828,9 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                 // current qty if already selected in estimate
                 const selectedQty = (() => {
                   if (!inAssemblyPicker) return '';
-                  const estItem = (selectedEstimateItems ?? []).find((it: any) => it.assembly_id === a.id);
+                  const estItem = (selectedEstimateItems ?? []).find((it: any) => it.type === 'assembly' && it.assembly_id === a.id);
                   return estItem ? String(estItem.quantity ?? 1) : '';
                 })();
-                const draftQty = draftQtyByAssemblyId[a.id] ?? (selectedQty || '1');
 
                 return (
                   <div key={a.id} className="listRow">
@@ -857,62 +852,17 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
 
                     <div className="row" style={{ gap: 8 }}>
                       {inAssemblyPicker ? (
-                        selectedQty ? (
-                          <>
-                            <Button
-                              onClick={() => updateAssemblyPickerQuantity(a.id, String(clampQty(Number(selectedQty)) - 1))}
-                              disabled={clampQty(Number(selectedQty)) <= 1}
-                            >
-                              -
-                            </Button>
-                            <Input
-                              style={{ width: 80 }}
-                              type="text"
-                              inputMode="numeric"
-                              value={draftQty}
-                              onChange={(e) => setDraftQtyByAssemblyId((prev) => ({ ...prev, [a.id]: e.target.value }))}
-                              onBlur={() => updateAssemblyPickerQuantity(a.id, draftQty)}
-                            />
-                            <Button onClick={() => updateAssemblyPickerQuantity(a.id, String(clampQty(Number(selectedQty)) + 1))}>+</Button>
-                            <Button variant="danger" onClick={() => updateAssemblyPickerQuantity(a.id, '')}>
-                              Remove
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button
-                              onClick={() =>
-                                setDraftQtyByAssemblyId((prev) => ({
-                                  ...prev,
-                                  [a.id]: String(Math.max(1, clampQty(Number(draftQty)) - 1)),
-                                }))
-                              }
-                              disabled={clampQty(Number(draftQty)) <= 1}
-                            >
-                              -
-                            </Button>
-                            <Input
-                              style={{ width: 80 }}
-                              type="text"
-                              inputMode="numeric"
-                              value={draftQty}
-                              onChange={(e) => setDraftQtyByAssemblyId((prev) => ({ ...prev, [a.id]: e.target.value }))}
-                            />
-                            <Button
-                              onClick={() =>
-                                setDraftQtyByAssemblyId((prev) => ({
-                                  ...prev,
-                                  [a.id]: String(clampQty(Number(draftQty)) + 1),
-                                }))
-                              }
-                            >
-                              +
-                            </Button>
-                            <Button variant="primary" onClick={() => updateAssemblyPickerQuantity(a.id, draftQty)}>
-                              Add
-                            </Button>
-                          </>
-                        )
+                        <>
+                          <Input
+                            style={{ width: 90 }}
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="Qty"
+                            value={selectedQty}
+                            onChange={(e) => handlePickAssembly(a.id, e.target.value)}
+                          />
+                          <Button onClick={() => nav(returnToPath!)}>Done</Button>
+                        </>
                       ) : (
                         <Button onClick={() => openMoveModal({ type: 'assembly', id: a.id, currentFolderId: a.folder_id ?? null })}>Move</Button>
                       )}
