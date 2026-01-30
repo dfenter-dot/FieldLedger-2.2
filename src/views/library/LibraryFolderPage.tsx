@@ -1,4 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import 
+      // Load selection map for assemblies picker mode
+      if (inAssemblyPickerMode) {
+        const est = await data.getEstimate(mode.estimateId);
+        const mapA: Record<string, string> = {};
+        for (const it of (est?.items ?? []) as any[]) {
+          if (!it?.assembly_id) continue;
+          mapA[it.assembly_id] = String(it.quantity ?? 1);
+        }
+        setSelectedQtyByAssemblyId(mapA);
+      } else {
+        setSelectedQtyByAssemblyId({});
+        setDraftQtyByAssemblyId({});
+      }
+
+{ useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
@@ -58,7 +73,11 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   // Draft quantities for picker mode before a material is actually added
   const [draftQtyByMaterialId, setDraftQtyByMaterialId] = useState<Record<string, string>>({});
 
-  // Global search (materials only)
+  
+  // Picker mode selection tracking (assemblies)
+  const [selectedQtyByAssemblyId, setSelectedQtyByAssemblyId] = useState<Record<string, string>>({});
+  const [draftQtyByAssemblyId, setDraftQtyByAssemblyId] = useState<Record<string, string>>({});
+// Global search (materials only)
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState<Material[]>([]);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
@@ -109,6 +128,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   }, [data, kind, mode]);
 
 const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
+  const inAssemblyPickerMode = kind === 'assemblies' && mode.type === 'add-assemblies-to-estimate';
+
 
   async function refresh() {
     try {
@@ -480,13 +501,16 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
           // remove
           if (idx >= 0) items.splice(idx, 1);
         } else if (idx >= 0) {
-          items[idx] = { ...items[idx], type: items[idx]?.type ?? 'material', material_id: items[idx]?.material_id ?? materialId, quantity: qty };
+          items[idx] = { ...items[idx], type: items[idx]?.type ?? 'material', material_id: items[idx]?.material_id ?? materialId, quantity: qty, name: items[idx]?.name ?? matName, description: items[idx]?.description ?? matDesc, labor_minutes: Number(items[idx]?.labor_minutes ?? matLabor) };
         } else {
           items.push({
             id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
             type: 'material',
             material_id: materialId,
             quantity: qty,
+            name: matName,
+            description: matDesc,
+            labor_minutes: matLabor,
           });
         }
 
@@ -498,13 +522,18 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
         const est = await data.getEstimate(mode.estimateId);
         if (!est) throw new Error('Estimate not found');
 
-        const items = [...((est.items ?? []) as any[])];
+                const mat = materials.find((x) => x.id === materialId);
+        const matName = mat?.name;
+        const matDesc = (mat as any)?.description ?? null;
+        const matLabor = Number((mat as any)?.labor_minutes ?? (mat as any)?.laborMinutes ?? 0);
+
+const items = [...((est.items ?? []) as any[])];
         const idx = items.findIndex((it) => it.material_id === materialId);
 
         if (qty == null) {
           if (idx >= 0) items.splice(idx, 1);
         } else if (idx >= 0) {
-          items[idx] = { ...items[idx], type: items[idx]?.type ?? 'material', material_id: items[idx]?.material_id ?? materialId, quantity: qty };
+          items[idx] = { ...items[idx], type: items[idx]?.type ?? 'material', material_id: items[idx]?.material_id ?? materialId, quantity: qty, name: items[idx]?.name ?? matName, description: items[idx]?.description ?? matDesc, labor_minutes: Number(items[idx]?.labor_minutes ?? matLabor) };
         } else {
           items.push({
             id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
@@ -534,7 +563,16 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     const trimmed = (qtyText ?? '').trim();
     const qty = trimmed === '' ? null : clampAssemblyQty(Number(trimmed));
 
-    try {
+    setSelectedQtyByAssemblyId((prev) => {
+      const next = { ...prev };
+      if (qty == null) delete next[assemblyId];
+      else next[assemblyId] = String(qty);
+      return next;
+    });
+
+        const asmName = assemblies.find((x) => x.id === assemblyId)?.name;
+
+try {
       const est = await data.getEstimate(mode.estimateId);
       if (!est) throw new Error('Estimate not found');
 
@@ -544,13 +582,14 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
       if (qty == null) {
         if (idx >= 0) items.splice(idx, 1);
       } else if (idx >= 0) {
-        items[idx] = { ...items[idx], type: 'assembly', assembly_id: assemblyId, quantity: qty };
+        items[idx] = { ...items[idx], type: 'assembly', assembly_id: assemblyId, quantity: qty, name: items[idx]?.name ?? asmName };
       } else {
         items.push({
           id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
           type: 'assembly',
           assembly_id: assemblyId,
           quantity: qty,
+          name: asmName,
         });
       }
 
@@ -825,15 +864,12 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
             <div className="list">
               {assemblies.map((a) => {
                 const inAssemblyPicker = mode.type === 'add-assemblies-to-estimate';
-                // current qty if already selected in estimate
-                const selectedQty = (() => {
-                  if (!inAssemblyPicker) return '';
-                  const estItem = (selectedEstimateItems ?? []).find((it: any) => it.type === 'assembly' && it.assembly_id === a.id);
-                  return estItem ? String(estItem.quantity ?? 1) : '';
-                })();
+                const selectedText = inAssemblyPicker ? selectedQtyByAssemblyId[a.id] : undefined;
+                const isSelected = selectedText != null;
+                const draftText = draftQtyByAssemblyId[a.id] ?? '1';
 
                 return (
-                  <div key={a.id} className="listRow">
+                  <div key={a.id} className={'listRow' + (inAssemblyPicker && isSelected ? ' selected' : '')}>
                     <div
                       className={inAssemblyPicker ? '' : 'clickable'}
                       style={{ flex: 1 }}
@@ -852,19 +888,80 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
 
                     <div className="row" style={{ gap: 8 }}>
                       {inAssemblyPicker ? (
-                        <>
-                          <Input
-                            style={{ width: 90 }}
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="Qty"
-                            value={selectedQty}
-                            onChange={(e) => handlePickAssembly(a.id, e.target.value)}
-                          />
-                          <Button onClick={() => nav(returnToPath!)}>Done</Button>
-                        </>
+                        isSelected ? (
+                          <div className="row">
+                            <Button
+                              onClick={() =>
+                                handlePickAssembly(a.id, String(clampAssemblyQty(Number(selectedText)) - 1))
+                              }
+                              disabled={clampAssemblyQty(Number(selectedText)) <= 1}
+                            >
+                              -
+                            </Button>
+                            <Input
+                              style={{ width: 80 }}
+                              inputMode="numeric"
+                              value={selectedText}
+                              onChange={(e) =>
+                                setSelectedQtyByAssemblyId((prev) => ({ ...prev, [a.id]: e.target.value }))
+                              }
+                              onBlur={() => handlePickAssembly(a.id, selectedQtyByAssemblyId[a.id] ?? '')}
+                            />
+                            <Button
+                              onClick={() =>
+                                handlePickAssembly(a.id, String(clampAssemblyQty(Number(selectedText)) + 1))
+                              }
+                            >
+                              +
+                            </Button>
+                            <Button variant="danger" onClick={() => handlePickAssembly(a.id, '')}>
+                              Remove
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="row">
+                            <Button
+                              onClick={() =>
+                                setDraftQtyByAssemblyId((prev) => ({
+                                  ...prev,
+                                  [a.id]: String(Math.max(1, clampAssemblyQty(Number(draftText)) - 1)),
+                                }))
+                              }
+                              disabled={clampAssemblyQty(Number(draftText)) <= 1}
+                            >
+                              -
+                            </Button>
+                            <Input
+                              style={{ width: 80 }}
+                              inputMode="numeric"
+                              value={draftText}
+                              onChange={(e) =>
+                                setDraftQtyByAssemblyId((prev) => ({ ...prev, [a.id]: e.target.value }))
+                              }
+                            />
+                            <Button
+                              onClick={() =>
+                                setDraftQtyByAssemblyId((prev) => ({
+                                  ...prev,
+                                  [a.id]: String(clampAssemblyQty(Number(draftText)) + 1),
+                                }))
+                              }
+                            >
+                              +
+                            </Button>
+                            <Button variant="primary" onClick={() => handlePickAssembly(a.id, draftText)}>
+                              Add
+                            </Button>
+                          </div>
+                        )
                       ) : (
-                        <Button onClick={() => openMoveModal({ type: 'assembly', id: a.id, currentFolderId: a.folder_id ?? null })}>Move</Button>
+                        <Button
+                          onClick={() =>
+                            openMoveModal({ type: 'assembly', id: a.id, currentFolderId: a.folder_id ?? null })
+                          }
+                        >
+                          Move
+                        </Button>
                       )}
                     </div>
                   </div>
@@ -909,6 +1006,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     </div>
   );
 }
+
 
 
 
