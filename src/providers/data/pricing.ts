@@ -43,6 +43,10 @@ function getMiscMaterialPercent(settings: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function miscAppliesWhenCustomerSupplies(settings: any): boolean {
+  return Boolean(settings?.misc_applies_when_customer_supplies ?? false);
+}
+
 type MarkupTier = { min: number; max: number; markup_percent: number };
 
 function getMarkupTiers(settings: any): MarkupTier[] {
@@ -189,10 +193,14 @@ export function computeAssemblyPricing(params: {
   const billingMode = safeBillingMode(jobType);
   const purchaseTaxPct = getPurchaseTaxPercent(companySettings);
   const miscPct = getMiscMaterialPercent(companySettings);
+  const miscWhenCustomerSupplies = miscAppliesWhenCustomerSupplies(companySettings);
   const tiers = getMarkupTiers(companySettings);
 
   let materialCostTotal = 0;
   let materialPriceTotal = 0;
+  // Used for misc material when customer supplies materials but Admin allows misc to still apply.
+  // In that case we base misc on the *would-have-been* material sell price (before zeroing).
+  let materialPriceTotalForMisc = 0;
   let laborMinutesTotal = 0;
   let laborPriceTotal = 0;
 
@@ -261,7 +269,11 @@ export function computeAssemblyPricing(params: {
     const customerSupplies = Boolean(
       (assembly as any).customer_supplied_materials ?? (assembly as any).customer_supplies_materials
     );
+    const materialPricePreCustomer = round2(applyTieredMarkup(materialCost, tiers));
     if (customerSupplies) {
+      // Keep the original material price for misc calculations (if enabled),
+      // but zero the material sell side.
+      materialPriceTotalForMisc += materialPricePreCustomer;
       materialCost = 0;
     }
 
@@ -270,7 +282,7 @@ export function computeAssemblyPricing(params: {
     laborMinutesTotal += laborMinutes;
 
     // Pricing
-    let materialPrice = round2(applyTieredMarkup(materialCost, tiers));
+    let materialPrice = customerSupplies ? 0 : materialPricePreCustomer;
     let laborPrice = 0;
 
     if (billingMode === 'hourly') {
@@ -323,7 +335,16 @@ export function computeAssemblyPricing(params: {
     }
   }
 
-  const miscMaterial = materialPriceTotal * (miscPct / 100);
+  // Misc material normally tracks material sell totals.
+  // When the customer supplies materials, material sell becomes $0. If Admin allows
+  // misc to still apply in that scenario, apply it against labor sell instead.
+  const customerSuppliesForAsm = Boolean(
+    (assembly as any).customer_supplied_materials ?? (assembly as any).customer_supplies_materials
+  );
+  const miscBase = customerSuppliesForAsm
+    ? (miscWhenCustomerSupplies ? materialPriceTotalForMisc : 0)
+    : materialPriceTotal;
+  const miscMaterial = miscBase * (miscPct / 100);
 
   const totalPrice = materialPriceTotal + round2(laborPriceTotal) + miscMaterial;
 
@@ -360,9 +381,18 @@ export function computeEstimatePricing(params: {
   const { estimate, materialsById, assembliesById, jobTypesById, companySettings } = params;
 
   const jobType = (estimate?.job_type_id && jobTypesById[estimate.job_type_id]) || null;
+  const purchaseTaxPct = getPurchaseTaxPercent(companySettings);
+  const miscPct = getMiscMaterialPercent(companySettings);
+  const miscWhenCustomerSupplies = miscAppliesWhenCustomerSupplies(companySettings);
+  const tiers = getMarkupTiers(companySettings);
+  const customerSuppliesForEstimate = Boolean(
+    estimate?.customer_supplied_materials ?? estimate?.customer_supplies_materials
+  );
+  const billingMode = safeBillingMode(jobType);
 
   let materialCostTotal = 0;
   let materialPriceTotal = 0;
+  let materialPriceTotalForMisc = 0;
   let laborMinutesTotal = 0;
   let laborPriceTotal = 0;
 
@@ -379,28 +409,57 @@ export function computeEstimatePricing(params: {
       const mat = matId ? materialsById[String(matId)] : null;
       if (!mat) continue;
 
-      let materialCost = (mat.base_cost ?? 0) * qty;
-      if (mat.taxable) {
-        materialCost *= 1 + (companySettings.purchase_tax_percent ?? 0) / 100;
+      // Cost (supports base vs custom)
+      const base = Number((mat as any).base_cost ?? (mat as any).unit_cost ?? 0) || 0;
+      const useCustom = Boolean((mat as any).use_custom_cost);
+      const customRaw = (mat as any).custom_cost;
+      const custom = customRaw == null ? null : Number(customRaw);
+      const unit = useCustom && custom != null && Number.isFinite(custom) ? custom : base;
+
+      let materialCost = unit * qty;
+      if ((mat as any).taxable) {
+        materialCost *= 1 + purchaseTaxPct / 100;
       }
 
-      const laborMinutes = (mat.labor_minutes ?? 0) * qty;
+      // Labor minutes
+      const mh = Number((mat as any).labor_hours ?? 0) || 0;
+      const mm = Number((mat as any).labor_minutes ?? 0) || 0;
+      const laborMinutes = (mh * 60 + mm) * qty;
+
+      const materialPricePreCustomer = round2(applyTieredMarkup(materialCost, tiers));
+
+      // Customer-supplied materials => material cost/sell becomes 0 (labor remains)
+      if (customerSuppliesForEstimate) {
+        materialPriceTotalForMisc += materialPricePreCustomer;
+        materialCost = 0;
+      }
 
       materialCost = round2(materialCost);
-
       materialCostTotal += materialCost;
-      materialPriceTotal += materialCost; // minimal (no markup tiers yet)
-
       laborMinutesTotal += laborMinutes;
 
+      const materialPrice = customerSuppliesForEstimate ? 0 : materialPricePreCustomer;
+      materialPriceTotal += materialPrice;
+
+      // Labor pricing
+      let laborPrice = 0;
+      if (billingMode === 'hourly') {
+        const avgWage = getAverageTechnicianWage(companySettings as any);
+        const gm = clampPct(Number(jobType?.profit_margin_percent ?? 0)) / 100;
+        const denom = 1 - gm;
+        const hourlyRate = denom > 0 ? avgWage / denom : 0;
+        laborPrice = (laborMinutes / 60) * hourlyRate;
+        laborPriceTotal += laborPrice;
+      }
+
       lines.push({
-        name: mat.name,
+        name: (mat as any).name ?? 'Material',
         quantity: qty,
         material_cost: materialCost,
         labor_minutes: laborMinutes,
-        material_price: materialCost,
-        labor_price: 0,
-        total_price: round2(materialCost),
+        material_price: materialPrice,
+        labor_price: round2(laborPrice),
+        total_price: round2(materialPrice + laborPrice),
       });
 
       continue;
@@ -442,19 +501,25 @@ export function computeEstimatePricing(params: {
     }
   }
 
-  // Flat-rate estimate-level labor adjustments (mirrors assembly behavior)
-  if (jobType?.billing_type === 'flat_rate') {
-    const efficiency = (jobType.efficiency_percent ?? 100) / 100;
-    let expectedMinutes = laborMinutesTotal / (efficiency || 1);
+  // Flat-rate estimate-level labor adjustments and labor pricing
+  if (billingMode === 'flat') {
+    const efficiency = clampPct(Number(jobType?.efficiency_percent ?? 100)) / 100;
+    let expectedMinutes = efficiency > 0 ? laborMinutesTotal / efficiency : laborMinutesTotal;
 
-    if (jobType.minimum_billable_minutes && expectedMinutes < jobType.minimum_billable_minutes) {
-      expectedMinutes = jobType.minimum_billable_minutes;
-    }
+    const minMinutes = Number((companySettings as any)?.min_billable_labor_minutes_per_job ?? 0) || 0;
+    if (minMinutes > 0 && expectedMinutes < minMinutes) expectedMinutes = minMinutes;
 
     laborMinutesTotal = expectedMinutes;
+
+    const ratePerBillableHour = computeRequiredRevenuePerBillableHour({ companySettings, jobType });
+    laborPriceTotal = (laborMinutesTotal / 60) * ratePerBillableHour;
   }
 
-  const miscMaterial = materialPriceTotal * ((companySettings.misc_material_percent || 0) / 100);
+  // Misc material: same rule as assemblies.
+  const miscBase = customerSuppliesForEstimate
+    ? (miscWhenCustomerSupplies ? materialPriceTotalForMisc : 0)
+    : materialPriceTotal;
+  const miscMaterial = miscBase * (miscPct / 100);
 
   const totalPrice = materialPriceTotal + laborPriceTotal + miscMaterial;
 
