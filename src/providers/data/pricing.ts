@@ -254,9 +254,13 @@ export function computeAssemblyPricing(params: {
       laborMinutes += (bh * 60 + bm) * qty;
     }
 
-    // Customer supplied materials => cost becomes 0 (labor remains)
-    // Support DB name drift: customer_supplied_materials vs customer_supplies_materials
-    const customerSupplies = Boolean((assembly as any).customer_supplied_materials ?? (assembly as any).customer_supplies_materials);
+    // Customer supplied materials => material cost becomes 0 (labor remains)
+    // Support both historical field names:
+    // - customer_supplied_materials (past tense)
+    // - customer_supplies_materials (DB column name)
+    const customerSupplies = Boolean(
+      (assembly as any).customer_supplied_materials ?? (assembly as any).customer_supplies_materials
+    );
     if (customerSupplies) {
       materialCost = 0;
     }
