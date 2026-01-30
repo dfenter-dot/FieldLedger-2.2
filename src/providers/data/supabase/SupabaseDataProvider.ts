@@ -656,7 +656,18 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
     const companyId = await this.currentCompanyId();
-    const payload = { ...estimate, company_id: (estimate as any).company_id ?? companyId, updated_at: new Date().toISOString() };
+
+    // IMPORTANT: treat empty string as "unset" so we don't write company_id=''
+    const rawCompanyId = (estimate as any).company_id;
+    const effectiveCompanyId =
+      rawCompanyId == null || String(rawCompanyId).trim() === '' ? companyId : rawCompanyId;
+
+    const payload: any = {
+      ...estimate,
+      company_id: effectiveCompanyId,
+      updated_at: new Date().toISOString(),
+    };
+
     const { data, error } = await this.supabase.from('estimates').upsert(payload as any).select().single();
     if (error) throw error;
     return data as any;
@@ -756,4 +767,5 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 }
+
 
