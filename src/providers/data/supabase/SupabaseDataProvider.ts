@@ -651,36 +651,135 @@ export class SupabaseDataProvider implements IDataProvider {
       .eq('id', id)
       .maybeSingle();
     if (error) throw error;
-    return (data as any) ?? null;
+    if (!data) return null;
+
+    // v1: treat each estimate row as a single option.
+    const { data: items, error: itemsErr } = await this.supabase
+      .from('estimate_items')
+      .select('*')
+      .eq('estimate_option_id', id)
+      .order('sort_order', { ascending: true });
+    if (itemsErr) throw itemsErr;
+
+    return {
+      ...(data as any),
+      // Keep both spellings to avoid UI/pricing drift.
+      customer_supplies_materials: Boolean((data as any).customer_supplies_materials ?? false),
+      customer_supplied_materials: Boolean((data as any).customer_supplies_materials ?? false),
+      items: (items ?? []).map((it: any) => ({
+        id: it.id,
+        item_type: it.item_type,
+        type: it.item_type,
+        material_id: it.material_id ?? null,
+        assembly_id: it.assembly_id ?? null,
+        name: it.name ?? null,
+        description: it.description ?? null,
+        quantity: Number(it.quantity ?? 1),
+        labor_minutes: Number(it.labor_minutes ?? 0),
+        material_cost_override: it.material_cost_override ?? null,
+        sort_order: Number(it.sort_order ?? 0),
+        assembly_snapshot: it.assembly_snapshot ?? null,
+      })),
+    } as any;
+  }
+
+  private _uuid(): string {
+    // Browser crypto is available in the app runtime. Provide a safe fallback anyway.
+    const g: any = globalThis as any;
+    if (g?.crypto?.randomUUID) return g.crypto.randomUUID();
+    // RFC4122 v4 fallback
+    const rnd = (n: number) => Math.floor(Math.random() * n);
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = rnd(16);
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
+  private _isUuid(v: any): v is string {
+    return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
   }
 
   async upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
     const companyId = await this.currentCompanyId();
 
-    // IMPORTANT: estimates table is the "header" only. Do not send nested collections
-    // (e.g. items/options/lines) to PostgREST or it will 400 on unknown columns.
-    const clean: any = { ...(estimate as any) };
-    delete clean.items;
-    delete clean.options;
-    delete clean.estimate_items;
-    delete clean.line_items;
-    delete clean.lines;
-    delete clean.materials;
-    delete clean.assemblies;
+    const incoming: any = { ...(estimate as any) };
+    const incomingItems: any[] = Array.isArray(incoming.items) ? incoming.items : [];
 
-    // Normalize company_id (never send empty string to uuid column)
-    const incomingCompanyId = clean.company_id;
-    clean.company_id =
-      (typeof incomingCompanyId === 'string' && incomingCompanyId.trim() === '') ? companyId : (incomingCompanyId ?? companyId);
+    // IMPORTANT: Whitelist header fields only (table has strict columns).
+    const payload: any = {
+      id: incoming.id,
+      company_id: companyId,
+      estimate_number: incoming.estimate_number,
+      name: incoming.name,
+      customer_name: incoming.customer_name ?? null,
+      customer_phone: incoming.customer_phone ?? null,
+      customer_email: incoming.customer_email ?? null,
+      customer_address: incoming.customer_address ?? null,
+      private_notes: incoming.private_notes ?? null,
+      job_type_id: incoming.job_type_id ?? null,
+      use_admin_rules: Boolean(incoming.use_admin_rules ?? false),
+      customer_supplies_materials: Boolean(
+        incoming.customer_supplies_materials ?? incoming.customer_supplied_materials ?? false
+      ),
+      apply_discount: Boolean(incoming.apply_discount ?? false),
+      apply_processing_fees: Boolean(incoming.apply_processing_fees ?? false),
+      apply_misc_material: Boolean(incoming.apply_misc_material ?? true),
+      discount_percent: incoming.discount_percent ?? null,
+      status: incoming.status ?? 'draft',
+      sent_at: incoming.sent_at ?? null,
+      approved_at: incoming.approved_at ?? null,
+      declined_at: incoming.declined_at ?? null,
+      valid_until: incoming.valid_until ?? null,
+      created_by: incoming.created_by ?? null,
+      // created_at is set by DB default; only forward if explicitly provided.
+      ...(incoming.created_at ? { created_at: incoming.created_at } : {}),
+      updated_at: new Date().toISOString(),
+    };
 
-    clean.updated_at = new Date().toISOString();
-
-    const { data, error } = await this.supabase.from('estimates').upsert(clean).select('*').single();
+    const { data, error } = await this.supabase.from('estimates').upsert(payload).select('*').single();
     if (error) throw error;
-    return data as any;
+
+    // Items persist to estimate_items. v1 uses one option (estimate_option_id == estimate.id)
+    if (incoming.items) {
+      const optionId = data.id;
+
+      const { error: delErr } = await this.supabase.from('estimate_items').delete().eq('estimate_option_id', optionId);
+      if (delErr) throw delErr;
+
+      if (incomingItems.length > 0) {
+        const rows = incomingItems.map((it, idx) => {
+          const rawId = (it as any).id;
+          const id = this._isUuid(rawId) ? rawId : this._uuid();
+          const itemType = (it as any).item_type ?? (it as any).type;
+          return {
+            id,
+            estimate_option_id: optionId,
+            item_type: itemType,
+            material_id: (it as any).material_id ?? null,
+            assembly_id: (it as any).assembly_id ?? null,
+            name: (it as any).name ?? null,
+            description: (it as any).description ?? null,
+            quantity: Number((it as any).quantity ?? 1),
+            material_cost_override: (it as any).material_cost_override ?? null,
+            labor_minutes: Number((it as any).labor_minutes ?? 0),
+            sort_order: Number((it as any).sort_order ?? idx),
+            assembly_snapshot: (it as any).assembly_snapshot ?? null,
+          };
+        });
+
+        const { error: insErr } = await this.supabase.from('estimate_items').insert(rows as any);
+        if (insErr) throw insErr;
+      }
+    }
+
+    // Return hydrated record
+    return (await this.getEstimate(data.id)) as any;
   }
 
   async deleteEstimate(id: string): Promise<void> {
+    // v1: delete items for the single option, then header.
+    await this.supabase.from('estimate_items').delete().eq('estimate_option_id', id);
     const { error } = await this.supabase.from('estimates').delete().eq('id', id);
     if (error) throw error;
   }
@@ -774,5 +873,6 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 }
+
 
 
