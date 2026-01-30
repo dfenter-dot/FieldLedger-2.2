@@ -638,38 +638,7 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 
-  
-private async getNextEstimateNumber(companyId: string): Promise<number> {
-  // Prefer Company Settings starting number; otherwise default to 1.
-  let starting = 1;
-  try {
-    const { data } = await this.supabase
-      .from('company_settings')
-      .select('starting_estimate_number')
-      .eq('company_id', companyId)
-      .maybeSingle();
-    const raw = (data as any)?.starting_estimate_number;
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) starting = Math.floor(n);
-  } catch {
-    // ignore
-  }
-
-  // Find current max estimate_number for this company.
-  const { data: rows, error } = await this.supabase
-    .from('estimates')
-    .select('estimate_number')
-    .eq('company_id', companyId)
-    .order('estimate_number', { ascending: false })
-    .limit(1);
-
-  if (error) throw error;
-
-  const maxNum = Number((rows?.[0] as any)?.estimate_number ?? 0) || 0;
-  return Math.max(starting, maxNum + 1);
-}
-
-/* ============================
+  /* ============================
      Estimates
   ============================ */
 
@@ -688,33 +657,25 @@ private async getNextEstimateNumber(companyId: string): Promise<number> {
   async upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
     const companyId = await this.currentCompanyId();
 
-    // Normalize company_id (empty string breaks uuid columns and causes PostgREST 400s)
-    const rawCompany = (estimate as any).company_id;
-    const effectiveCompanyId =
-      typeof rawCompany === 'string' && rawCompany.trim() === '' ? companyId : (rawCompany ?? companyId);
+    // IMPORTANT: estimates table is the "header" only. Do not send nested collections
+    // (e.g. items/options/lines) to PostgREST or it will 400 on unknown columns.
+    const clean: any = { ...(estimate as any) };
+    delete clean.items;
+    delete clean.options;
+    delete clean.estimate_items;
+    delete clean.line_items;
+    delete clean.lines;
+    delete clean.materials;
+    delete clean.assemblies;
 
-    // Ensure required NOT NULL fields have defaults
-    const nextNumber =
-      (estimate as any).estimate_number == null ? await this.getNextEstimateNumber(companyId) : (estimate as any).estimate_number;
+    // Normalize company_id (never send empty string to uuid column)
+    const incomingCompanyId = clean.company_id;
+    clean.company_id =
+      (typeof incomingCompanyId === 'string' && incomingCompanyId.trim() === '') ? companyId : (incomingCompanyId ?? companyId);
 
-    const payload: any = {
-      ...estimate,
-      company_id: effectiveCompanyId,
-      estimate_number: nextNumber,
-      name: (estimate as any).name ?? 'New Estimate',
-      use_admin_rules: Boolean((estimate as any).use_admin_rules ?? false),
-      customer_supplies_materials: Boolean((estimate as any).customer_supplies_materials ?? false),
-      apply_discount: Boolean((estimate as any).apply_discount ?? false),
-      apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
-      apply_misc_material: Boolean((estimate as any).apply_misc_material ?? false),
-      status: (estimate as any).status ?? 'draft',
-      updated_at: new Date().toISOString(),
-    };
+    clean.updated_at = new Date().toISOString();
 
-    // created_at: only set on insert if missing
-    if (!payload.created_at) payload.created_at = new Date().toISOString();
-
-    const { data, error } = await this.supabase.from('estimates').upsert(payload).select().single();
+    const { data, error } = await this.supabase.from('estimates').upsert(clean).select('*').single();
     if (error) throw error;
     return data as any;
   }
