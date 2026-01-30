@@ -100,13 +100,23 @@ export function JobCostingPage() {
   const expected = useMemo(() => {
     if (!estimate || !companySettings) return null;
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
-    return computeEstimatePricing({
+    const t = computeEstimatePricing({
       estimate,
       materialsById: materialCache,
       assembliesById: assemblyCache,
       jobTypesById,
       companySettings,
     });
+    // Adapter: pricing engine returns *_total and total_price.
+    const wage = getAverageTechnicianWage(companySettings);
+    const laborCost = wage * (t.labor_minutes_total / 60);
+    return {
+      total: t.total_price,
+      labor_minutes_expected: t.labor_minutes_total,
+      material_cost: t.material_cost_total,
+      labor_cost: laborCost,
+      gross_margin_expected_percent: null as number | null,
+    };
   }, [assemblyCache, companySettings, estimate, jobTypes, materialCache]);
 
   const actual = useMemo(() => {
@@ -231,4 +241,5 @@ export function JobCostingPage() {
     </div>
   );
 }
+
 
