@@ -399,11 +399,9 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.currentCompanyId();
     const owner = this.toDbOwner(args.libraryType);
 
-    // Include a lightweight item count so folder lists can show "N items" without loading all lines.
-    // Supabase returns this as: assembly_items: [{ count: number }]
     let q = this.supabase
       .from('assemblies')
-      .select('*, assembly_items(count)')
+      .select('*')
       .eq('owner', owner)
       .order('name', { ascending: true })
       .order('created_at', { ascending: false });
@@ -424,14 +422,13 @@ export class SupabaseDataProvider implements IDataProvider {
       description: row.description ?? null,
       job_type_id: row.job_type_id ?? null,
       use_admin_rules: Boolean(row.use_admin_rules ?? false),
+      // Keep both spellings to avoid UI drift.
+      // DB column: customer_supplies_materials
       customer_supplied_materials: Boolean(row.customer_supplies_materials ?? false),
+      customer_supplies_materials: Boolean(row.customer_supplies_materials ?? false),
       taxable: Boolean(row.taxable ?? false),
-      // NOTE: used by LibraryFolderPage; safe to ignore elsewhere
-      item_count: Number(row?.assembly_items?.[0]?.count ?? 0),
       created_at: row.created_at,
       updated_at: row.updated_at,
-      // convenience for folder list UI
-      item_count: Number(row?.assembly_items?.[0]?.count ?? 0),
     })) as any;
   }
 
@@ -457,24 +454,20 @@ export class SupabaseDataProvider implements IDataProvider {
       description: data.description ?? null,
       job_type_id: data.job_type_id ?? null,
       use_admin_rules: Boolean(data.use_admin_rules ?? false),
+      // Keep both spellings to avoid UI drift.
       customer_supplied_materials: Boolean(data.customer_supplies_materials ?? false),
+      customer_supplies_materials: Boolean(data.customer_supplies_materials ?? false),
       taxable: Boolean(data.taxable ?? false),
       created_at: data.created_at,
       updated_at: data.updated_at,
       items: (items ?? []).map((it: any) => ({
         id: it.id,
         assembly_id: it.assembly_id,
-        // Support both provider styles (some UI code expects `type`, some expects `item_type`)
         item_type: it.item_type,
-        type: it.item_type,
         material_id: it.material_id ?? null,
         name: it.name ?? null,
         quantity: Number(it.quantity ?? 1),
-        // UI uses `unit_cost` for blank material rows; DB stores it in `material_cost_override`
         material_cost_override: it.material_cost_override ?? null,
-        unit_cost: it.material_cost_override ?? null,
-        // DB does not store taxable per item; default to true so UI doesn't flip unexpectedly.
-        taxable: true,
         labor_minutes: Number(it.labor_minutes ?? 0),
         sort_order: Number(it.sort_order ?? 0),
       })),
@@ -490,13 +483,7 @@ export class SupabaseDataProvider implements IDataProvider {
     const assembly: any = arg?.assembly ? arg.assembly : arg;
     const items: any[] = arg?.items ?? assembly?.items ?? [];
 
-    // Preserve existing owner when editing; fall back to library_type when creating.
-    const owner: DbOwner =
-      (assembly.owner_type ?? assembly.owner) === 'app'
-        ? 'app'
-        : (assembly.owner_type ?? assembly.owner) === 'company'
-          ? 'company'
-          : this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
+    const owner: DbOwner = this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
 
     // SPEC: assemblies must belong to a folder
     const folderId = assembly.folder_id ?? null;
@@ -531,61 +518,28 @@ export class SupabaseDataProvider implements IDataProvider {
     const { data, error } = await this.supabase.from('assemblies').upsert(payload).select().single();
     if (error) throw error;
 
-    // Line items: for reliability (and to avoid UUID issues from client-generated ids),
-    // we replace the entire item list on every save.
-    // This also guarantees removed rows are actually removed.
-    {
-      // IMPORTANT: If RLS blocks DELETE, PostgREST can succeed with 0 rows affected.
-      // That would cause duplicates because we then INSERT a new set of rows.
-      // So we (1) count existing rows, (2) delete with `select()` returning, and
-      // (3) throw a clear error if nothing was deleted when rows existed.
-      const { count: existingCount, error: countErr } = await this.supabase
-        .from('assembly_items')
-        .select('id', { count: 'exact', head: true })
-        .eq('assembly_id', data.id);
-      if (countErr) throw countErr;
-
-      const { data: deletedRows, error: delErr } = await this.supabase
-        .from('assembly_items')
-        .delete()
-        .eq('assembly_id', data.id)
-        .select('id');
-      if (delErr) throw delErr;
-      if ((existingCount ?? 0) > 0 && (deletedRows?.length ?? 0) === 0) {
-        throw new Error(
-          'Save failed: existing assembly line items could not be cleared (likely an RLS DELETE policy issue on assembly_items).'
-        );
-      }
-
-      const rows = (Array.isArray(items) ? items : []).map((it, idx) => {
-        const hours = Number((it.labor_hours ?? it.laborHours) ?? 0);
-        const mins = Number((it.labor_minutes ?? it.laborMinutes) ?? 0);
-        const laborMinutes = Number.isFinite(hours) && hours > 0 ? Math.floor(hours * 60 + mins) : mins;
-
-        const unitCost = it.material_cost_override ?? it.material_cost ?? it.unit_cost ?? it.cost ?? null;
-
-        return {
-          // Let DB generate the UUID
+    // Minimal line item support (optional; does not break create)
+    if (Array.isArray(items) && items.length) {
+      for (const it of items) {
+        const itPayload: any = {
+          id: it.id,
           assembly_id: data.id,
           item_type: it.item_type ?? it.type ?? 'material',
           material_id: it.material_id ?? it.materialId ?? null,
           name: it.name ?? null,
-          quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
-          material_cost_override: unitCost == null ? null : Number(unitCost),
-          labor_minutes: Number.isFinite(laborMinutes) ? Math.max(0, Math.floor(laborMinutes)) : 0,
-          sort_order: Number.isFinite(Number(it.sort_order)) ? Number(it.sort_order) : idx,
+          quantity: Number(it.quantity ?? 1),
+          material_cost_override: it.material_cost_override ?? it.cost ?? null,
+          labor_minutes: Number(it.labor_minutes ?? 0),
+          sort_order: Number(it.sort_order ?? 0),
         };
-      });
+        if (!itPayload.id) delete itPayload.id;
 
-      if (rows.length) {
-        const { error: insErr } = await this.supabase.from('assembly_items').insert(rows as any);
-        if (insErr) throw insErr;
+        const { error: itErr } = await this.supabase.from('assembly_items').upsert(itPayload);
+        if (itErr) throw itErr;
       }
     }
 
-    // IMPORTANT: The editor expects the returned assembly to include items.
-    // Previously we returned only the header, which cleared the editor UI after Save.
-    return (await this.getAssembly(data.id)) ?? {
+    return {
       id: data.id,
       company_id: data.company_id ?? null,
       owner_type: data.owner,
@@ -596,10 +550,10 @@ export class SupabaseDataProvider implements IDataProvider {
       job_type_id: data.job_type_id ?? null,
       use_admin_rules: Boolean(data.use_admin_rules ?? false),
       customer_supplied_materials: Boolean(data.customer_supplies_materials ?? false),
+      customer_supplies_materials: Boolean(data.customer_supplies_materials ?? false),
       taxable: Boolean(data.taxable ?? false),
       created_at: data.created_at,
       updated_at: data.updated_at,
-      items: [],
     };
   }
 
