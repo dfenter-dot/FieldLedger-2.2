@@ -315,7 +315,8 @@ export function computeAssemblyPricing(params: {
     const minMinutes = Number((companySettings as any)?.min_billable_labor_minutes_per_job ?? 0) || 0;
     if (minMinutes > 0 && expectedMinutes < minMinutes) expectedMinutes = minMinutes;
 
-    laborMinutesTotal = expectedMinutes;
+	    laborMinutesTotal = expectedMinutes;
+	    laborMinutesExpected = expectedMinutes;
 
     const ratePerBillableHour = computeRequiredRevenuePerBillableHour({ companySettings, jobType });
     laborPriceTotal = (laborMinutesTotal / 60) * ratePerBillableHour;
@@ -369,17 +370,33 @@ export function computeAssemblyPricing(params: {
   const totalPrice = totalAfterDiscount + processingFee;
 
   return {
-    material_cost_total: round2(materialCostTotal),
-    labor_minutes_total: Math.round(laborMinutesTotal),
-    material_price_total: round2(materialPriceTotal),
-    labor_price_total: round2(laborPriceTotal),
-    misc_material_price: round2(miscMaterial),
-    subtotal_price: round2(displayedSubtotal),
-    discount_amount: round2(discountAmount),
-    processing_fee: round2(processingFee),
-    total_price: round2(totalPrice),
-    lines,
-  };
+	    // New (engine-native) fields
+	    material_cost_total: round2(materialCostTotal),
+	    labor_minutes_total: Math.round(laborMinutesTotal),
+	    material_price_total: round2(materialPriceTotal),
+	    labor_price_total: round2(laborPriceTotal),
+	    misc_material_price: round2(miscMaterial),
+	    subtotal_price: round2(displayedSubtotal),
+	    discount_amount: round2(discountAmount),
+	    processing_fee: round2(processingFee),
+	    total_price: round2(totalPrice),
+	    lines,
+
+	    // Legacy UI fields (kept for existing screens)
+	    material_cost: round2(materialCostTotal),
+	    material_price: round2(materialPriceTotal),
+	    labor_price: round2(laborPriceTotal),
+	    misc_material: round2(miscMaterial),
+	    labor_minutes_actual: Math.round(laborMinutesActual),
+	    labor_minutes_expected: Math.round(laborMinutesExpected),
+	    labor_cost: round2(laborCostTotal),
+	    discount_percent: applyDiscount ? discountPct : 0,
+	    pre_discount_total: round2(displayedSubtotal),
+	    subtotal_before_processing: round2(totalAfterDiscount),
+	    total: round2(totalPrice),
+	    gross_margin_target_percent: jobType ? Number(jobType.profit_margin_percent ?? 0) : null,
+	    gross_margin_expected_percent: null,
+	  };
 }
 
 /**
@@ -393,13 +410,32 @@ export function computeEstimatePricing(params: {
   jobTypesById: Record<string, JobType>;
   companySettings: CompanySettings;
 }): {
+  // New (engine-native) fields
   material_cost_total: number;
   labor_minutes_total: number;
   material_price_total: number;
   labor_price_total: number;
   misc_material_price: number;
+  subtotal_price: number;
+  discount_amount: number;
+  processing_fee: number;
   total_price: number;
   lines: PricingLineBreakdown[];
+
+  // Legacy UI fields (kept for backward compatibility with existing screens)
+  material_cost: number;
+  material_price: number;
+  labor_price: number;
+  misc_material: number;
+  labor_minutes_actual: number;
+  labor_minutes_expected: number;
+  labor_cost: number;
+  discount_percent: number;
+  pre_discount_total: number;
+  subtotal_before_processing: number;
+  total: number;
+  gross_margin_target_percent: number | null;
+  gross_margin_expected_percent: number | null;
 } {
   const { estimate, materialsById, assembliesById, jobTypesById, companySettings } = params;
 
@@ -524,6 +560,10 @@ export function computeEstimatePricing(params: {
     }
   }
 
+  // Preserve baseline labor minutes before any efficiency/minimum adjustments.
+  const laborMinutesActual = laborMinutesTotal;
+  let laborMinutesExpected = laborMinutesTotal;
+
   // Flat-rate estimate-level labor adjustments and labor pricing
   if (billingMode === 'flat') {
     const efficiency = clampPct(Number(jobType?.efficiency_percent ?? 100)) / 100;
@@ -532,10 +572,15 @@ export function computeEstimatePricing(params: {
     const minMinutes = Number((companySettings as any)?.min_billable_labor_minutes_per_job ?? 0) || 0;
     if (minMinutes > 0 && expectedMinutes < minMinutes) expectedMinutes = minMinutes;
 
-    laborMinutesTotal = expectedMinutes;
+	    laborMinutesExpected = expectedMinutes;
+	    laborMinutesTotal = expectedMinutes;
 
     const ratePerBillableHour = computeRequiredRevenuePerBillableHour({ companySettings, jobType });
     laborPriceTotal = (laborMinutesTotal / 60) * ratePerBillableHour;
+  }
+  if (billingMode !== 'flat') {
+    // Hourly mode has no efficiency/minimum adjustments.
+    laborMinutesExpected = laborMinutesTotal;
   }
 
   // Misc material: same rule as assemblies.
@@ -566,10 +611,14 @@ export function computeEstimatePricing(params: {
 
   const totalPrice = totalAfterDiscount + processingFee;
 
+  // Cost-side labor (COGS) uses average wage, regardless of billing mode.
+  const avgWage = getAverageTechnicianWage(companySettings as any);
+  const laborCost = (laborMinutesExpected / 60) * avgWage;
+
 
   return {
     material_cost_total: round2(materialCostTotal),
-    labor_minutes_total: Math.round(laborMinutesTotal),
+    labor_minutes_total: Math.round(laborMinutesExpected),
     material_price_total: round2(materialPriceTotal),
     labor_price_total: round2(laborPriceTotal),
     misc_material_price: round2(miscMaterial),
@@ -578,6 +627,21 @@ export function computeEstimatePricing(params: {
     processing_fee: round2(processingFee),
     total_price: round2(totalPrice),
     lines,
+
+    // Legacy fields
+    material_cost: round2(materialCostTotal),
+    material_price: round2(materialPriceTotal),
+    labor_price: round2(laborPriceTotal),
+    misc_material: round2(miscMaterial),
+    labor_minutes_actual: Math.round(laborMinutesActual),
+    labor_minutes_expected: Math.round(laborMinutesExpected),
+    labor_cost: round2(laborCost),
+    discount_percent: applyDiscount ? clampPct(discountPct) : 0,
+    pre_discount_total: round2(displayedSubtotal),
+    subtotal_before_processing: round2(totalAfterDiscount),
+    total: round2(totalPrice),
+    gross_margin_target_percent: null,
+    gross_margin_expected_percent: null,
   };
 }
 
