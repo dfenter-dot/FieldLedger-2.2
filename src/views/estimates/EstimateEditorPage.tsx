@@ -12,7 +12,8 @@ import { computeEstimatePricing } from '../../providers/data/pricing';
 
 type ItemRow =
   | { id: string; type: 'material'; materialId: string; quantity: number }
-  | { id: string; type: 'assembly'; assemblyId: string; quantity: number };
+  | { id: string; type: 'assembly'; assemblyId: string; quantity: number }
+  | { id: string; type: 'labor'; name: string; minutes: number };
 
 export function EstimateEditorPage() {
   const { estimateId } = useParams();
@@ -233,18 +234,7 @@ export function EstimateEditorPage() {
     await save({ ...e, items: nextItems } as any);
   }
 
-  if (!e) {
-    return (
-      <div className="stack">
-        <Card title="Estimate">
-          <div className="muted">{status ? status : 'Loading…'}</div>
-          <div className="row mt" style={{ gap: 8 }}>
-            <Button onClick={() => nav('/estimates')}>Back</Button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
+  if (!e) return <div className="muted">Loading…</div>;
 
   const isLocked = (e.status ?? 'draft') === 'approved';
   const jobTypeOptions = jobTypes.filter((j: any) => j.enabled !== false);
@@ -379,7 +369,7 @@ export function EstimateEditorPage() {
               disabled={isLocked || !allowDiscounts}
               type="text"
               inputMode="decimal"
-              value={String(e.discount_percent ?? '')}
+              value={String((e as any).discount_percent ?? '')}
               placeholder={String(companySettings?.default_discount_percent ?? 10)}
               onChange={(ev) => {
                 const raw = ev.target.value;
@@ -443,7 +433,6 @@ export function EstimateEditorPage() {
             disabled={isLocked}
             onClick={() => {
               setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
-              // Send to the Materials home page so the user can choose App vs User libraries.
               nav('/materials');
             }}
           >
@@ -454,11 +443,37 @@ export function EstimateEditorPage() {
             disabled={isLocked}
             onClick={() => {
               setMode({ type: 'add-assemblies-to-estimate', estimateId: e.id });
-              // Send to the Assemblies home page so the user can choose App vs User libraries.
               nav('/assemblies');
             }}
           >
             Add Assemblies
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={isLocked}
+            onClick={() => {
+              // Create a user material while staying in picker mode, so it can be added immediately after save.
+              setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
+              nav('/materials/user/new');
+            }}
+          >
+            Create Material
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={isLocked}
+            onClick={() => {
+              const next = {
+                id: crypto.randomUUID?.() ?? `labor_${Date.now()}`,
+                type: 'labor',
+                name: 'Labor',
+                labor_minutes: Math.max(0, Number(companySettings?.minimum_labor_minutes_per_job ?? 30)),
+                quantity: 1,
+              };
+              setE({ ...(e as any), items: [...((e as any).items ?? []), next] } as any);
+            }}
+          >
+            Add Labor Line
           </Button>
           <Button
             onClick={() => setE({ ...e, status: 'sent', sent_at: new Date().toISOString() } as any)}
@@ -486,13 +501,17 @@ export function EstimateEditorPage() {
           <div className="list">
             {rows.map((r) => {
               const title =
-                r.type === 'material'
-                  ? materialCache[r.materialId]?.name ?? `Material ${r.materialId}`
-                  : assemblyCache[r.assemblyId]?.name ?? `Assembly ${r.assemblyId}`;
+                r.type === 'labor'
+                  ? (r as any).name ?? 'Labor'
+                  : r.type === 'material'
+                    ? materialCache[(r as any).materialId]?.name ?? `Material ${(r as any).materialId}`
+                    : assemblyCache[(r as any).assemblyId]?.name ?? `Assembly ${(r as any).assemblyId}`;
               const sub =
-                r.type === 'material'
-                  ? materialCache[r.materialId]?.description ?? '—'
-                  : `${assemblyCache[r.assemblyId]?.items?.length ?? 0} items`;
+                r.type === 'labor'
+                  ? `${Math.max(0, Math.floor((r as any).minutes ?? 0))} min`
+                  : r.type === 'material'
+                    ? materialCache[(r as any).materialId]?.description ?? '—'
+                    : `${assemblyCache[(r as any).assemblyId]?.items?.length ?? 0} items`;
               return (
                 <div key={r.id} className="listRow">
                   <div className="listMain">
@@ -555,6 +574,5 @@ export function EstimateEditorPage() {
     </div>
   );
 }
-
 
 
