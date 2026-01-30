@@ -725,7 +725,6 @@ export class SupabaseDataProvider implements IDataProvider {
       apply_discount: Boolean(incoming.apply_discount ?? false),
       apply_processing_fees: Boolean(incoming.apply_processing_fees ?? false),
       apply_misc_material: Boolean(incoming.apply_misc_material ?? true),
-      discount_percent: incoming.discount_percent ?? null,
       status: incoming.status ?? 'draft',
       sent_at: incoming.sent_at ?? null,
       approved_at: incoming.approved_at ?? null,
