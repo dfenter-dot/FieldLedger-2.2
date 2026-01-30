@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
 import { Input } from '../../ui/components/Input';
@@ -23,6 +23,7 @@ function clampQty(n: number) {
 export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }) {
   const { libraryType, '*': splat } = useParams();
   const nav = useNavigate();
+  const location = useLocation();
 
   // URL uses app/user; data model uses personal/company.
   const lib = (libraryType === 'app' ? 'personal' : 'company') as LibraryType;
@@ -427,7 +428,10 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
         created_at: new Date().toISOString(),
       } as any);
 
-      nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${created.id}`);
+      nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${created.id}`, {
+        // Preserve current folder path so Back returns here (prevents "vanishing" folder drift).
+        state: { returnTo: location.pathname },
+      });
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
@@ -795,7 +799,9 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                       style={{ flex: 1 }}
                       onClick={() => {
                         if (inAssemblyPicker) return;
-                        nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${a.id}`);
+                        nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${a.id}`, {
+                          state: { returnTo: location.pathname },
+                        });
                       }}
                     >
                       <div style={{ fontWeight: 600 }}>{a.name}</div>
