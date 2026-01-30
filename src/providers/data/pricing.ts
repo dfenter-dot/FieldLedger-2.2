@@ -566,7 +566,6 @@ export function computeEstimatePricing(params: {
 
   const totalPrice = totalAfterDiscount + processingFee;
 
-  const totalPrice = materialPriceTotal + laborPriceTotal + miscMaterial;
 
   return {
     material_cost_total: round2(materialCostTotal),
