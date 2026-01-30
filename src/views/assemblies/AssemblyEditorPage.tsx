@@ -303,7 +303,15 @@ export function AssemblyEditorPage() {
           <div className="row">
             <Button
               onClick={() => {
-                // Always return to the assemblies library (not browser history),
+                // Prefer returning to the exact folder path the user came from.
+                // (Avoids "folders/assemblies vanished" drift when Back always goes to root.)
+                const st: any = (location as any)?.state;
+                const returnTo = typeof st?.returnTo === 'string' ? st.returnTo : null;
+                if (returnTo && returnTo.startsWith('/assemblies/')) {
+                  nav(returnTo);
+                  return;
+                }
+                // Fallback: return to the assemblies library (not browser history),
                 // because picker flows push `/materials` into history.
                 nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}`);
               }}
