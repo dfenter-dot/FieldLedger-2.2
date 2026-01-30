@@ -653,7 +653,7 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error) throw error;
     if (!data) return null;
 
-    // v1: treat each estimate row as a single option.
+    // NOTE: v1 uses a single option; estimate_items are keyed by estimate_option_id = estimate.id
     const { data: items, error: itemsErr } = await this.supabase
       .from('estimate_items')
       .select('*')
@@ -661,124 +661,162 @@ export class SupabaseDataProvider implements IDataProvider {
       .order('sort_order', { ascending: true });
     if (itemsErr) throw itemsErr;
 
+    const mappedItems = (items ?? []).map((it: any) => {
+      const t = (it.item_type ?? it.type ?? 'material') as string;
+      if (t === 'labor') {
+        return {
+          id: it.id,
+          type: 'labor',
+          name: it.name ?? 'Labor',
+          description: it.description ?? null,
+          labor_minutes: Number(it.labor_minutes ?? 0),
+          quantity: 1,
+        };
+      }
+      if (t === 'assembly') {
+        return {
+          id: it.id,
+          type: 'assembly',
+          assembly_id: it.assembly_id ?? null,
+          quantity: Number(it.quantity ?? 1),
+        };
+      }
+      return {
+        id: it.id,
+        type: 'material',
+        material_id: it.material_id ?? null,
+        quantity: Number(it.quantity ?? 1),
+      };
+    });
+
     return {
       ...(data as any),
-      // Keep both spellings to avoid UI/pricing drift.
+      // normalize to UI field name used elsewhere
+      customer_supplied_materials: Boolean((data as any).customer_supplies_materials ?? (data as any).customer_supplied_materials ?? false),
       customer_supplies_materials: Boolean((data as any).customer_supplies_materials ?? false),
-      customer_supplied_materials: Boolean((data as any).customer_supplies_materials ?? false),
-      items: (items ?? []).map((it: any) => ({
-        id: it.id,
-        item_type: it.item_type,
-        type: it.item_type,
-        material_id: it.material_id ?? null,
-        assembly_id: it.assembly_id ?? null,
-        name: it.name ?? null,
-        description: it.description ?? null,
-        quantity: Number(it.quantity ?? 1),
-        labor_minutes: Number(it.labor_minutes ?? 0),
-        material_cost_override: it.material_cost_override ?? null,
-        sort_order: Number(it.sort_order ?? 0),
-        assembly_snapshot: it.assembly_snapshot ?? null,
-      })),
+      items: mappedItems as any,
     } as any;
   }
 
-  private _uuid(): string {
-    // Browser crypto is available in the app runtime. Provide a safe fallback anyway.
-    const g: any = globalThis as any;
-    if (g?.crypto?.randomUUID) return g.crypto.randomUUID();
-    // RFC4122 v4 fallback
-    const rnd = (n: number) => Math.floor(Math.random() * n);
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = rnd(16);
-      const v = c === 'x' ? r : (r & 0x3) | 0x8;
-      return v.toString(16);
-    });
-  }
-
-  private _isUuid(v: any): v is string {
-    return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-  }
 
   async upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate> {
     const companyId = await this.currentCompanyId();
 
-    const incoming: any = { ...(estimate as any) };
-    const incomingItems: any[] = Array.isArray(incoming.items) ? incoming.items : [];
+    const items: any[] = (estimate as any)?.items ?? [];
 
-    // IMPORTANT: Whitelist header fields only (table has strict columns).
+    // Whitelist columns that actually exist on `estimates`
     const payload: any = {
-      id: incoming.id,
+      id: (estimate as any).id,
       company_id: companyId,
-      estimate_number: incoming.estimate_number,
-      name: incoming.name,
-      customer_name: incoming.customer_name ?? null,
-      customer_phone: incoming.customer_phone ?? null,
-      customer_email: incoming.customer_email ?? null,
-      customer_address: incoming.customer_address ?? null,
-      private_notes: incoming.private_notes ?? null,
-      job_type_id: incoming.job_type_id ?? null,
-      use_admin_rules: Boolean(incoming.use_admin_rules ?? false),
+      estimate_number: (estimate as any).estimate_number ?? null,
+      name: (estimate as any).name ?? null,
+
+      customer_name: (estimate as any).customer_name ?? null,
+      customer_phone: (estimate as any).customer_phone ?? null,
+      customer_email: (estimate as any).customer_email ?? null,
+      customer_address: (estimate as any).customer_address ?? null,
+      private_notes: (estimate as any).private_notes ?? null,
+
+      job_type_id: (estimate as any).job_type_id ?? null,
+      use_admin_rules: Boolean((estimate as any).use_admin_rules ?? false),
+
       customer_supplies_materials: Boolean(
-        incoming.customer_supplies_materials ?? incoming.customer_supplied_materials ?? false
+        (estimate as any).customer_supplies_materials ??
+          (estimate as any).customer_supplied_materials ??
+          false
       ),
-      apply_discount: Boolean(incoming.apply_discount ?? false),
-      apply_processing_fees: Boolean(incoming.apply_processing_fees ?? false),
-      apply_misc_material: Boolean(incoming.apply_misc_material ?? true),
-      status: incoming.status ?? 'draft',
-      sent_at: incoming.sent_at ?? null,
-      approved_at: incoming.approved_at ?? null,
-      declined_at: incoming.declined_at ?? null,
-      valid_until: incoming.valid_until ?? null,
-      created_by: incoming.created_by ?? null,
-      // created_at is set by DB default; only forward if explicitly provided.
-      ...(incoming.created_at ? { created_at: incoming.created_at } : {}),
+
+      apply_discount: Boolean((estimate as any).apply_discount ?? false),
+      apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
+      apply_misc_material: Boolean((estimate as any).apply_misc_material ?? false),
+
+      status: (estimate as any).status ?? 'draft',
+      sent_at: (estimate as any).sent_at ?? null,
+      approved_at: (estimate as any).approved_at ?? null,
+      declined_at: (estimate as any).declined_at ?? null,
+      valid_until: (estimate as any).valid_until ?? null,
+
+      created_by: (estimate as any).created_by ?? null,
+      created_at: (estimate as any).created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+
+    if (!payload.id) delete payload.id;
 
     const { data, error } = await this.supabase.from('estimates').upsert(payload).select('*').single();
     if (error) throw error;
 
-    // Items persist to estimate_items. v1 uses one option (estimate_option_id == estimate.id)
-    if (incoming.items) {
-      const optionId = data.id;
+    // Line items (v1 single option): replace all rows on save.
+    // estimate_items are keyed by estimate_option_id = estimate.id
+    {
+      const { count: existingCount, error: countErr } = await this.supabase
+        .from('estimate_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('estimate_option_id', data.id);
+      if (countErr) throw countErr;
 
-      const { error: delErr } = await this.supabase.from('estimate_items').delete().eq('estimate_option_id', optionId);
+      const { data: deletedRows, error: delErr } = await this.supabase
+        .from('estimate_items')
+        .delete()
+        .eq('estimate_option_id', data.id)
+        .select('id');
       if (delErr) throw delErr;
+      if ((existingCount ?? 0) > 0 && (deletedRows?.length ?? 0) === 0) {
+        throw new Error(
+          'Save failed: existing estimate line items could not be cleared (likely an RLS DELETE policy issue on estimate_items).'
+        );
+      }
 
-      if (incomingItems.length > 0) {
-        const rows = incomingItems.map((it, idx) => {
-          const rawId = (it as any).id;
-          const id = this._isUuid(rawId) ? rawId : this._uuid();
-          const itemType = (it as any).item_type ?? (it as any).type;
+      const rows = (Array.isArray(items) ? items : []).map((it, idx) => {
+        const type = it.type ?? it.item_type ?? 'material';
+
+        if (type === 'labor') {
+          const laborMinutes = Number.isFinite(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes))
+            ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
+            : 0;
           return {
-            id,
-            estimate_option_id: optionId,
-            item_type: itemType,
-            material_id: (it as any).material_id ?? null,
-            assembly_id: (it as any).assembly_id ?? null,
-            name: (it as any).name ?? null,
-            description: (it as any).description ?? null,
-            quantity: Number((it as any).quantity ?? 1),
-            material_cost_override: (it as any).material_cost_override ?? null,
-            labor_minutes: Number((it as any).labor_minutes ?? 0),
-            sort_order: Number((it as any).sort_order ?? idx),
-            assembly_snapshot: (it as any).assembly_snapshot ?? null,
+            estimate_option_id: data.id,
+            item_type: 'labor',
+            name: it.name ?? 'Labor',
+            description: it.description ?? null,
+            quantity: 1,
+            labor_minutes: laborMinutes,
+            sort_order: idx,
           };
-        });
+        }
 
+        if (type === 'assembly') {
+          return {
+            estimate_option_id: data.id,
+            item_type: 'assembly',
+            assembly_id: it.assembly_id ?? it.assemblyId ?? it.assembly_id,
+            quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+            labor_minutes: 0,
+            sort_order: idx,
+          };
+        }
+
+        return {
+          estimate_option_id: data.id,
+          item_type: 'material',
+          material_id: it.material_id ?? it.materialId ?? it.material_id,
+          quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+          labor_minutes: 0,
+          sort_order: idx,
+        };
+      });
+
+      if (rows.length) {
         const { error: insErr } = await this.supabase.from('estimate_items').insert(rows as any);
         if (insErr) throw insErr;
       }
     }
 
-    // Return hydrated record
-    return (await this.getEstimate(data.id)) as any;
+    return (await this.getEstimate(data.id)) ?? (data as any);
   }
 
+
   async deleteEstimate(id: string): Promise<void> {
-    // v1: delete items for the single option, then header.
-    await this.supabase.from('estimate_items').delete().eq('estimate_option_id', id);
     const { error } = await this.supabase.from('estimates').delete().eq('id', id);
     if (error) throw error;
   }
