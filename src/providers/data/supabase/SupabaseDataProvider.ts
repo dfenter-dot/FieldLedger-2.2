@@ -653,15 +653,35 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error) throw error;
     if (!data) return null;
 
-    // NOTE: v1 uses a single option; estimate_items are keyed by estimate_option_id = estimate.id
+    
+    // Options + items
+    const { data: options, error: optErr } = await this.supabase
+      .from('estimate_options')
+      .select('*')
+      .eq('estimate_id', id)
+      .order('sort_order', { ascending: true });
+    if (optErr) throw optErr;
+
+    // Ensure at least one option exists for legacy estimates
+    let activeOption = (options ?? [])[0] as any;
+    if (!activeOption) {
+      const { data: createdOpt, error: createOptErr } = await this.supabase
+        .from('estimate_options')
+        .insert({ estimate_id: id, option_name: 'Option 1', sort_order: 1 })
+        .select('*')
+        .single();
+      if (createOptErr) throw createOptErr;
+      activeOption = createdOpt as any;
+    }
+
     const { data: items, error: itemsErr } = await this.supabase
       .from('estimate_items')
       .select('*')
-      .eq('estimate_option_id', id)
+      .eq('estimate_option_id', activeOption.id)
       .order('sort_order', { ascending: true });
     if (itemsErr) throw itemsErr;
 
-    const mappedItems = (items ?? []).map((it: any) => {
+const mappedItems = (items ?? []).map((it: any) => {
       const t = (it.item_type ?? it.type ?? 'material') as string;
       if (t === 'labor') {
         return {
@@ -694,6 +714,8 @@ export class SupabaseDataProvider implements IDataProvider {
       // normalize to UI field name used elsewhere
       customer_supplied_materials: Boolean((data as any).customer_supplies_materials ?? (data as any).customer_supplied_materials ?? false),
       customer_supplies_materials: Boolean((data as any).customer_supplies_materials ?? false),
+      options: (options && options.length ? options : [activeOption]) as any,
+      active_option_id: (activeOption as any).id,
       items: mappedItems as any,
     } as any;
   }
@@ -727,38 +749,49 @@ export class SupabaseDataProvider implements IDataProvider {
       ),
 
       apply_discount: Boolean((estimate as any).apply_discount ?? false),
-      apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
-      apply_misc_material: Boolean((estimate as any).apply_misc_material ?? false),
+      apply_processing_fees: Boolean((estimate as any).apply_proc
+    // Options + items
+    // v1 UI edits a single active option. We persist items against `estimate_options.id`
+    // (so FK `estimate_items.estimate_option_id -> estimate_options.id` is satisfied).
+    let activeOptionId: string | null =
+      (estimate as any).active_option_id ?? (estimate as any).activeOptionId ?? null;
 
-      status: (estimate as any).status ?? 'draft',
-      sent_at: (estimate as any).sent_at ?? null,
-      approved_at: (estimate as any).approved_at ?? null,
-      declined_at: (estimate as any).declined_at ?? null,
-      valid_until: (estimate as any).valid_until ?? null,
+    // Load options for this estimate
+    const { data: options, error: optErr } = await this.supabase
+      .from('estimate_options')
+      .select('*')
+      .eq('estimate_id', data.id)
+      .order('sort_order', { ascending: true });
+    if (optErr) throw optErr;
 
-      created_by: (estimate as any).created_by ?? null,
-      created_at: (estimate as any).created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    // If none exist yet, create Option 1
+    let activeOption: any =
+      (options ?? []).find((o: any) => o.id === activeOptionId) ?? (options ?? [])[0] ?? null;
 
-    if (!payload.id) delete payload.id;
+    if (!activeOption) {
+      const { data: createdOpt, error: createOptErr } = await this.supabase
+        .from('estimate_options')
+        .insert({ estimate_id: data.id, option_name: 'Option 1', sort_order: 1 })
+        .select('*')
+        .single();
+      if (createOptErr) throw createOptErr;
+      activeOption = createdOpt as any;
+    }
 
-    const { data, error } = await this.supabase.from('estimates').upsert(payload).select('*').single();
-    if (error) throw error;
+    activeOptionId = activeOption.id;
 
-    // Line items (v1 single option): replace all rows on save.
-    // estimate_items are keyed by estimate_option_id = estimate.id
+    // Replace all items for the active option
     {
       const { count: existingCount, error: countErr } = await this.supabase
         .from('estimate_items')
         .select('id', { count: 'exact', head: true })
-        .eq('estimate_option_id', data.id);
+        .eq('estimate_option_id', activeOptionId);
       if (countErr) throw countErr;
 
       const { data: deletedRows, error: delErr } = await this.supabase
         .from('estimate_items')
         .delete()
-        .eq('estimate_option_id', data.id)
+        .eq('estimate_option_id', activeOptionId)
         .select('id');
       if (delErr) throw delErr;
       if ((existingCount ?? 0) > 0 && (deletedRows?.length ?? 0) === 0) {
@@ -775,7 +808,7 @@ export class SupabaseDataProvider implements IDataProvider {
             ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
             : 0;
           return {
-            estimate_option_id: data.id,
+            estimate_option_id: activeOptionId,
             item_type: 'labor',
             name: it.name ?? 'Labor',
             description: it.description ?? null,
@@ -787,8 +820,31 @@ export class SupabaseDataProvider implements IDataProvider {
 
         if (type === 'assembly') {
           return {
-            estimate_option_id: data.id,
+            estimate_option_id: activeOptionId,
             item_type: 'assembly',
+            assembly_id: it.assembly_id ?? it.assemblyId ?? it.assembly_id,
+            quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+            labor_minutes: 0,
+            sort_order: idx,
+          };
+        }
+
+        return {
+          estimate_option_id: activeOptionId,
+          item_type: 'material',
+          material_id: it.material_id ?? it.materialId ?? it.material_id,
+          quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+          labor_minutes: 0,
+          sort_order: idx,
+        };
+      });
+
+      if (rows.length) {
+        const { error: insErr } = await this.supabase.from('estimate_items').insert(rows as any);
+        if (insErr) throw insErr;
+      }
+    }
+
             assembly_id: it.assembly_id ?? it.assemblyId ?? it.assembly_id,
             quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
             labor_minutes: 0,
@@ -910,6 +966,7 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 }
+
 
 
 
