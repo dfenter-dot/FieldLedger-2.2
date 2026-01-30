@@ -8,11 +8,12 @@ import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Estimate, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
-import { computeEstimatePricing, computeEstimateTotalsNormalized } from '../../providers/data/pricing';
+import { computeEstimatePricing } from '../../providers/data/pricing';
 
 type ItemRow =
   | { id: string; type: 'material'; materialId: string; quantity: number }
-  | { id: string; type: 'assembly'; assemblyId: string; quantity: number };
+  | { id: string; type: 'assembly'; assemblyId: string; quantity: number }
+  | { id: string; type: 'labor'; name: string; minutes: number };
 
 export function EstimateEditorPage() {
   const { estimateId } = useParams();
@@ -173,17 +174,18 @@ export function EstimateEditorPage() {
   }, [data, rows, assemblyCache]);
 
   const totals = useMemo(() => {
-  if (!e || !companySettings) return null;
-  const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
-  return computeEstimateTotalsNormalized({
-    estimate: e,
-    materialsById: materialCache,
-    assembliesById: assemblyCache,
-    jobTypesById,
-    companySettings,
-  });
-}, [e, companySettings, jobTypes, materialCache, assemblyCache]);
-async function save(next: Estimate) {
+    if (!e || !companySettings) return null;
+    const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
+    return computeEstimatePricing({
+      estimate: e,
+      materialsById: materialCache,
+      assembliesById: assemblyCache,
+      jobTypesById,
+      companySettings,
+    });
+  }, [e, companySettings, jobTypes, materialCache, assemblyCache]);
+
+  async function save(next: Estimate) {
     try {
       setStatus('Saving…');
       const saved = await data.upsertEstimate(next);
@@ -232,18 +234,7 @@ async function save(next: Estimate) {
     await save({ ...e, items: nextItems } as any);
   }
 
-  if (!e) {
-    return (
-      <div className="stack">
-        <Card title="Estimate">
-          <div className="muted">{status ? status : 'Loading…'}</div>
-          <div className="row mt" style={{ gap: 8 }}>
-            <Button onClick={() => nav('/estimates')}>Back</Button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
+  if (!e) return <div className="muted">Loading…</div>;
 
   const isLocked = (e.status ?? 'draft') === 'approved';
   const jobTypeOptions = jobTypes.filter((j: any) => j.enabled !== false);
@@ -378,7 +369,7 @@ async function save(next: Estimate) {
               disabled={isLocked || !allowDiscounts}
               type="text"
               inputMode="decimal"
-              value={String(e.discount_percent ?? '')}
+              value={String((e as any).discount_percent ?? '')}
               placeholder={String(companySettings?.default_discount_percent ?? 10)}
               onChange={(ev) => {
                 const raw = ev.target.value;
@@ -442,7 +433,7 @@ async function save(next: Estimate) {
             disabled={isLocked}
             onClick={() => {
               setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
-              nav('/materials/user');
+              nav('/materials');
             }}
           >
             Add Materials
@@ -452,10 +443,37 @@ async function save(next: Estimate) {
             disabled={isLocked}
             onClick={() => {
               setMode({ type: 'add-assemblies-to-estimate', estimateId: e.id });
-              nav('/assemblies/user');
+              nav('/assemblies');
             }}
           >
             Add Assemblies
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={isLocked}
+            onClick={() => {
+              // Create a user material while staying in picker mode, so it can be added immediately after save.
+              setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
+              nav('/materials/user/new');
+            }}
+          >
+            Create Material
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={isLocked}
+            onClick={() => {
+              const next = {
+                id: crypto.randomUUID?.() ?? `labor_${Date.now()}`,
+                type: 'labor',
+                name: 'Labor',
+                labor_minutes: Math.max(0, Number(companySettings?.minimum_labor_minutes_per_job ?? 30)),
+                quantity: 1,
+              };
+              setE({ ...(e as any), items: [...((e as any).items ?? []), next] } as any);
+            }}
+          >
+            Add Labor Line
           </Button>
           <Button
             onClick={() => setE({ ...e, status: 'sent', sent_at: new Date().toISOString() } as any)}
@@ -483,13 +501,17 @@ async function save(next: Estimate) {
           <div className="list">
             {rows.map((r) => {
               const title =
-                r.type === 'material'
-                  ? materialCache[r.materialId]?.name ?? `Material ${r.materialId}`
-                  : assemblyCache[r.assemblyId]?.name ?? `Assembly ${r.assemblyId}`;
+                r.type === 'labor'
+                  ? (r as any).name ?? 'Labor'
+                  : r.type === 'material'
+                    ? materialCache[(r as any).materialId]?.name ?? `Material ${(r as any).materialId}`
+                    : assemblyCache[(r as any).assemblyId]?.name ?? `Assembly ${(r as any).assemblyId}`;
               const sub =
-                r.type === 'material'
-                  ? materialCache[r.materialId]?.description ?? '—'
-                  : `${assemblyCache[r.assemblyId]?.items?.length ?? 0} items`;
+                r.type === 'labor'
+                  ? `${Math.max(0, Math.floor((r as any).minutes ?? 0))} min`
+                  : r.type === 'material'
+                    ? materialCache[(r as any).materialId]?.description ?? '—'
+                    : `${assemblyCache[(r as any).assemblyId]?.items?.length ?? 0} items`;
               return (
                 <div key={r.id} className="listRow">
                   <div className="listMain">
@@ -552,6 +574,5 @@ async function save(next: Estimate) {
     </div>
   );
 }
-
 
 
