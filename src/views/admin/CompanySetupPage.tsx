@@ -372,14 +372,13 @@ export function CompanySetupPage() {
     (next as any).processing_fee_percent = toNum(draft.processing_fee_percent ?? '', next.processing_fee_percent ?? 0);
 
     // Tiers
-    (next as any).material_markup_tiers = tiers.map((t, idx) => {
-      const d = tierDrafts[idx] ?? { min: String(t.min ?? 0), max: String(t.max ?? 0), markup_percent: String(t.markup_percent ?? 0) };
-      return {
+    ;(next as any).material_markup_tiers = (tierDrafts.length ? tierDrafts : tiers.map((t) => ({ min: String(t.min ?? 0), max: String(t.max ?? 0), markup_percent: String(t.markup_percent ?? 0) }))).map(
+      (d) => ({
         min: toNum(d.min, 0),
         max: toNum(d.max, 0),
         markup_percent: toNum(d.markup_percent, 0),
-      };
-    });
+      })
+    );
 
     // Wages
     (next as any).technician_wages = wages.map((w, idx) => ({
@@ -417,6 +416,9 @@ export function CompanySetupPage() {
 
     // Revenue goal is derived from capacity + required revenue/hour, not user-input
     ;(next as any).revenue_goal_monthly = revenueGoalMonthlyDerived;
+
+    // Misc material behavior
+    ;(next as any).misc_applies_when_customer_supplies = Boolean((s as any).misc_applies_when_customer_supplies ?? false);
 
     return next;
   }
@@ -629,6 +631,140 @@ export function CompanySetupPage() {
               onBlur={() => commitInt('min_billable_labor_minutes_per_job')}
             />
           </div>
+        </div>
+      </Card>
+
+      <Card title="Pricing Parameters">
+        <div className="grid2">
+          <div className="stack">
+            <label className="label">Purchase Tax Percent</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.material_purchase_tax_percent ?? ''}
+              onChange={(e) => onDraftChange('material_purchase_tax_percent', e.target.value)}
+              onBlur={() => commitNum('material_purchase_tax_percent')}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Misc Material Percent</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.misc_material_percent ?? ''}
+              onChange={(e) => onDraftChange('misc_material_percent', e.target.value)}
+              onBlur={() => commitNum('misc_material_percent')}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Default Discount Percent</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.default_discount_percent ?? ''}
+              onChange={(e) => onDraftChange('default_discount_percent', e.target.value)}
+              onBlur={() => commitNum('default_discount_percent')}
+            />
+          </div>
+
+          <div className="stack">
+            <label className="label">Processing Fee Percent</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.processing_fee_percent ?? ''}
+              onChange={(e) => onDraftChange('processing_fee_percent', e.target.value)}
+              onBlur={() => commitNum('processing_fee_percent')}
+            />
+          </div>
+        </div>
+
+        <div className="rowBetween" style={{ marginTop: 12, gap: 12, flexWrap: 'wrap' }}>
+          <div className="stack" style={{ minWidth: 320 }}>
+            <label className="label">Apply misc material when customer supplies materials</label>
+            <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+              <Toggle
+                checked={Boolean((s as any)?.misc_applies_when_customer_supplies ?? false)}
+                onChange={(checked) => s && setS({ ...(s as any), misc_applies_when_customer_supplies: Boolean(checked) })}
+              />
+              <div className="muted">{(s as any)?.misc_applies_when_customer_supplies ? 'Yes' : 'No'}</div>
+            </div>
+          </div>
+
+          <div className="muted small" style={{ maxWidth: 520 }}>
+            Misc material is an estimate/assembly-level percentage applied after material totals are built. This toggle controls whether it can still apply when the customer supplies materials.
+          </div>
+        </div>
+      </Card>
+
+      <Card
+        title="Material Markups"
+        right={
+          <Button
+            onClick={() => {
+              // Add a new tier row
+              setTierDrafts((prev) => [...prev, { min: '0', max: '0', markup_percent: '0' }]);
+            }}
+          >
+            Add Tier
+          </Button>
+        }
+      >
+        <div className="muted small">Define tiered material markups based on material cost. These are used by the pricing engine.</div>
+
+        <div className="stack" style={{ marginTop: 10, gap: 10 }}>
+          {(tierDrafts.length ? tierDrafts : [{ min: '0', max: '0', markup_percent: '0' }]).map((t, idx) => (
+            <div key={idx} className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="stack" style={{ width: 120 }}>
+                <label className="label">Min</label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={t.min}
+                  onChange={(e) =>
+                    setTierDrafts((prev) => prev.map((x, i) => (i === idx ? { ...x, min: e.target.value } : x)))
+                  }
+                />
+              </div>
+
+              <div className="stack" style={{ width: 120 }}>
+                <label className="label">Max</label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={t.max}
+                  onChange={(e) =>
+                    setTierDrafts((prev) => prev.map((x, i) => (i === idx ? { ...x, max: e.target.value } : x)))
+                  }
+                />
+              </div>
+
+              <div className="stack" style={{ width: 140 }}>
+                <label className="label">Markup %</label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={t.markup_percent}
+                  onChange={(e) =>
+                    setTierDrafts((prev) => prev.map((x, i) => (i === idx ? { ...x, markup_percent: e.target.value } : x)))
+                  }
+                />
+              </div>
+
+              <div className="row" style={{ gap: 8, alignItems: 'end' }}>
+                <Button
+                  onClick={() => {
+                    setTierDrafts((prev) => prev.filter((_, i) => i !== idx));
+                  }}
+                  disabled={(tierDrafts.length ? tierDrafts : []).length <= 1}
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
       </Card>
 
