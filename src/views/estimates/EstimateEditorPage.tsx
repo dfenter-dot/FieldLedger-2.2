@@ -233,7 +233,18 @@ export function EstimateEditorPage() {
     await save({ ...e, items: nextItems } as any);
   }
 
-  if (!e) return <div className="muted">Loading…</div>;
+  if (!e) {
+    return (
+      <div className="stack">
+        <Card title="Estimate">
+          <div className="muted">{status ? status : 'Loading…'}</div>
+          <div className="row mt" style={{ gap: 8 }}>
+            <Button onClick={() => nav('/estimates')}>Back</Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   const isLocked = (e.status ?? 'draft') === 'approved';
   const jobTypeOptions = jobTypes.filter((j: any) => j.enabled !== false);
@@ -542,5 +553,6 @@ export function EstimateEditorPage() {
     </div>
   );
 }
+
 
 
