@@ -369,7 +369,106 @@ export function computeEstimatePricing(params: {
   assembliesById: Record<string, any | null | undefined>;
   jobTypesById: Record<string, JobType>;
   companySettings: CompanySettings;
-}): {
+}
+
+export type EstimateTotalsNormalized = {
+  labor_minutes_actual: number;
+  labor_minutes_expected: number;
+  material_cost: number;
+  material_price: number;
+  labor_price: number;
+  misc_material: number;
+  pre_discount_total: number;
+  discount_percent: number;
+  discount_amount: number;
+  subtotal_before_processing: number;
+  processing_fee: number;
+  total: number;
+  gross_margin_target_percent: number | null;
+  gross_margin_expected_percent: number | null;
+};
+
+/**
+ * computeEstimateTotalsNormalized
+ *
+ * UI-safe totals shape:
+ * - never returns undefined for numeric fields
+ * - keeps legacy field names used across Estimate editor/preview/job costing
+ */
+export function computeEstimateTotalsNormalized(params: {
+  estimate: any;
+  materialsById: Record<string, Material | null | undefined>;
+  assembliesById: Record<string, any | null | undefined>;
+  jobTypesById: Record<string, JobType>;
+  companySettings: CompanySettings;
+}): EstimateTotalsNormalized {
+  const { estimate, companySettings } = params;
+
+  const t = computeEstimatePricing(params);
+
+  // Base subtotal before discounts/processing is the engine-computed total_price
+  // (material sell + labor sell + misc material sell, already respecting customer supplies logic).
+  const targetTotal = round2(t.total_price);
+
+  const applyDiscount = Boolean(estimate?.apply_discount);
+  const discountPctRaw = applyDiscount
+    ? Number(estimate?.discount_percent ?? getDiscountPercentDefault(companySettings) ?? 0)
+    : 0;
+
+  const discountPct = clampPercent(discountPctRaw);
+
+  // Per spec: "preload" discount so final total hits targetTotal after discount.
+  // displayedSubtotal is what you show as subtotal before discount line.
+  const displayedSubtotal = applyDiscount && discountPct > 0
+    ? round2(targetTotal / (1 - discountPct / 100))
+    : targetTotal;
+
+  const discountAmount = applyDiscount && discountPct > 0
+    ? round2(displayedSubtotal - targetTotal)
+    : 0;
+
+  const applyProcessing = Boolean(estimate?.apply_processing_fees);
+  const processingPct = clampPercent(getProcessingFeePercentDefault(companySettings));
+  const processingFee = applyProcessing && processingPct > 0
+    ? round2(targetTotal * (processingPct / 100))
+    : 0;
+
+  const total = round2(targetTotal + processingFee);
+
+  return {
+    labor_minutes_actual: t.labor_minutes_total,
+    labor_minutes_expected: t.labor_minutes_total,
+    material_cost: round2(t.material_cost_total),
+    material_price: round2(t.material_price_total),
+    labor_price: round2(t.labor_price_total),
+    misc_material: round2(t.misc_material_price),
+    pre_discount_total: displayedSubtotal,
+    discount_percent: discountPct,
+    discount_amount: discountAmount,
+    subtotal_before_processing: targetTotal,
+    processing_fee: processingFee,
+    total,
+    gross_margin_target_percent: null,
+    gross_margin_expected_percent: null,
+  };
+}
+
+function clampPercent(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
+
+function getDiscountPercentDefault(companySettings: CompanySettings): number {
+  const anyCs: any = companySettings as any;
+  // tolerate legacy / renamed fields
+  return (
+    Number(anyCs?.discount_percent_default) ||
+    Number(anyCs?.default_discount_percent) ||
+    Number(anyCs?.discount_percent) ||
+    0
+  );
+}
+): {
   material_cost_total: number;
   labor_minutes_total: number;
   material_price_total: number;
@@ -570,4 +669,15 @@ export function computeEstimatePricing(params: {
   };
 }
 
+
+
+function getProcessingFeePercentDefault(companySettings: CompanySettings): number {
+  const anyCs: any = companySettings as any;
+  return (
+    Number(anyCs?.processing_fee_percent) ||
+    Number(anyCs?.processing_fee_percent_default) ||
+    Number(anyCs?.default_processing_fee_percent) ||
+    0
+  );
+}
 
