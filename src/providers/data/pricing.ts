@@ -346,7 +346,27 @@ export function computeAssemblyPricing(params: {
     : materialPriceTotal;
   const miscMaterial = miscBase * (miscPct / 100);
 
-  const totalPrice = materialPriceTotal + round2(laborPriceTotal) + miscMaterial;
+  const baseTotal = materialPriceTotal + round2(laborPriceTotal) + miscMaterial;
+
+  // Discount (preload) + Processing Fees sequencing (per spec)
+  const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
+  const discountPct = Number(companySettings?.discount_percent_default ?? 0) || 0;
+
+  let displayedSubtotal = baseTotal;
+  let discountAmount = 0;
+  let totalAfterDiscount = baseTotal;
+
+  if (applyDiscount && discountPct > 0 && discountPct < 100) {
+    displayedSubtotal = baseTotal / (1 - discountPct / 100);
+    discountAmount = displayedSubtotal - baseTotal;
+    totalAfterDiscount = baseTotal; // preload keeps final equal to target
+  }
+
+  const applyProcessing = Boolean(estimate?.apply_processing_fees ?? estimate?.applyProcessingFees ?? false);
+  const processingPct = Number(companySettings?.processing_fee_percent ?? 0) || 0;
+  const processingFee = applyProcessing && processingPct > 0 ? totalAfterDiscount * (processingPct / 100) : 0;
+
+  const totalPrice = totalAfterDiscount + processingFee;
 
   return {
     material_cost_total: round2(materialCostTotal),
@@ -354,6 +374,9 @@ export function computeAssemblyPricing(params: {
     material_price_total: round2(materialPriceTotal),
     labor_price_total: round2(laborPriceTotal),
     misc_material_price: round2(miscMaterial),
+    subtotal_price: round2(displayedSubtotal),
+    discount_amount: round2(discountAmount),
+    processing_fee: round2(processingFee),
     total_price: round2(totalPrice),
     lines,
   };
@@ -529,8 +552,12 @@ export function computeEstimatePricing(params: {
     material_price_total: round2(materialPriceTotal),
     labor_price_total: round2(laborPriceTotal),
     misc_material_price: round2(miscMaterial),
+    subtotal_price: round2(displayedSubtotal),
+    discount_amount: round2(discountAmount),
+    processing_fee: round2(processingFee),
     total_price: round2(totalPrice),
     lines,
   };
 }
+
 
