@@ -58,7 +58,7 @@ export function EstimateEditorPage() {
           const nextNum = Math.max(starting, maxNum + 1);
           const draft: Estimate = {
             id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
-            company_id: '',
+            company_id: null,
             name: 'New Estimate',
             estimate_number: nextNum,
             job_type_id: null,
@@ -230,7 +230,7 @@ export function EstimateEditorPage() {
 
   if (!e) return <div className="muted">Loading…</div>;
 
-  const isLocked = (e.status ?? 'draft') === 'approved';
+  const isLocked = ['approved','declined','archived'].includes(String(e.status ?? 'draft'));
   const jobTypeOptions = jobTypes.filter((j: any) => j.enabled !== false);
   const defaultJobTypeId = jobTypes.find((j: any) => j.is_default)?.id ?? null;
   const activeJobType = jobTypes.find((j: any) => j.id === (e.job_type_id ?? defaultJobTypeId));
@@ -242,7 +242,7 @@ export function EstimateEditorPage() {
       setStatus('Applying rules...');
       const rules = await data.listAdminRules();
       const match = rules
-        .filter((r) => r.enabled && r.applies_to === 'estimate' && (r.match_text ?? '').trim().length > 0)
+        .filter((r) => r.enabled && ['estimate','both',null,undefined].includes((r as any).applies_to as any) && (r.match_text ?? '').trim().length > 0)
         .sort((a, b) => a.priority - b.priority)
         .find((r) => (e.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
 
@@ -537,4 +537,5 @@ export function EstimateEditorPage() {
     </div>
   );
 }
+
 
