@@ -578,18 +578,34 @@ export function computeEstimatePricing(params: {
   const baseTotal = materialPriceTotal + laborPriceTotal + miscMaterial;
 
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
-  const discountPct = Number(
+  const discountPctRaw = Number(
     estimate?.discount_percent ?? (companySettings as any)?.discount_percent_default ?? 0
-  ) || 0;
+  );
+  const discountPct = Number.isFinite(discountPctRaw) ? discountPctRaw : 0;
 
-  let displayedSubtotal = baseTotal;
+  // Canonical "available discount" behavior (per your UI expectation):
+  // - If Apply Discount = OFF: show the pre-discount total (inflated) as the current total.
+  // - If Apply Discount = ON: show the target total, while also showing the pre-discount amount + discount delta.
+  //
+  // This preserves the preload math (so that after discount equals the target),
+  // but makes the *default* price be the pre-discount total until discount is applied.
+  const hasDiscount = discountPct > 0 && discountPct < 100;
+
+  const preDiscountTotal = hasDiscount ? baseTotal / (1 - discountPct / 100) : baseTotal;
+
+  let displayedSubtotal = baseTotal; // used for the "Pre-Discount" pill when discount is applied
   let discountAmount = 0;
   let totalAfterDiscount = baseTotal;
 
-  if (applyDiscount && discountPct > 0 && discountPct < 100) {
-    displayedSubtotal = baseTotal / (1 - discountPct / 100);
-    discountAmount = displayedSubtotal - baseTotal;
-    totalAfterDiscount = baseTotal; // preload keeps final equal to target
+  if (applyDiscount && hasDiscount) {
+    displayedSubtotal = preDiscountTotal;
+    discountAmount = preDiscountTotal - baseTotal;
+    totalAfterDiscount = baseTotal; // after-discount stays at target
+  } else {
+    // Discount not applied: current totals show the pre-discount price
+    displayedSubtotal = baseTotal;
+    discountAmount = 0;
+    totalAfterDiscount = preDiscountTotal;
   }
 
   const applyProcessing = Boolean(estimate?.apply_processing_fees ?? estimate?.applyProcessingFees ?? false);
@@ -619,7 +635,7 @@ export function computeEstimatePricing(params: {
     labor_minutes_expected: Math.round(laborMinutesExpected),
     discount_percent: applyDiscount ? round2(discountPct) : 0,
     pre_discount_total: round2(displayedSubtotal),
-    subtotal_before_processing: round2(baseTotal),
+    subtotal_before_processing: round2(totalAfterDiscount),
     total: round2(totalPrice),
     gross_margin_target_percent: null,
     gross_margin_expected_percent: null,
