@@ -432,6 +432,8 @@ export function computeEstimatePricing(params: {
   });
 
   const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
+  const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : breakdown.labor.actual_minutes;
+
 
   return {
     labor_minutes_actual: breakdown.labor.actual_minutes,
