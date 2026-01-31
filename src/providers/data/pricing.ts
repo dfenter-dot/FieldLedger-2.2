@@ -3,6 +3,7 @@
 // All pricing logic lives here. UI must consume outputs only.
 
 import { CompanySettings, JobType } from './types';
+import { computeTechCostBreakdown } from './techCostBreakdown';
 
 export type PricingInput = {
   company: {
@@ -314,6 +315,8 @@ export function computeAssemblyPricing(params: {
     Object.values(jobTypesById ?? {})[0] ||
     null;
 
+  const tech = computeTechCostBreakdown(companySettings as any, jobType as any);
+
   const mats: PricingInput['lineItems']['materials'] = (Array.isArray(items) ? items : [])
     .filter((it) => it?.type === 'material')
     .map((it: any) => {
@@ -345,13 +348,23 @@ export function computeAssemblyPricing(params: {
     },
   });
 
+  const laborSellRatePerHour = Number(tech?.requiredRevenuePerBillableHour ?? 0) || 0;
+  const actualMinutes = breakdown.labor.actual_minutes;
+  const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : actualMinutes;
+  const laborSell = (expectedMinutes / 60) * laborSellRatePerHour;
+
+  const laborSellRatePerHour = Number(tech?.requiredRevenuePerBillableHour ?? 0) || 0;
+  const actualMinutes = breakdown.labor.actual_minutes;
+  const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : actualMinutes;
+  const laborSell = (expectedMinutes / 60) * laborSellRatePerHour;
+
   const materialCost = computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
   return {
-    labor_minutes_total: breakdown.labor.expected_minutes,
+    labor_minutes_total: expectedMinutes,
     material_cost_total: materialCost,
     material_price_total: breakdown.materials.material_sell,
-    labor_price_total: breakdown.labor.labor_sell,
+    labor_price_total: laborSell,
     misc_material_price: breakdown.materials.misc_material,
     total_price: breakdown.totals.final_total,
     lines: (Array.isArray(items) ? items : []).map((it: any) => {
@@ -379,6 +392,8 @@ export function computeEstimatePricing(params: {
     Object.values(jobTypesById ?? {}).find((j: any) => j?.is_default) ||
     Object.values(jobTypesById ?? {})[0] ||
     null;
+
+  const tech = computeTechCostBreakdown(companySettings as any, jobType as any);
 
   // Build material + labor minutes from estimate rows
   const rows = Array.isArray(estimate?.items) ? estimate.items : [];
@@ -425,7 +440,7 @@ export function computeEstimatePricing(params: {
 
   return {
     labor_minutes_actual: breakdown.labor.actual_minutes,
-    labor_minutes_expected: breakdown.labor.expected_minutes,
+    labor_minutes_expected: expectedMinutes,
 
     material_cost: materialCost,
     material_price: breakdown.materials.material_sell,
@@ -492,7 +507,7 @@ export function computeEstimateTotalsNormalized(params: {
     labor_minutes_expected: Number(t.labor_minutes_expected ?? t.labor_minutes_total ?? 0) || 0,
     material_cost: round2(t.material_cost_total ?? t.material_cost ?? 0),
     material_price: round2(t.material_price_total ?? t.material_price ?? 0),
-    labor_price: round2(t.labor_price_total ?? t.labor_price ?? 0),
+    labor_price: laborSell,
     misc_material: round2(t.misc_material_price ?? t.misc_material ?? 0),
     pre_discount_total: round2(t.subtotal_price ?? t.pre_discount_total ?? 0),
     discount_percent: round2(t.discount_percent ?? 0),
@@ -504,5 +519,4 @@ export function computeEstimateTotalsNormalized(params: {
     gross_margin_expected_percent: t.gross_margin_expected_percent ?? null,
   };
 }
-
 
