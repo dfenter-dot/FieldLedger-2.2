@@ -125,9 +125,10 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
 
   if (jobType.mode === 'flat_rate') {
     // Flat-rate labor sell rate must come from "Sheet 2" (Tech View) so we don't apply GM twice.
-    // tech.requiredRevenuePerBillableHour is already GM-adjusted for the selected job type.
+    // Use Tech View's Loaded Labor Rate (Wage + Overhead) for the selected job type.
+    // This prevents applying gross margin twice.
     baseRate = company.loaded_labor_rate;
-    effectiveRate = Number(tech?.requiredRevenuePerBillableHour ?? 0) || 0;
+    effectiveRate = Number((tech as any)?.loadedLaborRate ?? 0) || 0;
 
     // Fallback (should be rare): derive from loaded labor rate if tech view isn't available.
     if (effectiveRate <= 0) {
@@ -353,7 +354,10 @@ export function computeAssemblyPricing(params: {
     company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
-    tech: { requiredRevenuePerBillableHour: (tech as any)?.requiredRevenuePerBillableHour },
+    tech: { 
+      loadedLaborRate: (tech as any)?.loadedLaborRate,
+      requiredRevenuePerBillableHour: (tech as any)?.requiredRevenuePerBillableHour,
+    },
     flags: {
       apply_discount: false,
       apply_processing_fee: false,
@@ -437,7 +441,10 @@ export function computeEstimatePricing(params: {
     company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
-    tech: { requiredRevenuePerBillableHour: (tech as any)?.requiredRevenuePerBillableHour },
+    tech: { 
+      loadedLaborRate: (tech as any)?.loadedLaborRate,
+      requiredRevenuePerBillableHour: (tech as any)?.requiredRevenuePerBillableHour,
+    },
     flags: {
       apply_discount: applyDiscount,
       apply_processing_fee: applyProcessing,
@@ -456,6 +463,8 @@ export function computeEstimatePricing(params: {
 
     labor_price: breakdown.labor.labor_sell,
 
+
+    labor_rate_used_per_hour: breakdown.labor.effective_rate,
     discount_percent: applyDiscount ? company.discount_percent : 0,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
