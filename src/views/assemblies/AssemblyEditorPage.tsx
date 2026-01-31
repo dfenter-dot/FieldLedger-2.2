@@ -726,6 +726,7 @@ export function AssemblyEditorPage() {
                   <div className="pill">Material Cost: ${materialCost.toFixed(2)}</div>
                   <div className="pill">Material Price: ${materialPrice.toFixed(2)}</div>
                   <div className="pill">Labor Price: ${laborPrice.toFixed(2)}</div>
+                  <div className="pill">Labor Rate Used: ${Number(t.labor_rate_used_per_hour ?? 0).toFixed(2)}/hr</div>
                   <div className="pill">Misc Material: ${misc.toFixed(2)}</div>
                   <div className="pill">Total: ${total.toFixed(2)}</div>
                 </div>
