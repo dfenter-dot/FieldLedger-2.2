@@ -15,6 +15,20 @@ type ItemRow =
   | { id: string; type: 'assembly'; assemblyId: string; quantity: number }
   | { id: string; type: 'labor'; name: string; minutes: number };
 
+function toNum(raw: unknown, fallback = 0) {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function safeFixed(v: any, digits = 2) {
+  const n = toNum(v, 0);
+  return n.toFixed(digits);
+}
+
 export function EstimateEditorPage() {
   const { estimateId } = useParams();
   const data = useData();
@@ -27,8 +41,8 @@ export function EstimateEditorPage() {
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
+  // Load admin/config data used by dropdowns and calculations.
   useEffect(() => {
-    // Load admin/config data used by dropdowns and calculations.
     let cancelled = false;
     (async () => {
       try {
@@ -48,6 +62,7 @@ export function EstimateEditorPage() {
 
   useEffect(() => {
     if (!estimateId) return;
+
     if (estimateId === 'new') {
       (async () => {
         try {
@@ -55,8 +70,9 @@ export function EstimateEditorPage() {
           const settings = await data.getCompanySettings();
           const starting = Number((settings as any)?.starting_estimate_number ?? 1) || 1;
           const existing = await data.listEstimates();
-          const maxNum = existing.reduce((m, r) => Math.max(m, Number(r.estimate_number ?? 0) || 0), 0);
+          const maxNum = existing.reduce((m, r) => Math.max(m, Number((r as any).estimate_number ?? 0) || 0), 0);
           const nextNum = Math.max(starting, maxNum + 1);
+
           const draft: Estimate = {
             id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
             company_id: null,
@@ -68,10 +84,12 @@ export function EstimateEditorPage() {
             apply_discount: false,
             apply_processing_fees: false,
             apply_misc_material: true,
+            // discount_percent is optional and may be null/undefined; provider can persist it if supported.
             items: [],
             status: 'draft',
             created_at: new Date().toISOString(),
           } as any;
+
           // Persist immediately so selection flows work.
           const saved = await data.upsertEstimate(draft as any);
           setE(saved);
@@ -92,37 +110,55 @@ export function EstimateEditorPage() {
         console.error(err);
         setStatus(String((err as any)?.message ?? err));
       });
-  }, [data, estimateId]);
-
-  useEffect(() => {
-    data.getCompanySettings().then(setCompanySettings).catch(() => {});
-    data.listJobTypes().then(setJobTypes).catch(() => {});
-  }, [data]);
+  }, [data, estimateId, nav]);
 
   const rows = useMemo<ItemRow[]>(() => {
-    const items = e?.items ?? [];
+    const items: any[] = ((e as any)?.items ?? []) as any[];
+
     return items
       .map((it: any) => {
+        // Material line
         if (it.material_id) {
           return {
             id: it.id,
             type: 'material' as const,
             materialId: it.material_id,
-            quantity: Number(it.quantity ?? 1) || 1,
+            quantity: Math.max(1, toNum(it.quantity ?? 1, 1)),
           };
         }
+
+        // Assembly line
         if (it.assembly_id) {
           return {
             id: it.id,
             type: 'assembly' as const,
             assemblyId: it.assembly_id,
-            quantity: Number(it.quantity ?? 1) || 1,
+            quantity: Math.max(1, toNum(it.quantity ?? 1, 1)),
           };
         }
+
+        // Labor line: support either item_type/type flag OR presence of labor_minutes
+        const itemType = String(it.item_type ?? it.type ?? '').toLowerCase();
+        const isLabor =
+          itemType === 'labor' ||
+          it.labor_minutes != null ||
+          it.laborMinutes != null ||
+          (it.name && it.minutes != null && !it.material_id && !it.assembly_id);
+
+        if (isLabor) {
+          const mins = Math.max(0, Math.floor(toNum(it.labor_minutes ?? it.laborMinutes ?? it.minutes ?? 0, 0)));
+          return {
+            id: it.id,
+            type: 'labor' as const,
+            name: String(it.name ?? 'Labor'),
+            minutes: mins,
+          };
+        }
+
         return null;
       })
       .filter(Boolean) as ItemRow[];
-  }, [e?.items]);
+  }, [e]);
 
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
   const [assemblyCache, setAssemblyCache] = useState<Record<string, Assembly | null>>({});
@@ -132,7 +168,9 @@ export function EstimateEditorPage() {
       .filter((r) => r.type === 'material')
       .map((r) => (r as any).materialId as string)
       .filter((id) => materialCache[id] === undefined);
+
     if (missingMats.length === 0) return;
+
     let cancelled = false;
     (async () => {
       const next: Record<string, Material | null> = {};
@@ -145,9 +183,11 @@ export function EstimateEditorPage() {
       }
       if (!cancelled) setMaterialCache((prev) => ({ ...prev, ...next }));
     })();
+
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, rows, materialCache]);
 
   useEffect(() => {
@@ -155,7 +195,9 @@ export function EstimateEditorPage() {
       .filter((r) => r.type === 'assembly')
       .map((r) => (r as any).assemblyId as string)
       .filter((id) => assemblyCache[id] === undefined);
+
     if (missingAsm.length === 0) return;
+
     let cancelled = false;
     (async () => {
       const next: Record<string, Assembly | null> = {};
@@ -168,21 +210,28 @@ export function EstimateEditorPage() {
       }
       if (!cancelled) setAssemblyCache((prev) => ({ ...prev, ...next }));
     })();
+
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, rows, assemblyCache]);
 
   const totals = useMemo(() => {
     if (!e || !companySettings) return null;
-    const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
-    return computeEstimatePricing({
-      estimate: e,
-      materialsById: materialCache,
-      assembliesById: assemblyCache,
-      jobTypesById,
-      companySettings,
-    });
+    const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
+    try {
+      return computeEstimatePricing({
+        estimate: e as any,
+        materialsById: materialCache,
+        assembliesById: assemblyCache,
+        jobTypesById,
+        companySettings,
+      } as any);
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
   }, [e, companySettings, jobTypes, materialCache, assemblyCache]);
 
   async function save(next: Estimate) {
@@ -191,7 +240,7 @@ export function EstimateEditorPage() {
       const saved = await data.upsertEstimate(next);
       setE(saved);
       setStatus('Saved.');
-      setTimeout(() => setStatus(''), 1500);
+      setTimeout(() => setStatus(''), 1200);
     } catch (err: any) {
       console.error(err);
       setStatus(String(err?.message ?? err));
@@ -203,7 +252,7 @@ export function EstimateEditorPage() {
     await save(e);
   }
 
-  async function remove() {
+  async function removeEstimate() {
     if (!e) return;
     const ok = await dialogs.confirm({
       title: 'Delete Estimate',
@@ -212,9 +261,10 @@ export function EstimateEditorPage() {
       danger: true,
     });
     if (!ok) return;
+
     try {
       setStatus('Deleting…');
-      await data.deleteEstimate(e.id);
+      await data.deleteEstimate((e as any).id);
       nav('/estimates');
     } catch (err: any) {
       console.error(err);
@@ -224,33 +274,46 @@ export function EstimateEditorPage() {
 
   async function updateQuantity(itemId: string, quantity: number) {
     if (!e) return;
-    const nextItems = (e.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
+    const nextItems = ((e as any).items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
+    await save({ ...(e as any), items: nextItems } as any);
+  }
+
+  async function updateLaborMinutes(itemId: string, minutes: number) {
+    if (!e) return;
+    const nextItems = ((e as any).items ?? []).map((it: any) =>
+      it.id === itemId ? { ...it, labor_minutes: minutes, laborMinutes: minutes, minutes } : it,
+    );
     await save({ ...(e as any), items: nextItems } as any);
   }
 
   async function removeItem(itemId: string) {
     if (!e) return;
-    const nextItems = (e.items ?? []).filter((it: any) => it.id !== itemId);
+    const nextItems = ((e as any).items ?? []).filter((it: any) => it.id !== itemId);
     await save({ ...(e as any), items: nextItems } as any);
   }
 
   if (!e) return <div className="muted">Loading…</div>;
 
-  const isLocked = (e.status ?? 'draft') === 'approved';
-  const jobTypeOptions = jobTypes.filter((j: any) => j.enabled !== false);
-  const defaultJobTypeId = jobTypes.find((j: any) => j.is_default)?.id ?? null;
-  const activeJobType = jobTypes.find((j: any) => j.id === (e.job_type_id ?? defaultJobTypeId));
+  const isLocked = String((e as any).status ?? 'draft') === 'approved';
+
+  const jobTypeOptions = (jobTypes ?? []).filter((j: any) => j.enabled !== false);
+  const defaultJobTypeId = (jobTypes ?? []).find((j: any) => j.is_default)?.id ?? null;
+  const effectiveJobTypeId = (e as any).job_type_id ?? defaultJobTypeId;
+  const activeJobType = (jobTypes ?? []).find((j: any) => j.id === effectiveJobTypeId) ?? null;
+
   const allowDiscounts = activeJobType?.allow_discounts !== false;
 
+  const maxDiscountPercent = toNum(companySettings?.default_discount_percent ?? companySettings?.discount_percent_default ?? 10, 10);
+
   async function applyAdminRules() {
-    if (!e || isLocked || !e.use_admin_rules) return;
+    if (!e || isLocked || !(e as any).use_admin_rules) return;
     try {
       setStatus('Applying rules...');
       const rules = await data.listAdminRules();
-      const match = rules
+      const match = (rules as any[])
         .filter((r) => r.enabled && r.applies_to === 'estimate' && (r.match_text ?? '').trim().length > 0)
         .sort((a, b) => a.priority - b.priority)
-        .find((r) => (e.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
+        .find((r) => String((e as any).name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
 
       if (match?.set_job_type_id) {
         const next = { ...(e as any), job_type_id: match.set_job_type_id } as any;
@@ -260,7 +323,8 @@ export function EstimateEditorPage() {
       } else {
         setStatus('No matching rules.');
       }
-      setTimeout(() => setStatus(''), 1500);
+
+      setTimeout(() => setStatus(''), 1200);
     } catch (err: any) {
       console.error(err);
       setStatus(String(err?.message ?? err));
@@ -270,19 +334,17 @@ export function EstimateEditorPage() {
   return (
     <div className="stack">
       <Card
-        title={`Estimate • #${e.estimate_number} • ${e.name}`}
+        title={`Estimate • #${(e as any).estimate_number} • ${(e as any).name}`}
         right={
           <div className="row">
             <Button onClick={() => nav('/estimates')}>Back</Button>
-            <Button variant="secondary" onClick={() => nav(`/estimates/${e.id}/preview`)}>
+            <Button variant="secondary" onClick={() => nav(`/estimates/${(e as any).id}/preview`)}>
               Customer View
             </Button>
-            <Button variant="danger" onClick={remove}>
+            <Button variant="danger" onClick={removeEstimate}>
               Delete
             </Button>
-            {e.use_admin_rules && !isLocked ? (
-              <Button onClick={applyAdminRules}>Apply Changes</Button>
-            ) : null}
+            {(e as any).use_admin_rules && !isLocked ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll}>
               Save
             </Button>
@@ -292,15 +354,19 @@ export function EstimateEditorPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Estimate Name</label>
-            <Input disabled={isLocked} value={e.name} onChange={(ev) => setE({ ...e, name: ev.target.value } as any)} />
+            <Input
+              disabled={isLocked}
+              value={(e as any).name ?? ''}
+              onChange={(ev) => setE({ ...(e as any), name: ev.target.value } as any)}
+            />
           </div>
 
           <div className="stack">
             <label className="label">Use Admin Rules</label>
             <Toggle
-              checked={Boolean(e.use_admin_rules)}
-              onChange={(v) => setE({ ...e, use_admin_rules: v } as any)}
-              label={e.use_admin_rules ? 'Yes (locks job type)' : 'No'}
+              checked={Boolean((e as any).use_admin_rules)}
+              onChange={(v) => setE({ ...(e as any), use_admin_rules: v } as any)}
+              label={(e as any).use_admin_rules ? 'Yes (locks job type)' : 'No'}
             />
           </div>
 
@@ -308,9 +374,9 @@ export function EstimateEditorPage() {
             <label className="label">Job Type</label>
             <select
               className="input"
-              disabled={isLocked || Boolean(e.use_admin_rules)}
-              value={e.job_type_id ?? defaultJobTypeId ?? ''}
-              onChange={(ev) => setE({ ...e, job_type_id: ev.target.value || null } as any)}
+              disabled={isLocked || Boolean((e as any).use_admin_rules)}
+              value={effectiveJobTypeId ?? ''}
+              onChange={(ev) => setE({ ...(e as any), job_type_id: ev.target.value || null } as any)}
             >
               <option value="">(Select)</option>
               {jobTypeOptions.map((jt: any) => (
@@ -319,7 +385,7 @@ export function EstimateEditorPage() {
                 </option>
               ))}
             </select>
-            {!e.job_type_id && defaultJobTypeId ? (
+            {!((e as any).job_type_id) && defaultJobTypeId ? (
               <div className="muted small">Using default job type until you select one.</div>
             ) : null}
           </div>
@@ -329,8 +395,8 @@ export function EstimateEditorPage() {
             <select
               className="input"
               disabled={isLocked}
-              value={String(Boolean(e.customer_supplies_materials))}
-              onChange={(ev) => setE({ ...e, customer_supplies_materials: ev.target.value === 'true' } as any)}
+              value={String(Boolean((e as any).customer_supplies_materials))}
+              onChange={(ev) => setE({ ...(e as any), customer_supplies_materials: ev.target.value === 'true' } as any)}
             >
               <option value="false">No</option>
               <option value="true">Yes</option>
@@ -342,8 +408,8 @@ export function EstimateEditorPage() {
             <select
               className="input"
               disabled={isLocked}
-              value={String(Boolean(e.apply_misc_material))}
-              onChange={(ev) => setE({ ...e, apply_misc_material: ev.target.value === 'true' } as any)}
+              value={String(Boolean((e as any).apply_misc_material))}
+              onChange={(ev) => setE({ ...(e as any), apply_misc_material: ev.target.value === 'true' } as any)}
             >
               <option value="false">No</option>
               <option value="true">Yes</option>
@@ -355,55 +421,97 @@ export function EstimateEditorPage() {
             <select
               className="input"
               disabled={isLocked}
-              value={String(Boolean(e.apply_processing_fees))}
-              onChange={(ev) => setE({ ...e, apply_processing_fees: ev.target.value === 'true' } as any)}
+              value={String(Boolean((e as any).apply_processing_fees))}
+              onChange={(ev) => setE({ ...(e as any), apply_processing_fees: ev.target.value === 'true' } as any)}
             >
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
           </div>
 
+          {/* Discount: toggle + capped percent input */}
+          <div className="stack">
+            <label className="label">Apply Discount</label>
+            <Toggle
+              checked={Boolean((e as any).apply_discount) && allowDiscounts}
+              onChange={(v) => {
+                if (!allowDiscounts) return;
+                const next: any = { ...(e as any), apply_discount: v };
+                // If turning off, clear discount_percent so pricing doesn't accidentally use it.
+                if (!v) next.discount_percent = null;
+                setE(next);
+              }}
+              label={!allowDiscounts ? 'Disabled by job type' : (e as any).apply_discount ? 'Yes' : 'No'}
+            />
+            {!allowDiscounts ? <div className="muted small">Discounts are disabled for this job type.</div> : null}
+          </div>
+
           <div className="stack">
             <label className="label">Discount %</label>
             <Input
-              disabled={isLocked || !allowDiscounts}
+              disabled={isLocked || !allowDiscounts || !Boolean((e as any).apply_discount)}
               type="text"
               inputMode="decimal"
               value={String((e as any).discount_percent ?? '')}
-              placeholder={String(companySettings?.default_discount_percent ?? 10)}
+              placeholder={String(maxDiscountPercent)}
               onChange={(ev) => {
+                if (!allowDiscounts) return;
                 const raw = ev.target.value;
-                setE({ ...e, discount_percent: raw === '' ? null : Number(raw) } as any);
+                if (raw.trim() === '') {
+                  setE({ ...(e as any), discount_percent: null } as any);
+                  return;
+                }
+                const n = toNum(raw, 0);
+                const capped = clamp(n, 0, maxDiscountPercent);
+                setE({ ...(e as any), discount_percent: capped } as any);
               }}
             />
-            {!allowDiscounts ? (
-              <div className="muted small">Discounts are disabled for this job type.</div>
-            ) : (
-              <div className="muted small">Leave blank to use 0% (or set a default in Company Setup).</div>
-            )}
+            <div className="muted small">
+              Max allowed: {maxDiscountPercent}%{Boolean((e as any).apply_discount) ? '' : ' (turn on Apply Discount to edit)'}
+            </div>
           </div>
         </div>
 
         <div className="mt" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 12 }}>
           <div className="stack">
             <label className="label">Customer Name</label>
-            <Input disabled={isLocked} value={e.customer_name ?? ''} onChange={(ev) => setE({ ...e, customer_name: ev.target.value || null } as any)} />
+            <Input
+              disabled={isLocked}
+              value={(e as any).customer_name ?? ''}
+              onChange={(ev) => setE({ ...(e as any), customer_name: ev.target.value || null } as any)}
+            />
           </div>
           <div className="stack">
             <label className="label">Customer Phone</label>
-            <Input disabled={isLocked} value={e.customer_phone ?? ''} onChange={(ev) => setE({ ...e, customer_phone: ev.target.value || null } as any)} />
+            <Input
+              disabled={isLocked}
+              value={(e as any).customer_phone ?? ''}
+              onChange={(ev) => setE({ ...(e as any), customer_phone: ev.target.value || null } as any)}
+            />
           </div>
           <div className="stack">
             <label className="label">Customer Email</label>
-            <Input disabled={isLocked} value={e.customer_email ?? ''} onChange={(ev) => setE({ ...e, customer_email: ev.target.value || null } as any)} />
+            <Input
+              disabled={isLocked}
+              value={(e as any).customer_email ?? ''}
+              onChange={(ev) => setE({ ...(e as any), customer_email: ev.target.value || null } as any)}
+            />
           </div>
           <div className="stack">
             <label className="label">Customer Address</label>
-            <Input disabled={isLocked} value={e.customer_address ?? ''} onChange={(ev) => setE({ ...e, customer_address: ev.target.value || null } as any)} />
+            <Input
+              disabled={isLocked}
+              value={(e as any).customer_address ?? ''}
+              onChange={(ev) => setE({ ...(e as any), customer_address: ev.target.value || null } as any)}
+            />
           </div>
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Private Notes</label>
-            <Input disabled={isLocked} value={e.private_notes ?? ''} onChange={(ev) => setE({ ...e, private_notes: ev.target.value || null } as any)} />
+            <Input
+              disabled={isLocked}
+              value={(e as any).private_notes ?? ''}
+              onChange={(ev) => setE({ ...(e as any), private_notes: ev.target.value || null } as any)}
+            />
           </div>
         </div>
 
@@ -412,84 +520,95 @@ export function EstimateEditorPage() {
             variant="secondary"
             disabled={!e || isLocked}
             onClick={async () => {
+              // NOTE: This duplicates the estimate for now (historical behavior).
+              // Proper multi-option UI will be added after we verify estimates are stable.
               const copy = await data.upsertEstimate({
-                ...e,
+                ...(e as any),
                 id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
-                estimate_number: e.estimate_number,
-                name: `${e.name} (Copy Option)`,
+                estimate_number: (e as any).estimate_number,
+                name: `${(e as any).name} (Copy)`,
                 status: 'draft',
                 sent_at: null,
                 approved_at: null,
                 declined_at: null,
                 created_at: new Date().toISOString(),
               } as any);
-              nav(`/estimates/${copy.id}`);
+              nav(`/estimates/${(copy as any).id}`);
             }}
           >
-            Copy Option
+            Duplicate Estimate
           </Button>
+
           <Button
             variant="primary"
             disabled={isLocked}
             onClick={() => {
-              setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
+              setMode({ type: 'add-materials-to-estimate', estimateId: (e as any).id });
               nav('/materials');
             }}
           >
             Add Materials
           </Button>
+
           <Button
             variant="primary"
             disabled={isLocked}
             onClick={() => {
-              setMode({ type: 'add-assemblies-to-estimate', estimateId: e.id });
+              setMode({ type: 'add-assemblies-to-estimate', estimateId: (e as any).id });
               nav('/assemblies');
             }}
           >
             Add Assemblies
           </Button>
+
           <Button
             variant="secondary"
             disabled={isLocked}
             onClick={() => {
               // Create a user material while staying in picker mode, so it can be added immediately after save.
-              setMode({ type: 'add-materials-to-estimate', estimateId: e.id });
+              setMode({ type: 'add-materials-to-estimate', estimateId: (e as any).id });
               nav('/materials/user/new');
             }}
           >
             Create Material
           </Button>
+
           <Button
             variant="secondary"
             disabled={isLocked}
             onClick={() => {
+              const min = Math.max(0, Math.floor(toNum(companySettings?.minimum_labor_minutes_per_job ?? 30, 30)));
               const next = {
                 id: crypto.randomUUID?.() ?? `labor_${Date.now()}`,
+                item_type: 'labor',
                 type: 'labor',
                 name: 'Labor',
-                labor_minutes: Math.max(0, Number(companySettings?.minimum_labor_minutes_per_job ?? 30)),
+                labor_minutes: min,
                 quantity: 1,
               };
-              setE({ ...(e as any), items: [...((e as any).items ?? []), next] } as any);
+              setE({ ...(e as any), items: [...(((e as any).items ?? []) as any[]), next] } as any);
             }}
           >
             Add Labor Line
           </Button>
+
           <Button
-            onClick={() => setE({ ...e, status: 'sent', sent_at: new Date().toISOString() } as any)}
-            disabled={isLocked || (e.status ?? 'draft') !== 'draft'}
+            onClick={() => setE({ ...(e as any), status: 'sent', sent_at: new Date().toISOString() } as any)}
+            disabled={isLocked || String((e as any).status ?? 'draft') !== 'draft'}
           >
             Mark Sent
           </Button>
+
           <Button
-            onClick={() => setE({ ...e, status: 'approved', approved_at: new Date().toISOString() } as any)}
-            disabled={isLocked || (e.status ?? 'draft') === 'declined'}
+            onClick={() => setE({ ...(e as any), status: 'approved', approved_at: new Date().toISOString() } as any)}
+            disabled={isLocked || String((e as any).status ?? 'draft') === 'declined'}
           >
             Approve
           </Button>
+
           <Button
             variant="danger"
-            onClick={() => setE({ ...e, status: 'declined', declined_at: new Date().toISOString() } as any)}
+            onClick={() => setE({ ...(e as any), status: 'declined', declined_at: new Date().toISOString() } as any)}
             disabled={isLocked}
           >
             Decline
@@ -506,26 +625,29 @@ export function EstimateEditorPage() {
                   : r.type === 'material'
                     ? materialCache[(r as any).materialId]?.name ?? `Material ${(r as any).materialId}`
                     : assemblyCache[(r as any).assemblyId]?.name ?? `Assembly ${(r as any).assemblyId}`;
+
               const sub =
                 r.type === 'labor'
                   ? `${Math.max(0, Math.floor((r as any).minutes ?? 0))} min`
                   : r.type === 'material'
                     ? (() => {
-                        const m = materialCache[(r as any).materialId];
+                        const m = materialCache[(r as any).materialId] as any;
                         const parts: string[] = [];
-                        if ((m as any)?.sku) parts.push(String((m as any).sku));
-                        if (m?.description) parts.push(m.description);
-                        const laborMinutes =
-                          ((m as any)?.labor_hours ?? 0) * 60 + ((m as any)?.labor_minutes ?? (m as any)?.laborMinutes ?? 0);
-                        if (Number.isFinite(laborMinutes) && laborMinutes > 0) parts.push(`Labor: ${Math.floor(laborMinutes)} min`);
+                        if (m?.sku) parts.push(String(m.sku));
+                        if (m?.description) parts.push(String(m.description));
+                        const laborMinutes = Math.max(
+                          0,
+                          Math.floor(toNum(m?.labor_hours ?? m?.laborHours ?? 0, 0) * 60 + toNum(m?.labor_minutes ?? m?.laborMinutes ?? 0, 0)),
+                        );
+                        if (laborMinutes > 0) parts.push(`Labor: ${laborMinutes} min`);
                         return parts.length ? parts.join(' • ') : '—';
                       })()
                     : (() => {
                         const a: any = assemblyCache[(r as any).assemblyId];
-                        const count = a?.item_count ?? (a?.items ? a.items.length : null);
                         const parts: string[] = [];
+                        const count = a?.item_count ?? (a?.items ? a.items.length : null);
                         if (count != null) parts.push(`${count} items`);
-                        if (a?.description) parts.push(a.description);
+                        if (a?.description) parts.push(String(a.description));
                         return parts.length ? parts.join(' • ') : '—';
                       })();
 
@@ -535,17 +657,32 @@ export function EstimateEditorPage() {
                     <div className="listTitle">{title}</div>
                     <div className="listSub">{sub}</div>
                   </div>
+
                   <div className="listRight" style={{ gap: 8 }}>
-                    <Input
-                      style={{ width: 90 }}
-                      type="text"
-                      inputMode="numeric"
-                      value={String(r.quantity)}
-                      onChange={(ev) => {
-                        const q = Math.max(1, Number(ev.target.value || 1));
-                        if (Number.isFinite(q)) updateQuantity(r.id, q);
-                      }}
-                    />
+                    {r.type === 'labor' ? (
+                      <Input
+                        style={{ width: 110 }}
+                        type="text"
+                        inputMode="numeric"
+                        value={String((r as any).minutes ?? 0)}
+                        onChange={(ev) => {
+                          const mins = Math.max(0, Math.floor(toNum(ev.target.value, 0)));
+                          updateLaborMinutes(r.id, mins);
+                        }}
+                      />
+                    ) : (
+                      <Input
+                        style={{ width: 90 }}
+                        type="text"
+                        inputMode="numeric"
+                        value={String((r as any).quantity ?? 1)}
+                        onChange={(ev) => {
+                          const q = Math.max(1, Math.floor(toNum(ev.target.value, 1)));
+                          updateQuantity(r.id, q);
+                        }}
+                      />
+                    )}
+
                     <Button variant="danger" onClick={() => removeItem(r.id)}>
                       Remove
                     </Button>
@@ -553,6 +690,7 @@ export function EstimateEditorPage() {
                 </div>
               );
             })}
+
             {rows.length === 0 ? <div className="muted">No line items yet.</div> : null}
           </div>
         </div>
@@ -561,24 +699,28 @@ export function EstimateEditorPage() {
           <div className="mt">
             <div className="muted small">Cost & Pricing Breakdown</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <div className="pill">Actual Labor: {Math.round(totals.labor_minutes_actual)} min</div>
-              <div className="pill">Expected Labor: {Math.round(totals.labor_minutes_expected)} min</div>
-              <div className="pill">Material Cost: ${totals.material_cost.toFixed(2)}</div>
-              <div className="pill">Material Price: ${totals.material_price.toFixed(2)}</div>
-              <div className="pill">Labor Price: ${totals.labor_price.toFixed(2)}</div>
-              {totals.discount_percent > 0 ? (
+              <div className="pill">Actual Labor: {Math.round(toNum((totals as any).labor_minutes_actual, 0))} min</div>
+              <div className="pill">Expected Labor: {Math.round(toNum((totals as any).labor_minutes_expected, 0))} min</div>
+
+              <div className="pill">Material Cost: ${safeFixed((totals as any).material_cost)}</div>
+              <div className="pill">Material Price: ${safeFixed((totals as any).material_price)}</div>
+              <div className="pill">Labor Price: ${safeFixed((totals as any).labor_price)}</div>
+
+              {toNum((totals as any).discount_percent, 0) > 0 ? (
                 <div className="pill">
-                  Pre-Discount: ${totals.pre_discount_total.toFixed(2)} (−${totals.discount_amount.toFixed(2)})
+                  Pre-Discount: ${safeFixed((totals as any).pre_discount_total)} (−${safeFixed((totals as any).discount_amount)})
                 </div>
               ) : null}
-              <div className="pill">Subtotal: ${totals.subtotal_before_processing.toFixed(2)}</div>
-              <div className="pill">Processing: ${totals.processing_fee.toFixed(2)}</div>
-              <div className="pill">Total: ${totals.total.toFixed(2)}</div>
-              {totals.gross_margin_target_percent != null ? (
-                <div className="pill">Target GM: {totals.gross_margin_target_percent.toFixed(0)}%</div>
+
+              <div className="pill">Subtotal: ${safeFixed((totals as any).subtotal_before_processing)}</div>
+              <div className="pill">Processing: ${safeFixed((totals as any).processing_fee)}</div>
+              <div className="pill">Total: ${safeFixed((totals as any).total)}</div>
+
+              {(totals as any).gross_margin_target_percent != null ? (
+                <div className="pill">Target GM: {toNum((totals as any).gross_margin_target_percent, 0).toFixed(0)}%</div>
               ) : null}
-              {totals.gross_margin_expected_percent != null ? (
-                <div className="pill">Expected GM: {totals.gross_margin_expected_percent.toFixed(0)}%</div>
+              {(totals as any).gross_margin_expected_percent != null ? (
+                <div className="pill">Expected GM: {toNum((totals as any).gross_margin_expected_percent, 0).toFixed(0)}%</div>
               ) : null}
             </div>
           </div>
@@ -591,6 +733,3 @@ export function EstimateEditorPage() {
     </div>
   );
 }
-
-
-
