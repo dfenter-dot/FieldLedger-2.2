@@ -720,6 +720,7 @@ export function EstimateEditorPage() {
               <div className="pill">Material Cost: ${safeFixed((totals as any).material_cost)}</div>
               <div className="pill">Material Price: ${safeFixed((totals as any).material_price)}</div>
               <div className="pill">Labor Price: ${safeFixed((totals as any).labor_price)}</div>
+              <div className="pill">Labor Rate Used: ${safeFixed((totals as any).labor_rate_used_per_hour)}/hr</div>
 
               {toNum((totals as any).discount_percent, 0) > 0 ? (
                 <div className="pill">
