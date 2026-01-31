@@ -373,10 +373,9 @@ export function computeAssemblyPricing(params: {
     },
   });
 
-  const laborSellRatePerHour = Number(tech?.requiredRevenuePerBillableHour ?? 0) || 0;
+  // Use pricing engine outputs directly (avoids double-applying GM / wrong rate)
   const actualMinutes = breakdown.labor.actual_minutes;
-  const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : actualMinutes;
-  const laborSell = (expectedMinutes / 60) * laborSellRatePerHour;
+  const expectedMinutes = jt.mode === 'flat_rate' ? breakdown.labor.expected_minutes : actualMinutes;
 
   const materialCost = computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
@@ -384,8 +383,8 @@ export function computeAssemblyPricing(params: {
     labor_minutes_total: expectedMinutes,
     material_cost_total: materialCost,
     material_price_total: breakdown.materials.material_sell,
-    labor_price_total: laborSell,
-    labor_rate_used_per_hour: laborRateUsedPerHour,
+    labor_price_total: breakdown.labor.labor_sell,
+    labor_rate_used_per_hour: breakdown.labor.effective_rate,
     misc_material_price: breakdown.materials.misc_material,
     total_price: breakdown.totals.final_total,
     lines: (Array.isArray(items) ? items : []).map((it: any) => {
@@ -549,3 +548,4 @@ export function computeEstimateTotalsNormalized(params: {
     gross_margin_expected_percent: t.gross_margin_expected_percent ?? null,
   };
 }
+
