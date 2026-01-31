@@ -23,9 +23,6 @@ export function EstimateEditorPage() {
   const dialogs = useDialogs();
 
   const [e, setE] = useState<Estimate | null>(null);
-  // Legacy compatibility: older code paths referenced `estimate`.
-  // Keep this alias so the editor never hard-crashes with "estimate is not defined".
-  const estimate = e;
   const [status, setStatus] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
@@ -103,7 +100,7 @@ export function EstimateEditorPage() {
   }, [data]);
 
   const rows = useMemo<ItemRow[]>(() => {
-    const items = estimate?.items ?? [];
+    const items = e?.items ?? [];
     return items
       .map((it: any) => {
         if (it.material_id) {
@@ -125,7 +122,7 @@ export function EstimateEditorPage() {
         return null;
       })
       .filter(Boolean) as ItemRow[];
-  }, [estimate?.items]);
+  }, [e?.items]);
 
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
   const [assemblyCache, setAssemblyCache] = useState<Record<string, Assembly | null>>({});
@@ -177,16 +174,16 @@ export function EstimateEditorPage() {
   }, [data, rows, assemblyCache]);
 
   const totals = useMemo(() => {
-    if (!estimate || !companySettings) return null;
+    if (!e || !companySettings) return null;
     const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
     return computeEstimatePricing({
-      estimate,
+      estimate: e,
       materialsById: materialCache,
       assembliesById: assemblyCache,
       jobTypesById,
       companySettings,
     });
-  }, [estimate, companySettings, jobTypes, materialCache, assemblyCache]);
+  }, [e, companySettings, jobTypes, materialCache, assemblyCache]);
 
   async function save(next: Estimate) {
     try {
@@ -202,12 +199,12 @@ export function EstimateEditorPage() {
   }
 
   async function saveAll() {
-    if (!estimate) return;
-    await save(estimate);
+    if (!e) return;
+    await save(e);
   }
 
   async function remove() {
-    if (!estimate) return;
+    if (!e) return;
     const ok = await dialogs.confirm({
       title: 'Delete Estimate',
       message: 'Delete this estimate? This cannot be undone.',
@@ -217,7 +214,7 @@ export function EstimateEditorPage() {
     if (!ok) return;
     try {
       setStatus('Deleting…');
-      await data.deleteEstimate(estimate.id);
+      await data.deleteEstimate(e.id);
       nav('/estimates');
     } catch (err: any) {
       console.error(err);
@@ -226,37 +223,37 @@ export function EstimateEditorPage() {
   }
 
   async function updateQuantity(itemId: string, quantity: number) {
-    if (!estimate) return;
-    const nextItems = (estimate.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
-    await save({ ...estimate, items: nextItems } as any);
+    if (!e) return;
+    const nextItems = (e.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
+    await save({ ...(e as any), items: nextItems } as any);
   }
 
   async function removeItem(itemId: string) {
-    if (!estimate) return;
-    const nextItems = (estimate.items ?? []).filter((it: any) => it.id !== itemId);
-    await save({ ...estimate, items: nextItems } as any);
+    if (!e) return;
+    const nextItems = (e.items ?? []).filter((it: any) => it.id !== itemId);
+    await save({ ...(e as any), items: nextItems } as any);
   }
 
-  if (!estimate) return <div className="muted">Loading…</div>;
+  if (!e) return <div className="muted">Loading…</div>;
 
-  const isLocked = (estimate.status ?? 'draft') === 'approved';
+  const isLocked = (e.status ?? 'draft') === 'approved';
   const jobTypeOptions = jobTypes.filter((j: any) => j.enabled !== false);
   const defaultJobTypeId = jobTypes.find((j: any) => j.is_default)?.id ?? null;
-  const activeJobType = jobTypes.find((j: any) => j.id === (estimate.job_type_id ?? defaultJobTypeId));
+  const activeJobType = jobTypes.find((j: any) => j.id === (e.job_type_id ?? defaultJobTypeId));
   const allowDiscounts = activeJobType?.allow_discounts !== false;
 
   async function applyAdminRules() {
-    if (!estimate || isLocked || !estimate.use_admin_rules) return;
+    if (!e || isLocked || !e.use_admin_rules) return;
     try {
       setStatus('Applying rules...');
       const rules = await data.listAdminRules();
       const match = rules
         .filter((r) => r.enabled && r.applies_to === 'estimate' && (r.match_text ?? '').trim().length > 0)
         .sort((a, b) => a.priority - b.priority)
-        .find((r) => (estimate.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
+        .find((r) => (e.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
 
       if (match?.set_job_type_id) {
-        const next = { ...estimate, job_type_id: match.set_job_type_id } as any;
+        const next = { ...(e as any), job_type_id: match.set_job_type_id } as any;
         const saved = await data.upsertEstimate(next);
         setE(saved as any);
         setStatus('Rules applied.');
