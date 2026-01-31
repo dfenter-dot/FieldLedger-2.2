@@ -722,7 +722,12 @@ export function EstimateEditorPage() {
               <div className="pill">Labor Price: ${safeFixed((totals as any).labor_price)}</div>
               <div className="pill">Labor Rate Used: ${safeFixed((totals as any).labor_rate_used_per_hour)}/hr</div>
 
-              {toNum((totals as any).discount_percent, 0) > 0 ? (
+              {toNum((totals as any).misc_material, 0) > 0 ? (
+                <div className="pill">Misc Material: ${safeFixed((totals as any).misc_material)}</div>
+              ) : null}
+
+
+              {toNum((totals as any).discount_amount, 0) > 0 ? (
                 <div className="pill">
                   Pre-Discount: ${safeFixed((totals as any).pre_discount_total)} (−${safeFixed((totals as any).discount_amount)})
                 </div>
@@ -749,4 +754,3 @@ export function EstimateEditorPage() {
     </div>
   );
 }
-
