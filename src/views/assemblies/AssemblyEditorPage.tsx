@@ -9,6 +9,7 @@ import type { Assembly, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
 import { computeAssemblyPricing } from '../../providers/data/pricing';
+import { TechCostBreakdownCard } from '../shared/TechCostBreakdownCard';
 
 type AssemblyMaterialRow = {
   itemId: string;
@@ -189,6 +190,16 @@ export function AssemblyEditorPage() {
       companySettings,
     });
   }, [a, companySettings, jobTypes, materialCache]);
+
+  const selectedJobType = useMemo(() => {
+    if (!a) return null;
+    const byId = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
+    const direct = (a as any).job_type_id ? byId[(a as any).job_type_id] : null;
+    if (direct) return direct;
+    const def = (jobTypes ?? []).find((j) => (j as any).is_default || (j as any).isDefault);
+    return def ?? null;
+  }, [a, jobTypes]);
+
 
   async function save(next: Assembly) {
     if (saving) return;
@@ -686,6 +697,11 @@ export function AssemblyEditorPage() {
 
         {totals ? (
           <div className="mt">
+            {companySettings ? (
+              <div className="mb">
+                <TechCostBreakdownCard title="Tech View Cost Breakdown" company={companySettings as any} jobType={selectedJobType as any} />
+              </div>
+            ) : null}
             <div className="muted small">Cost & Pricing Breakdown</div>
             {(() => {
               // computeAssemblyPricing returns:
@@ -725,4 +741,5 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
