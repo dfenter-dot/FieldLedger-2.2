@@ -76,6 +76,16 @@ function safeBillingMode(jobType: any): 'flat' | 'hourly' {
   return v === 'hourly' ? 'hourly' : 'flat';
 }
 
+function getDefaultJobType(jobTypesById: Record<string, any>): any | null {
+  const list = Object.values(jobTypesById ?? {});
+  const byDefault = list.find(
+    (jt: any) => jt && (jt.is_default === true || jt.default === true || jt.isDefault === true)
+  );
+  if (byDefault) return byDefault;
+  const byEnabled = list.find((jt: any) => jt && jt.enabled);
+  return byEnabled ?? null;
+}
+
 function clampPct(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, n));
@@ -188,7 +198,9 @@ export function computeAssemblyPricing(params: {
 }): PricingResult {
   const { assembly, items, materialsById, jobTypesById, companySettings } = params;
 
-  const jobType = (assembly.job_type_id && jobTypesById[assembly.job_type_id]) || null;
+  // If the record doesn't have an explicit job type, fall back to company default.
+  const jobType =
+    (assembly.job_type_id && jobTypesById[assembly.job_type_id]) || getDefaultJobType(jobTypesById);
 
   const billingMode = safeBillingMode(jobType);
   const purchaseTaxPct = getPurchaseTaxPercent(companySettings);
@@ -405,7 +417,10 @@ export function computeEstimatePricing(params: {
 } {
   const { estimate, materialsById, assembliesById, jobTypesById, companySettings } = params;
 
-  const jobType = (estimate?.job_type_id && jobTypesById[estimate.job_type_id]) || null;
+  // If the estimate doesn't have an explicit job type selected, it still prices using
+  // the Default Job Type (per UI + authoritative spec).
+  const jobType =
+    (estimate?.job_type_id && jobTypesById[estimate.job_type_id]) || getDefaultJobType(jobTypesById);
   const purchaseTaxPct = getPurchaseTaxPercent(companySettings);
   const miscPct = getMiscMaterialPercent(companySettings);
   const miscWhenCustomerSupplies = miscAppliesWhenCustomerSupplies(companySettings);
