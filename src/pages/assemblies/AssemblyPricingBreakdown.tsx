@@ -1,14 +1,13 @@
 
 import { computePricingBreakdown, PricingInput } from '../../providers/data/pricing';
+import { computeTechCostBreakdown } from '../../providers/data/techCostBreakdown';
 
 type Props = {
-  showPricing?: boolean;
-  isAdmin?: boolean;
   pricingInput: PricingInput;
 };
 
 export function AssemblyPricingBreakdown({ pricingInput }: Props) {
-  if (!isAdmin && !showPricing) return null;
+  const tech = computeTechCostBreakdown(companySettings as any, jobType as any);
   const breakdown = computePricingBreakdown(pricingInput);
 
   return (
