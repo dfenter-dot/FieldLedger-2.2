@@ -154,22 +154,30 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
     laborSell = marginSubtotal - materialSell;
   }
 
-  // --- DISCOUNT ---
-  const discountAllowed = jobType.allow_discounts && flags.apply_discount;
-  const preDiscountSubtotal = discountAllowed
-    ? marginSubtotal / (1 - company.discount_percent / 100)
+  // --- DISCOUNT BUFFER (always preload when allowed) ---
+  const discountRate = company.discount_percent / 100;
+  const canDiscount = jobType.allow_discounts && discountRate > 0;
+  // We always compute an inflated display subtotal so the business keeps extra margin if no discount is applied.
+  const preDiscountSubtotal = canDiscount
+    ? marginSubtotal / Math.max(1 - discountRate, 0.0001)
     : marginSubtotal;
 
-  const discountAmount = discountAllowed
+  // If discount toggle is ON, we apply enough discount to bring the charged subtotal back down to the target (marginSubtotal).
+  const discountAmount = canDiscount && flags.apply_discount
     ? preDiscountSubtotal - marginSubtotal
     : 0;
 
+  // Charged subtotal before processing depends on whether discount is applied.
+  const chargedSubtotal = (canDiscount && !flags.apply_discount)
+    ? preDiscountSubtotal
+    : marginSubtotal;
   // --- PROCESSING FEE ---
   const processingFee = flags.apply_processing_fee
-    ? marginSubtotal * (company.processing_fee_percent / 100)
+    ? chargedSubtotal * (company.processing_fee_percent / 100)
     : 0;
 
-  const finalSubtotal = marginSubtotal;
+  // chargedSubtotal is what the customer pays before processing fees.
+  const finalSubtotal = chargedSubtotal;
   const finalTotal = finalSubtotal + processingFee;
 
   return {
@@ -377,6 +385,7 @@ export function computeAssemblyPricing(params: {
     material_cost_total: materialCost,
     material_price_total: breakdown.materials.material_sell,
     labor_price_total: laborSell,
+    labor_rate_used_per_hour: laborRateUsedPerHour,
     misc_material_price: breakdown.materials.misc_material,
     total_price: breakdown.totals.final_total,
     lines: (Array.isArray(items) ? items : []).map((it: any) => {
@@ -463,9 +472,12 @@ export function computeEstimatePricing(params: {
 
     labor_price: breakdown.labor.labor_sell,
 
+    misc_material: breakdown.materials.misc_material,
+
+
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: applyDiscount ? company.discount_percent : 0,
+    discount_percent: company.discount_percent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
@@ -537,4 +549,3 @@ export function computeEstimateTotalsNormalized(params: {
     gross_margin_expected_percent: t.gross_margin_expected_percent ?? null,
   };
 }
-
