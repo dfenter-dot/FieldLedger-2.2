@@ -445,3 +445,64 @@ export function computeEstimatePricing(params: {
   };
 }
 
+
+
+type EstimateTotalsNormalized = {
+  labor_minutes_actual: number;
+  labor_minutes_expected: number;
+  material_cost: number;
+  material_price: number;
+  labor_price: number;
+  misc_material: number;
+  pre_discount_total: number;
+  discount_percent: number;
+  discount_amount: number;
+  subtotal_before_processing: number;
+  processing_fee: number;
+  total: number;
+  gross_margin_target_percent: number | null;
+  gross_margin_expected_percent: number | null;
+};
+
+function round2(n: any): number {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.round(v * 100) / 100;
+}
+
+/**
+ * UI-safe totals shape:
+ * - never returns undefined for numeric fields
+ * - keeps legacy field names used across Estimate editor/preview/job costing
+ */
+export function computeEstimateTotalsNormalized(params: {
+  estimate: any;
+  materialsById: Record<string, any | null | undefined>;
+  assembliesById: Record<string, any | null | undefined>;
+  jobTypesById: Record<string, any>;
+  companySettings: any;
+}): EstimateTotalsNormalized {
+  // IMPORTANT: do not recompute pricing here.
+  // This normalizer must only adapt the pricing-engine output
+  // to the stable UI field names.
+  const t: any = computeEstimatePricing(params as any);
+
+  return {
+    labor_minutes_actual: Number(t.labor_minutes_actual ?? t.labor_minutes_total ?? 0) || 0,
+    labor_minutes_expected: Number(t.labor_minutes_expected ?? t.labor_minutes_total ?? 0) || 0,
+    material_cost: round2(t.material_cost_total ?? t.material_cost ?? 0),
+    material_price: round2(t.material_price_total ?? t.material_price ?? 0),
+    labor_price: round2(t.labor_price_total ?? t.labor_price ?? 0),
+    misc_material: round2(t.misc_material_price ?? t.misc_material ?? 0),
+    pre_discount_total: round2(t.subtotal_price ?? t.pre_discount_total ?? 0),
+    discount_percent: round2(t.discount_percent ?? 0),
+    discount_amount: round2(t.discount_amount ?? 0),
+    subtotal_before_processing: round2(t.subtotal_before_processing ?? (t.total_price ?? t.total ?? 0)),
+    processing_fee: round2(t.processing_fee ?? 0),
+    total: round2(t.total_price ?? t.total ?? 0),
+    gross_margin_target_percent: t.gross_margin_target_percent ?? null,
+    gross_margin_expected_percent: t.gross_margin_expected_percent ?? null,
+  };
+}
+
+
