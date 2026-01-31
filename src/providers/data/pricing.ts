@@ -353,11 +353,6 @@ export function computeAssemblyPricing(params: {
   const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : actualMinutes;
   const laborSell = (expectedMinutes / 60) * laborSellRatePerHour;
 
-  const laborSellRatePerHour = Number(tech?.requiredRevenuePerBillableHour ?? 0) || 0;
-  const actualMinutes = breakdown.labor.actual_minutes;
-  const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : actualMinutes;
-  const laborSell = (expectedMinutes / 60) * laborSellRatePerHour;
-
   const materialCost = computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
   return {
