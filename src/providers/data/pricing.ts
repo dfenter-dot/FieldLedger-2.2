@@ -34,6 +34,9 @@ export type PricingInput = {
       minutes: number;
     }>;
   };
+  tech?: {
+    requiredRevenuePerBillableHour?: number;
+  } | null;
   flags: {
     apply_discount: boolean;
     apply_processing_fee: boolean;
@@ -75,7 +78,7 @@ function resolveMarkup(cost: number, tiers: PricingInput['company']['material_ma
 }
 
 export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
-  const { company, jobType, lineItems, flags } = input;
+  const { company, jobType, lineItems, flags, tech } = input;
 
   // --- LABOR TIME ---
   const materialLabor = lineItems.materials.reduce(
@@ -121,10 +124,19 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
   let effectiveRate = 0;
 
   if (jobType.mode === 'flat_rate') {
+    // Flat-rate labor sell rate must come from "Sheet 2" (Tech View) so we don't apply GM twice.
+    // tech.requiredRevenuePerBillableHour is already GM-adjusted for the selected job type.
     baseRate = company.loaded_labor_rate;
-    effectiveRate = baseRate / (1 - jobType.gross_margin_percent / 100);
+    effectiveRate = Number(tech?.requiredRevenuePerBillableHour ?? 0) || 0;
+
+    // Fallback (should be rare): derive from loaded labor rate if tech view isn't available.
+    if (effectiveRate <= 0) {
+      effectiveRate = baseRate / (1 - jobType.gross_margin_percent / 100);
+    }
+
     laborSell = effectiveRate * (expectedMinutes / 60);
   } else {
+    // Hourly handled later (Phase 2)
     baseRate = company.tech_wage;
     laborCost = baseRate * (actualMinutes / 60);
   }
@@ -341,6 +353,7 @@ export function computeAssemblyPricing(params: {
     company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
+    tech: { requiredRevenuePerBillableHour: (tech as any)?.requiredRevenuePerBillableHour },
     flags: {
       apply_discount: false,
       apply_processing_fee: false,
@@ -424,6 +437,7 @@ export function computeEstimatePricing(params: {
     company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
+    tech: { requiredRevenuePerBillableHour: (tech as any)?.requiredRevenuePerBillableHour },
     flags: {
       apply_discount: applyDiscount,
       apply_processing_fee: applyProcessing,
@@ -432,12 +446,10 @@ export function computeEstimatePricing(params: {
   });
 
   const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
-  const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : breakdown.labor.actual_minutes;
-
 
   return {
     labor_minutes_actual: breakdown.labor.actual_minutes,
-    labor_minutes_expected: expectedMinutes,
+    labor_minutes_expected: breakdown.labor.expected_minutes,
 
     material_cost: materialCost,
     material_price: breakdown.materials.material_sell,
