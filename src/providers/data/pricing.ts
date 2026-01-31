@@ -372,7 +372,8 @@ return {
     misc_material: round2(miscMaterial),
     labor_minutes_actual: Math.round(laborMinutesTotal),
     labor_minutes_expected: Math.round(laborMinutesTotal),
-    discount_percent: applyDiscount ? round2(discountPct) : 0,
+    // Assemblies do not have discount toggles; discount is estimate-level only.
+    discount_percent: 0,
     pre_discount_total: round2(displayedSubtotal),
     subtotal_before_processing: round2(baseTotal),
     total: round2(totalPrice),
@@ -691,4 +692,5 @@ function getProcessingFeePercentDefault(companySettings: CompanySettings): numbe
 }
 
 // ---------------------------------------------------------------------------
+
 
