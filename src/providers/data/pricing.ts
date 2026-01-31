@@ -185,3 +185,263 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
   };
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Backward-compatible exports (UI currently imports these)            */
+/* ------------------------------------------------------------------ */
+
+function toNum(v: any, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clampPct(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
+
+function monthlyFromItemized(items: any[]): number {
+  const mult = (freq: string) => {
+    switch (freq) {
+      case 'monthly':
+        return 1;
+      case 'quarterly':
+        return 1 / 3;
+      case 'biannual':
+        return 1 / 6;
+      case 'annual':
+        return 1 / 12;
+      default:
+        return 1;
+    }
+  };
+  return (Array.isArray(items) ? items : []).reduce((sum, it) => {
+    const amt = toNum(it?.amount, 0);
+    const f = String(it?.frequency ?? 'monthly');
+    return sum + amt * mult(f);
+  }, 0);
+}
+
+export function getAverageTechnicianWage(settings: any): number {
+  const wages = Array.isArray(settings?.technician_wages) ? settings.technician_wages : [];
+  const valid = wages.map((w: any) => toNum(w?.hourly_rate, 0)).filter((v: number) => v > 0);
+  if (valid.length === 0) return 0;
+  return valid.reduce((a: number, b: number) => a + b, 0) / valid.length;
+}
+
+function deriveOverheadPerHour(s: any): number {
+  // Overhead monthly (business + personal), using same itemized vs lump rules as Admin.
+  const bizMonthly = s?.business_apply_itemized
+    ? monthlyFromItemized(s?.business_expenses_itemized)
+    : toNum(s?.business_expenses_lump_sum_monthly, 0);
+
+  const perMonthly = s?.personal_apply_itemized
+    ? monthlyFromItemized(s?.personal_expenses_itemized)
+    : toNum(s?.personal_expenses_lump_sum_monthly, 0);
+
+  const overheadAnnual = (bizMonthly + perMonthly) * 12;
+
+  // Capacity (NO efficiency applied here). This is the admin "overhead per hour" allocator.
+  const workdaysPerWeek = toNum(s?.workdays_per_week, 0);
+  const hoursPerDay = toNum(s?.work_hours_per_day, 0);
+  const vacationDays = toNum(s?.vacation_days_per_year, 0);
+  const sickDays = toNum(s?.sick_days_per_year, 0);
+  const technicians = Math.max(0, toNum(s?.technicians, 0));
+
+  const workdaysPerYear = Math.max(0, workdaysPerWeek * 52 - vacationDays - sickDays);
+  const hoursPerTechYear = workdaysPerYear * hoursPerDay;
+  const totalHoursYear = hoursPerTechYear * technicians;
+
+  return totalHoursYear > 0 ? overheadAnnual / totalHoursYear : 0;
+}
+
+function toEngineCompany(s: any) {
+  const avgWage = getAverageTechnicianWage(s);
+  const overheadPerHour = deriveOverheadPerHour(s);
+  const loadedLaborRate = avgWage + overheadPerHour;
+
+  const tiersRaw = Array.isArray(s?.material_markup_tiers) ? s.material_markup_tiers : [];
+  const tiers = tiersRaw.map((t: any) => ({
+    min: toNum(t?.min, 0),
+    max: toNum(t?.max, 0),
+    percent: toNum(t?.percent ?? t?.markup_percent, 0),
+  }));
+
+  return {
+    tech_wage: avgWage,
+    loaded_labor_rate: loadedLaborRate,
+    purchase_tax_percent: toNum(s?.material_purchase_tax_percent ?? s?.purchase_tax_percent, 0),
+    material_markup_tiers: tiers,
+    misc_material_percent: toNum(s?.misc_material_percent, 0),
+    allow_misc_with_customer_materials: Boolean(s?.allow_misc_with_customer_materials ?? s?.allow_misc_when_customer_supplies_materials ?? false),
+    discount_percent: toNum(s?.discount_percent_default ?? s?.discount_percent ?? 0),
+    processing_fee_percent: toNum(s?.processing_fee_percent, 0),
+  };
+}
+
+function toEngineJobType(jobType: any) {
+  const mode = jobType?.billing_mode === 'hourly' ? 'hourly' : 'flat_rate';
+  return {
+    mode,
+    gross_margin_percent: clampPct(toNum(jobType?.profit_margin_percent, 0)),
+    efficiency_percent: clampPct(toNum(jobType?.efficiency_percent ?? 100, 100)),
+    allow_discounts: Boolean(jobType?.allow_discounts ?? true),
+  } as PricingInput['jobType'];
+}
+
+function computeMaterialCostTotal(materials: any[], purchaseTaxPercent: number): number {
+  return (Array.isArray(materials) ? materials : []).reduce((sum, m) => {
+    const qty = Math.max(0, toNum(m?.quantity, 1));
+    const cost = toNum(m?.custom_cost ?? m?.cost ?? m?.base_cost ?? m?.unit_cost ?? m?.material_cost, 0);
+    const taxable = Boolean(m?.taxable ?? m?.is_taxable ?? false);
+    const taxedCost = taxable ? cost * (1 + purchaseTaxPercent / 100) : cost;
+    return sum + taxedCost * qty;
+  }, 0);
+}
+
+export function computeAssemblyPricing(params: {
+  assembly: any;
+  items: any[];
+  materialsById: Record<string, any>;
+  jobTypesById: Record<string, any>;
+  companySettings: any;
+}) {
+  const { assembly, items, materialsById, jobTypesById, companySettings } = params;
+
+  const jobType =
+    (assembly?.job_type_id && jobTypesById?.[assembly.job_type_id]) ||
+    Object.values(jobTypesById ?? {}).find((j: any) => j?.is_default) ||
+    Object.values(jobTypesById ?? {})[0] ||
+    null;
+
+  const mats: PricingInput['lineItems']['materials'] = (Array.isArray(items) ? items : [])
+    .filter((it) => it?.type === 'material')
+    .map((it: any) => {
+      const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+      return {
+        cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost ?? 0, 0),
+        custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
+        taxable: Boolean(mat?.taxable ?? false),
+        labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
+        quantity: Math.max(0, toNum(it?.quantity, 1)),
+      };
+    });
+
+  const laborLines: PricingInput['lineItems']['labor_lines'] = [
+    { minutes: toNum(assembly?.labor_minutes ?? 0, 0) },
+  ].filter((x) => x.minutes > 0);
+
+  const company = toEngineCompany(companySettings);
+  const jt = toEngineJobType(jobType);
+
+  const breakdown = computePricingBreakdown({
+    company,
+    jobType: jt,
+    lineItems: { materials: mats, labor_lines: laborLines },
+    flags: {
+      apply_discount: false,
+      apply_processing_fee: false,
+      customer_supplies_materials: Boolean(assembly?.customer_supplied_materials ?? false),
+    },
+  });
+
+  const materialCost = computeMaterialCostTotal(mats, company.purchase_tax_percent);
+
+  return {
+    labor_minutes_total: breakdown.labor.expected_minutes,
+    material_cost_total: materialCost,
+    material_price_total: breakdown.materials.material_sell,
+    labor_price_total: breakdown.labor.labor_sell,
+    misc_material_price: breakdown.materials.misc_material,
+    total_price: breakdown.totals.final_total,
+    lines: (Array.isArray(items) ? items : []).map((it: any) => {
+      if (it?.type === 'material') {
+        const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+        return { ...it, labor_minutes: toNum(mat?.labor_minutes ?? 0, 0) * Math.max(0, toNum(it?.quantity, 1)) };
+      }
+      if (it?.type === 'labor') return { ...it, labor_minutes: toNum(it?.minutes, 0) };
+      return { ...it, labor_minutes: 0 };
+    }),
+  };
+}
+
+export function computeEstimatePricing(params: {
+  estimate: any;
+  materialsById: Record<string, any>;
+  assembliesById: Record<string, any>;
+  jobTypesById: Record<string, any>;
+  companySettings: any;
+}) {
+  const { estimate, materialsById, assembliesById, jobTypesById, companySettings } = params;
+
+  const jobType =
+    (estimate?.job_type_id && jobTypesById?.[estimate.job_type_id]) ||
+    Object.values(jobTypesById ?? {}).find((j: any) => j?.is_default) ||
+    Object.values(jobTypesById ?? {})[0] ||
+    null;
+
+  // Build material + labor minutes from estimate rows
+  const rows = Array.isArray(estimate?.items) ? estimate.items : [];
+
+  const mats: PricingInput['lineItems']['materials'] = rows
+    .filter((it: any) => it?.type === 'material')
+    .map((it: any) => {
+      const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+      const qty = Math.max(0, toNum(it?.quantity, 1));
+      return {
+        cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost, 0),
+        custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
+        taxable: Boolean(mat?.taxable ?? false),
+        labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
+        quantity: qty,
+      };
+    });
+
+  // Treat assembly rows as additive snapshots (best-effort): if assembly has precomputed totals, include as "labor lines" and "materials" is not decomposed here.
+  // For now, we only include estimate labor rows + material labor. Assembly internals will be finalized later in Phase 3+.
+  const laborLines: PricingInput['lineItems']['labor_lines'] = rows
+    .filter((it: any) => it?.type === 'labor')
+    .map((it: any) => ({ minutes: toNum(it?.minutes, 0) }));
+
+  const company = toEngineCompany(companySettings);
+  const jt = toEngineJobType(jobType);
+
+  const customerSupplies = Boolean(estimate?.customer_supplied_materials ?? estimate?.customerSuppliedMaterials ?? false);
+  const applyProcessing = Boolean(estimate?.apply_processing_fee ?? estimate?.applyProcessingFees ?? false);
+  const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
+
+  const breakdown = computePricingBreakdown({
+    company,
+    jobType: jt,
+    lineItems: { materials: mats, labor_lines: laborLines },
+    flags: {
+      apply_discount: applyDiscount,
+      apply_processing_fee: applyProcessing,
+      customer_supplies_materials: customerSupplies,
+    },
+  });
+
+  const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
+
+  return {
+    labor_minutes_actual: breakdown.labor.actual_minutes,
+    labor_minutes_expected: breakdown.labor.expected_minutes,
+
+    material_cost: materialCost,
+    material_price: breakdown.materials.material_sell,
+
+    labor_price: breakdown.labor.labor_sell,
+
+    discount_percent: applyDiscount ? company.discount_percent : 0,
+    pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
+    discount_amount: breakdown.subtotals.discount_amount,
+
+    subtotal_before_processing: breakdown.totals.final_subtotal,
+    processing_fee: breakdown.processing_fee,
+    total: breakdown.totals.final_total,
+
+    gross_margin_target_percent: jt.gross_margin_percent,
+    gross_margin_expected_percent: jt.gross_margin_percent,
+  };
+}
+
