@@ -346,16 +346,19 @@ export function computeAssemblyPricing(params: {
     : materialPriceTotal;
   const miscMaterial = miscBase * (miscPct / 100);
 
-  // Assemblies do not apply discount or processing fees. Those toggles live at the estimate level.
   const baseTotal = materialPriceTotal + round2(laborPriceTotal) + miscMaterial;
-  const displayedSubtotal = baseTotal;
-  const discountAmount = 0;
-  const processingFee = 0;
-  const totalPrice = baseTotal;
 
-  return {
+  // Discount (preload) + Processing Fees sequencing (ESTIMATES ONLY)
+// Assemblies do not apply discount or processing fees. Those toggles live at the estimate level.
+const displayedSubtotal = baseTotal;
+const discountAmount = 0;
+const processingFee = 0;
+const totalPrice = baseTotal;
+
+return {
     material_cost_total: round2(materialCostTotal),
-    labor_minutes_total: Math.round(laborMinutesTotal),
+    // Keep legacy labor_minutes_total as expected minutes (what pricing uses).
+    labor_minutes_total: Math.round(laborMinutesExpected),
     material_price_total: round2(materialPriceTotal),
     labor_price_total: round2(laborPriceTotal),
     misc_material_price: round2(miscMaterial),
@@ -368,11 +371,12 @@ export function computeAssemblyPricing(params: {
     material_price: round2(materialPriceTotal),
     labor_price: round2(laborPriceTotal),
     misc_material: round2(miscMaterial),
-    labor_minutes_actual: Math.round(laborMinutesTotal),
-    labor_minutes_expected: Math.round(laborMinutesTotal),
-    discount_percent: 0,
+    labor_minutes_actual: Math.round(laborMinutesActual),
+    labor_minutes_expected: Math.round(laborMinutesExpected),
+    discount_percent: applyDiscount ? round2(discountPct) : 0,
     pre_discount_total: round2(displayedSubtotal),
-    subtotal_before_processing: round2(baseTotal),
+    // Subtotal after discount (target total) but before processing.
+    subtotal_before_processing: round2(totalAfterDiscount),
     total: round2(totalPrice),
     gross_margin_target_percent: null,
     gross_margin_expected_percent: null,
@@ -401,24 +405,24 @@ export function computeEstimatePricing(params: {
 } {
   const { estimate, materialsById, assembliesById, jobTypesById, companySettings } = params;
 
-  // Resolve job type using canonical precedence:
-  // estimate.job_type_id > default job type > null
-  const defaultJobType = Object.values(jobTypesById ?? {}).find((jt: any) => jt?.is_default) ?? null;
-  const resolvedJobTypeId = estimate?.job_type_id ?? defaultJobType?.id ?? null;
-  const jobType = (resolvedJobTypeId && jobTypesById[String(resolvedJobTypeId)]) || defaultJobType || null;
+  const jobType = (estimate?.job_type_id && jobTypesById[estimate.job_type_id]) || null;
   const purchaseTaxPct = getPurchaseTaxPercent(companySettings);
   const miscPct = getMiscMaterialPercent(companySettings);
   const miscWhenCustomerSupplies = miscAppliesWhenCustomerSupplies(companySettings);
   const tiers = getMarkupTiers(companySettings);
   const customerSuppliesForEstimate = Boolean(
-    estimate?.customer_supplied_materials ?? estimate?.customer_supplies_materials ?? estimate?.customer_supplies_material
+    estimate?.customer_supplied_materials ?? estimate?.customer_supplies_materials
   );
   const billingMode = safeBillingMode(jobType);
 
   let materialCostTotal = 0;
   let materialPriceTotal = 0;
   let materialPriceTotalForMisc = 0;
-  let laborMinutesTotal = 0;
+  // Labor minutes tracked two ways (canonical):
+  // - actual: baseline minutes based on selected line items (no efficiency)
+  // - expected: efficiency-adjusted minutes (flat-rate only)
+  let laborMinutesActual = 0;
+  let laborMinutesExpected = 0;
   let laborPriceTotal = 0;
 
   const lines: PricingLineBreakdown[] = [];
@@ -427,43 +431,6 @@ export function computeEstimatePricing(params: {
 
   for (const it of items) {
     const qty = Number(it?.quantity ?? 1) || 1;
-
-    // Labor line (estimate-local)
-    {
-      const itemType = String(it?.item_type ?? it?.type ?? '').toLowerCase();
-      const isLabor =
-        itemType === 'labor' ||
-        it?.labor_minutes != null ||
-        it?.laborMinutes != null ||
-        (it?.name && it?.minutes != null && !it?.material_id && !it?.assembly_id);
-
-      if (isLabor) {
-        const minutes = Math.max(0, Math.floor(Number(it?.labor_minutes ?? it?.laborMinutes ?? it?.minutes ?? 0) || 0));
-        const laborMinutes = minutes * qty;
-        laborMinutesTotal += laborMinutes;
-
-        let laborPrice = 0;
-        if (billingMode === 'hourly') {
-          const avgWage = getAverageTechnicianWage(companySettings as any);
-          const gm = clampPct(Number(jobType?.profit_margin_percent ?? 0)) / 100;
-          const denom = 1 - gm;
-          const hourlyRate = denom > 0 ? avgWage / denom : 0;
-          laborPrice = (laborMinutes / 60) * hourlyRate;
-          laborPriceTotal += laborPrice;
-        }
-
-        lines.push({
-          name: String(it?.name ?? 'Labor'),
-          quantity: qty,
-          material_cost: 0,
-          labor_minutes: laborMinutes,
-          material_price: 0,
-          labor_price: round2(laborPrice),
-          total_price: round2(laborPrice),
-        });
-        continue;
-      }
-    }
 
     // Material line (estimate references a material)
     if (it?.type === 'material') {
@@ -498,7 +465,7 @@ export function computeEstimatePricing(params: {
 
       materialCost = round2(materialCost);
       materialCostTotal += materialCost;
-      laborMinutesTotal += laborMinutes;
+      laborMinutesActual += laborMinutes;
 
       const materialPrice = customerSuppliesForEstimate ? 0 : materialPricePreCustomer;
       materialPriceTotal += materialPrice;
@@ -527,51 +494,6 @@ export function computeEstimatePricing(params: {
       continue;
     }
 
-    // Blank material line (one-off estimate local)
-    if (String(it?.type ?? it?.item_type ?? '').toLowerCase() === 'blank_material') {
-      const unit = Number(it?.unit_cost ?? it?.material_cost ?? it?.base_cost ?? 0) || 0;
-      let materialCost = unit * qty;
-      if (Boolean(it?.taxable)) materialCost *= 1 + purchaseTaxPct / 100;
-
-      const bh = Number(it?.labor_hours ?? 0) || 0;
-      const bm = Number(it?.labor_minutes ?? 0) || 0;
-      const laborMinutes = (bh * 60 + bm) * qty;
-
-      const materialPricePreCustomer = round2(applyTieredMarkup(materialCost, tiers));
-      if (customerSuppliesForEstimate) {
-        materialPriceTotalForMisc += materialPricePreCustomer;
-        materialCost = 0;
-      }
-
-      materialCost = round2(materialCost);
-      materialCostTotal += materialCost;
-      laborMinutesTotal += laborMinutes;
-
-      const materialPrice = customerSuppliesForEstimate ? 0 : materialPricePreCustomer;
-      materialPriceTotal += materialPrice;
-
-      let laborPrice = 0;
-      if (billingMode === 'hourly') {
-        const avgWage = getAverageTechnicianWage(companySettings as any);
-        const gm = clampPct(Number(jobType?.profit_margin_percent ?? 0)) / 100;
-        const denom = 1 - gm;
-        const hourlyRate = denom > 0 ? avgWage / denom : 0;
-        laborPrice = (laborMinutes / 60) * hourlyRate;
-        laborPriceTotal += laborPrice;
-      }
-
-      lines.push({
-        name: String(it?.name ?? 'Material'),
-        quantity: qty,
-        material_cost: materialCost,
-        labor_minutes: laborMinutes,
-        material_price: materialPrice,
-        labor_price: round2(laborPrice),
-        total_price: round2(materialPrice + laborPrice),
-      });
-      continue;
-    }
-
     // Assembly line (estimate references an assembly)
     if (it?.type === 'assembly') {
       const asmId = it.assemblyId ?? it.assembly_id;
@@ -591,14 +513,18 @@ export function computeEstimatePricing(params: {
       // Multiply totals by estimate qty
       materialCostTotal += asmPricing.material_cost_total * qty;
       materialPriceTotal += asmPricing.material_price_total * qty;
-      laborMinutesTotal += asmPricing.labor_minutes_total * qty;
+      // Assembly pricing returns expected/actual via legacy fields; prefer explicit if present.
+      const asmActual = Number((asmPricing as any).labor_minutes_actual ?? asmPricing.labor_minutes_total) || 0;
+      const asmExpected = Number((asmPricing as any).labor_minutes_expected ?? asmPricing.labor_minutes_total) || 0;
+      // For estimate baseline we treat assembly 'actual' as its baseline.
+      laborMinutesActual += asmActual * qty;
       laborPriceTotal += asmPricing.labor_price_total * qty;
 
       lines.push({
         name: asm.name,
         quantity: qty,
         material_cost: round2(asmPricing.material_cost_total * qty),
-        labor_minutes: Math.round(asmPricing.labor_minutes_total * qty),
+        labor_minutes: Math.round(asmActual * qty),
         material_price: round2(asmPricing.material_price_total * qty),
         labor_price: round2(asmPricing.labor_price_total * qty),
         total_price: round2(asmPricing.total_price * qty),
@@ -611,36 +537,35 @@ export function computeEstimatePricing(params: {
   // Flat-rate estimate-level labor adjustments and labor pricing
   if (billingMode === 'flat') {
     const efficiency = clampPct(Number(jobType?.efficiency_percent ?? 100)) / 100;
-    let expectedMinutes = efficiency > 0 ? laborMinutesTotal / efficiency : laborMinutesTotal;
+    let expectedMinutes = efficiency > 0 ? laborMinutesActual / efficiency : laborMinutesActual;
 
     const minMinutes = Number((companySettings as any)?.min_billable_labor_minutes_per_job ?? 0) || 0;
     if (minMinutes > 0 && expectedMinutes < minMinutes) expectedMinutes = minMinutes;
 
-    laborMinutesTotal = expectedMinutes;
+    laborMinutesExpected = expectedMinutes;
 
     const ratePerBillableHour = computeRequiredRevenuePerBillableHour({ companySettings, jobType });
-    laborPriceTotal = (laborMinutesTotal / 60) * ratePerBillableHour;
+    laborPriceTotal = (laborMinutesExpected / 60) * ratePerBillableHour;
+  }
+
+  // Hourly mode: expected == actual.
+  if (billingMode === 'hourly') {
+    laborMinutesExpected = laborMinutesActual;
   }
 
   // Misc material: same rule as assemblies.
-  const applyMisc = Boolean(estimate?.apply_misc_material ?? estimate?.applyMiscMaterial ?? true);
   const miscBase = customerSuppliesForEstimate
     ? (miscWhenCustomerSupplies ? materialPriceTotalForMisc : 0)
     : materialPriceTotal;
-  const miscMaterial = applyMisc ? miscBase * (miscPct / 100) : 0;
+  const miscMaterial = miscBase * (miscPct / 100);
 
   // Discount (preload) + Processing Fees sequencing (per spec)
   const baseTotal = materialPriceTotal + laborPriceTotal + miscMaterial;
 
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
-  const discountPct = (() => {
-    const v = estimate?.discount_percent;
-    if (v != null && String(v).trim?.() !== '') {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : 0;
-    }
-    return Number(getDiscountPercentDefault(companySettings)) || 0;
-  })();
+  const discountPct = Number(
+    estimate?.discount_percent ?? (companySettings as any)?.discount_percent_default ?? 0
+  ) || 0;
 
   let displayedSubtotal = baseTotal;
   let discountAmount = 0;
@@ -653,7 +578,7 @@ export function computeEstimatePricing(params: {
   }
 
   const applyProcessing = Boolean(estimate?.apply_processing_fees ?? estimate?.applyProcessingFees ?? false);
-  const processingPct = Number(getProcessingFeePercentDefault(companySettings)) || 0;
+  const processingPct = Number((companySettings as any)?.processing_fee_percent ?? 0) || 0;
   const processingFee = applyProcessing && processingPct > 0 ? totalAfterDiscount * (processingPct / 100) : 0;
 
   const totalPrice = totalAfterDiscount + processingFee;
@@ -661,7 +586,8 @@ export function computeEstimatePricing(params: {
 
   return {
     material_cost_total: round2(materialCostTotal),
-    labor_minutes_total: Math.round(laborMinutesTotal),
+    // Keep labor_minutes_total as EXPECTED minutes for backwards-compat UI that uses a single number.
+    labor_minutes_total: Math.round(laborMinutesExpected),
     material_price_total: round2(materialPriceTotal),
     labor_price_total: round2(laborPriceTotal),
     misc_material_price: round2(miscMaterial),
@@ -674,8 +600,8 @@ export function computeEstimatePricing(params: {
     material_price: round2(materialPriceTotal),
     labor_price: round2(laborPriceTotal),
     misc_material: round2(miscMaterial),
-    labor_minutes_actual: Math.round(laborMinutesTotal),
-    labor_minutes_expected: Math.round(laborMinutesTotal),
+    labor_minutes_actual: Math.round(laborMinutesActual),
+    labor_minutes_expected: Math.round(laborMinutesExpected),
     discount_percent: applyDiscount ? round2(discountPct) : 0,
     pre_discount_total: round2(displayedSubtotal),
     subtotal_before_processing: round2(baseTotal),
@@ -714,50 +640,27 @@ export function computeEstimateTotalsNormalized(params: {
   jobTypesById: Record<string, JobType>;
   companySettings: CompanySettings;
 }): EstimateTotalsNormalized {
-  // Normalize directly from computeEstimatePricing, which is the canonical engine.
-  // This prevents preview vs editor mismatches and avoids double-applying processing/discount math.
-  const t: any = computeEstimatePricing(params) as any;
+  // IMPORTANT: do not recompute pricing here.
+  // This normalizer must only adapt the pricing-engine output
+  // to the stable UI field names.
+  const t: any = computeEstimatePricing(params);
+
   return {
-    labor_minutes_actual: Math.round(Number(t.labor_minutes_actual ?? t.labor_minutes_total ?? 0) || 0),
-    labor_minutes_expected: Math.round(Number(t.labor_minutes_expected ?? t.labor_minutes_total ?? 0) || 0),
-    material_cost: round2(Number(t.material_cost ?? t.material_cost_total ?? 0) || 0),
-    material_price: round2(Number(t.material_price ?? t.material_price_total ?? 0) || 0),
-    labor_price: round2(Number(t.labor_price ?? t.labor_price_total ?? 0) || 0),
-    misc_material: round2(Number(t.misc_material ?? t.misc_material_price ?? 0) || 0),
-    pre_discount_total: round2(Number(t.pre_discount_total ?? t.subtotal_price ?? 0) || 0),
-    discount_percent: round2(Number(t.discount_percent ?? 0) || 0),
-    discount_amount: round2(Number(t.discount_amount ?? 0) || 0),
-    subtotal_before_processing: round2(Number(t.subtotal_before_processing ?? t.total_price ?? 0) || 0),
-    processing_fee: round2(Number(t.processing_fee ?? 0) || 0),
-    total: round2(Number(t.total ?? t.total_price ?? 0) || 0),
-    gross_margin_target_percent: null,
-    gross_margin_expected_percent: null,
+    labor_minutes_actual: Number(t.labor_minutes_actual ?? t.labor_minutes_total ?? 0) || 0,
+    labor_minutes_expected: Number(t.labor_minutes_expected ?? t.labor_minutes_total ?? 0) || 0,
+    material_cost: round2(t.material_cost_total ?? t.material_cost ?? 0),
+    material_price: round2(t.material_price_total ?? t.material_price ?? 0),
+    labor_price: round2(t.labor_price_total ?? t.labor_price ?? 0),
+    misc_material: round2(t.misc_material_price ?? t.misc_material ?? 0),
+    pre_discount_total: round2(t.subtotal_price ?? t.pre_discount_total ?? 0),
+    discount_percent: round2(t.discount_percent ?? 0),
+    discount_amount: round2(t.discount_amount ?? 0),
+    subtotal_before_processing: round2(t.subtotal_before_processing ?? (t.total_price ?? 0)),
+    processing_fee: round2(t.processing_fee ?? 0),
+    total: round2(t.total_price ?? t.total ?? 0),
+    gross_margin_target_percent: t.gross_margin_target_percent ?? null,
+    gross_margin_expected_percent: t.gross_margin_expected_percent ?? null,
   };
-}
-
-function clampPercent(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.min(100, n));
-}
-
-function getDiscountPercentDefault(companySettings: CompanySettings): number {
-  const anyCs: any = companySettings as any;
-  return (
-    Number(anyCs?.discount_percent_default) ||
-    Number(anyCs?.default_discount_percent) ||
-    Number(anyCs?.discount_percent) ||
-    0
-  );
-}
-
-function getProcessingFeePercentDefault(companySettings: CompanySettings): number {
-  const anyCs: any = companySettings as any;
-  return (
-    Number(anyCs?.processing_fee_percent) ||
-    Number(anyCs?.processing_fee_percent_default) ||
-    Number(anyCs?.default_processing_fee_percent) ||
-    0
-  );
 }
 
 // ---------------------------------------------------------------------------
