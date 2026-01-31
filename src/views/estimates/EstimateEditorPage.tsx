@@ -706,6 +706,10 @@ export function EstimateEditorPage() {
           </div>
         </div>
 
+        <div className="mt">
+          <TechCostBreakdownCard title="Tech View Cost Breakdown" company={companySettings as any} jobType={selectedJobType as any} />
+        </div>
+
         {totals ? (
           <div className="mt">
             <div className="muted small">Cost & Pricing Breakdown</div>
