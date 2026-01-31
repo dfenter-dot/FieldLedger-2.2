@@ -9,6 +9,7 @@ import type { Assembly, Estimate, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
 import { computeEstimatePricing } from '../../providers/data/pricing';
+import { TechCostBreakdownCard } from '../shared/TechCostBreakdownCard';
 
 type ItemRow =
   | { id: string; type: 'material'; materialId: string; quantity: number }
@@ -233,6 +234,16 @@ export function EstimateEditorPage() {
       return null;
     }
   }, [e, companySettings, jobTypes, materialCache, assemblyCache]);
+
+  const selectedJobType = useMemo(() => {
+    if (!e) return null;
+    const byId = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
+    const direct = (e as any).job_type_id ? byId[(e as any).job_type_id] : null;
+    if (direct) return direct;
+    const def = (jobTypes ?? []).find((j) => (j as any).is_default || (j as any).isDefault);
+    return def ?? null;
+  }, [e, jobTypes]);
+
 
   async function save(next: Estimate) {
     try {
@@ -733,3 +744,4 @@ export function EstimateEditorPage() {
     </div>
   );
 }
+
