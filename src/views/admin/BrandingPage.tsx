@@ -81,8 +81,8 @@ export function BrandingPage() {
       <Card title="Branding" right={<Button variant="primary" onClick={save}>Save</Button>}>
         <div className="grid2">
           <div className="stack">
-            <label className="label">Primary Color</label>
-            <Input value={s.primary_color ?? ''} onChange={(e) => setS({ ...s, primary_color: e.target.value || null })} placeholder="e.g. #0ea5e9" />
+            <label className="label">Primary Color (PDF / Accent)</label>
+            <Input value={s.primary_color ?? ''} onChange={(e) => setS({ ...s, primary_color: e.target.value || null })} placeholder="e.g. #D4AF37" />
           </div>
 
           <div className="stack">
@@ -112,4 +112,5 @@ export function BrandingPage() {
     </div>
   );
 }
+
 
