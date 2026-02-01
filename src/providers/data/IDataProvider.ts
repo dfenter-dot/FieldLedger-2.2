@@ -108,6 +108,7 @@ export interface IDataProvider {
   listEstimates(): Promise<Estimate[]>;
   getEstimate(id: string): Promise<Estimate | null>;
   upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
+  copyEstimateOption(estimateId: string, fromOptionId: string): Promise<EstimateOption>;
   deleteEstimate(id: string): Promise<void>;
 
   /* ============================
@@ -119,3 +120,4 @@ export interface IDataProvider {
   getBrandingSettings(): Promise<BrandingSettings>;
   saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings>;
 }
+
