@@ -318,10 +318,19 @@ export interface CsvSettings {
 
 export interface BrandingSettings {
   company_id: UUID;
+  /** Preferred accent color (hex). Used for PDFs and future UI theming. */
   primary_color?: string | null;
+
+  /**
+   * Logo reference. We keep logo_url as the app-level contract.
+   * Some Supabase schemas may store this as logo_path; the data provider maps between them.
+   */
   logo_url?: string | null;
+
+  /** Optional UI theme variant. Defaults to 'default'. */
+  ui_theme?: 'default' | 'light' | null;
+
   updated_at?: string;
 }
-
 
 
