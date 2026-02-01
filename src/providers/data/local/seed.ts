@@ -46,6 +46,8 @@ export function seedCompanySettings(companyId: string): CompanySettings {
 
     misc_applies_when_customer_supplies: false,
 
+    show_tech_view_breakdown: true,
+
     // Technician wages
     technician_wages: [
       {
@@ -81,3 +83,4 @@ export function seedCompanySettings(companyId: string): CompanySettings {
     updated_at: now,
   };
 }
+
