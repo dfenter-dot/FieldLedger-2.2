@@ -232,3 +232,13 @@ select option{
   .printPage{ border: none !important; background: transparent !important; padding: 0 !important; }
   .printTable th, .printTable td, .printTotals td{ border-color: #ddd !important; }
 }
+
+
+/* Company Branding: optional lighter theme */
+.theme-light{
+  --bg: #0b1220;
+  --surface: #121c30;
+  --card: #182541;
+  --border: rgba(255,255,255,0.14);
+  --muted: rgba(255,255,255,0.70);
+}
