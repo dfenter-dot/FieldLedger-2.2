@@ -697,7 +697,7 @@ export function AssemblyEditorPage() {
 
         {totals ? (
           <div className="mt">
-            {companySettings && (((companySettings as any).show_tech_view_breakdown ?? true)) ? (
+            {companySettings && (((companySettings as any).show_tech_view_breakdown ?? false)) ? (
               <div className="mb">
                 <TechCostBreakdownCard title="Tech View Cost Breakdown" company={companySettings as any} jobType={selectedJobType as any} />
               </div>
