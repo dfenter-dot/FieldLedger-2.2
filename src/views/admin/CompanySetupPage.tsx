@@ -691,7 +691,19 @@ export function CompanySetupPage() {
               />
               <div className="muted">{(s as any)?.misc_applies_when_customer_supplies ? 'Yes' : 'No'}</div>
             </div>
-          </div>
+          
+<div className="stack" style={{ minWidth: 320 }}>
+  <label className="label">Show Tech View cost breakdown (Estimates + Assemblies)</label>
+  <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+    <Toggle
+      checked={Boolean((s as any)?.show_tech_view_breakdown ?? true)}
+      onChange={(checked) => s && setS({ ...(s as any), show_tech_view_breakdown: Boolean(checked) })}
+    />
+    <div className="muted">{(s as any)?.show_tech_view_breakdown ?? true ? 'Visible' : 'Hidden'}</div>
+  </div>
+</div>
+
+</div>
 
           <div className="muted small" style={{ maxWidth: 520 }}>
             Misc material is an estimate/assembly-level percentage applied after material totals are built. This toggle controls whether it can still apply when the customer supplies materials.
@@ -1234,4 +1246,5 @@ export function CompanySetupPage() {
     </div>
   );
 }
+
 
