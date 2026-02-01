@@ -81,9 +81,10 @@ export function EstimateEditorPage() {
             estimate_number: nextNum,
             job_type_id: null,
             use_admin_rules: false,
-            customer_supplied_materials: false,
+            customer_supplies_materials: false,
             apply_discount: false,
             apply_processing_fees: false,
+            apply_misc_material: true,
             // discount_percent is optional and may be null/undefined; provider can persist it if supported.
             items: [],
             status: 'draft',
@@ -405,14 +406,28 @@ export function EstimateEditorPage() {
             <select
               className="input"
               disabled={isLocked}
-              value={String(Boolean((e as any).customer_supplied_materials))}
-              onChange={(ev) => setE({ ...(e as any), customer_supplied_materials: ev.target.value === 'true' } as any)}
+              value={String(Boolean((e as any).customer_supplies_materials))}
+              onChange={(ev) => setE({ ...(e as any), customer_supplies_materials: ev.target.value === 'true' } as any)}
             >
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
           </div>
-<div className="stack">
+
+          <div className="stack">
+            <label className="label">Apply Misc Material</label>
+            <select
+              className="input"
+              disabled={isLocked}
+              value={String(Boolean((e as any).apply_misc_material))}
+              onChange={(ev) => setE({ ...(e as any), apply_misc_material: ev.target.value === 'true' } as any)}
+            >
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+
+          <div className="stack">
             <label className="label">Apply Processing Fees</label>
             <select
               className="input"
@@ -691,9 +706,11 @@ export function EstimateEditorPage() {
           </div>
         </div>
 
-        <div className="mt">
-          <TechCostBreakdownCard title="Tech View Cost Breakdown" company={companySettings as any} jobType={selectedJobType as any} />
-        </div>
+        {(companySettings as any)?.show_tech_view_breakdown ?? false ? (
+          <div className="mt">
+            <TechCostBreakdownCard title="Tech View Cost Breakdown" company={companySettings as any} jobType={selectedJobType as any} />
+          </div>
+        ) : null}
 
         {totals ? (
           <div className="mt">
