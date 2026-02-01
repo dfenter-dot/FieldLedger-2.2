@@ -932,25 +932,81 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   async getBrandingSettings(): Promise<BrandingSettings> {
-    const companyId = await this.currentCompanyId();
-    const { data, error } = await this.supabase.from('branding_settings').select('*').eq('company_id', companyId).maybeSingle();
-    if (error) throw error;
-    if (data) return data as any;
+  const companyId = await this.currentCompanyId();
 
-    const payload = { company_id: companyId, primary_color: null, logo_url: null, updated_at: new Date().toISOString() };
-    const { data: created, error: createErr } = await this.supabase.from('branding_settings').insert(payload as any).select().single();
+  const { data, error } = await this.supabase
+    .from('branding_settings')
+    .select('*')
+    .eq('company_id', companyId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (data) return this.normalizeBrandingSettingsRow(data);
+
+  // Create default row. Some schemas use logo_url, others use logo_path.
+  const base: any = {
+    company_id: companyId,
+    primary_color: null,
+    ui_theme: 'default',
+    updated_at: new Date().toISOString(),
+  };
+
+  // Try logo_url first (newer contract), then fallback to logo_path (older schema).
+  const tryInsert = async (payload: any) => {
+    const { data: created, error: createErr } = await this.supabase
+      .from('branding_settings')
+      .insert(payload)
+      .select()
+      .single();
     if (createErr) throw createErr;
-    return created as any;
-  }
+    return created;
+  };
 
-  async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
-    const companyId = await this.currentCompanyId();
-    const payload = { ...settings, company_id: companyId, updated_at: new Date().toISOString() };
-    const { data, error } = await this.supabase.from('branding_settings').upsert(payload as any).select().single();
-    if (error) throw error;
-    return data as any;
+  try {
+    const created = await tryInsert({ ...base, logo_url: null });
+    return this.normalizeBrandingSettingsRow(created);
+  } catch (e: any) {
+    const msg = String(e?.message ?? e ?? '');
+    if (msg.includes("logo_url") && msg.includes("schema cache")) {
+      const created = await tryInsert({ ...base, logo_path: null });
+      return this.normalizeBrandingSettingsRow(created);
+    }
+    throw e;
   }
 }
+
+async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
+  const companyId = await this.currentCompanyId();
+  const payload: any = { ...settings, company_id: companyId, updated_at: new Date().toISOString() };
+
+  const upsert = async (p: any) => {
+    const { data, error } = await this.supabase.from('branding_settings').upsert(p).select().single();
+    if (error) throw error;
+    return data;
+  };
+
+  try {
+    const data = await upsert(payload);
+    return this.normalizeBrandingSettingsRow(data);
+  } catch (e: any) {
+    const msg = String(e?.message ?? e ?? '');
+    // Backward-compat: some schemas use logo_path instead of logo_url.
+    if (msg.includes("logo_url") && msg.includes("schema cache")) {
+      const { logo_url, ...rest } = payload;
+      const data = await upsert({ ...rest, logo_path: logo_url ?? null });
+      return this.normalizeBrandingSettingsRow(data);
+    }
+    // Backward-compat: some schemas may not yet have ui_theme.
+    if (msg.includes("ui_theme") && msg.includes("schema cache")) {
+      const { ui_theme, ...rest } = payload;
+      const data = await upsert(rest);
+      return this.normalizeBrandingSettingsRow(data);
+    }
+    throw e;
+  }
+}
+}
+
 
 
 
