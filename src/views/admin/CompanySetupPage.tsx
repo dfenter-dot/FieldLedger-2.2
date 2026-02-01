@@ -696,10 +696,10 @@ export function CompanySetupPage() {
   <label className="label">Show Tech View cost breakdown (Estimates + Assemblies)</label>
   <div className="row" style={{ gap: 10, alignItems: 'center' }}>
     <Toggle
-      checked={Boolean((s as any)?.show_tech_view_breakdown ?? true)}
+      checked={Boolean((s as any)?.show_tech_view_breakdown ?? false)}
       onChange={(checked) => s && setS({ ...(s as any), show_tech_view_breakdown: Boolean(checked) })}
     />
-    <div className="muted">{(s as any)?.show_tech_view_breakdown ?? true ? 'Visible' : 'Hidden'}</div>
+    <div className="muted">{(s as any)?.show_tech_view_breakdown ?? false ? 'Visible' : 'Hidden'}</div>
   </div>
 </div>
 
