@@ -67,9 +67,11 @@ export function MaterialEditorPage() {
     try {
       setStatus('Saving...');
 
+      const laborOnly = Boolean((m as any).labor_only);
+
       // If the user leaves Base Cost blank, do NOT overwrite the existing value.
-      const base_cost = unitCostText.trim() === '' ? Number((m as any).base_cost ?? 0) : Number(unitCostText);
-      const custom_cost = customCostText.trim() === '' ? null : Number(customCostText);
+      const base_cost = laborOnly ? 0 : (unitCostText.trim() === '' ? Number((m as any).base_cost ?? 0) : Number(unitCostText));
+      const custom_cost = laborOnly ? null : (customCostText.trim() === '' ? null : Number(customCostText));
 
       const lh = laborHoursText.trim() === '' ? null : Number(laborHoursText);
       const lm = laborMinutesText.trim() === '' ? null : Number(laborMinutesText);
@@ -108,6 +110,9 @@ export function MaterialEditorPage() {
       // User Materials + App Owner edit path
       const payload: Material = {
         ...m,
+        labor_only: laborOnly,
+        taxable: laborOnly ? false : Boolean(m.taxable),
+        use_custom_cost: laborOnly ? false : Boolean(m.use_custom_cost),
         // Persist to the actual DB-backed field.
         base_cost: Number.isFinite(base_cost) ? base_cost : Number((m as any).base_cost ?? 0),
         custom_cost: Number.isFinite(custom_cost as any) ? (custom_cost as any) : null,
@@ -182,7 +187,7 @@ export function MaterialEditorPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Name</label>
-            <Input value={m.name} disabled={readOnlyBase} onChange={(e) => setM({ ...m, name: e.target.value })} />
+            <Input value={m.name} disabled={readOnlyBase || Boolean((m as any).labor_only)} onChange={(e) => setM({ ...m, name: e.target.value })} />
           </div>
 
           <div className="stack">
@@ -190,13 +195,31 @@ export function MaterialEditorPage() {
             <Input value={m.sku ?? ''} disabled={readOnlyBase} onChange={(e) => setM({ ...m, sku: e.target.value })} />
           </div>
 
-          <div className="stack">
+          
+<div className="stack">
+  <label className="label">Labor Only</label>
+  <Toggle
+    checked={Boolean((m as any).labor_only)}
+    onChange={(v) => {
+      // When labor-only, material cost inputs are irrelevant.
+      setM({ ...m, labor_only: Boolean(v), taxable: v ? false : m.taxable, use_custom_cost: v ? false : m.use_custom_cost });
+      if (v) {
+        setUnitCostText('0');
+        setCustomCostText('');
+      }
+    }}
+    label={(m as any).labor_only ? 'Yes' : 'No'}
+  />
+  <div className="muted small">Use for dispatch/diagnostics/troubleshooting — contributes labor only, no material cost/markup.</div>
+</div>
+
+<div className="stack">
             <label className="label">Base Cost ($)</label>
             <Input
               type="text"
               inputMode="decimal"
               value={unitCostText}
-              disabled={readOnlyBase}
+              disabled={readOnlyBase || Boolean((m as any).labor_only)}
               onChange={(e) => setUnitCostText(e.target.value)}
             />
           </div>
@@ -208,7 +231,7 @@ export function MaterialEditorPage() {
 
           <div className="stack">
             <label className="label">Use Custom Cost</label>
-            <Toggle checked={!!m.use_custom_cost} onChange={(v) => setM({ ...m, use_custom_cost: v })} label={m.use_custom_cost ? 'Yes' : 'No'} />
+            <Toggle checked={!!m.use_custom_cost} disabled={Boolean((m as any).labor_only)} onChange={(v) => setM({ ...m, use_custom_cost: v })} label={m.use_custom_cost ? 'Yes' : 'No'} />
           </div>
 
           <div className="stack">
@@ -251,6 +274,7 @@ export function MaterialEditorPage() {
     </div>
   );
 }
+
 
 
 
