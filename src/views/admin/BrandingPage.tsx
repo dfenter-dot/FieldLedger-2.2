@@ -18,13 +18,22 @@ export function BrandingPage() {
   const [s, setS] = useState<BrandingSettings | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('');
+  const [themeChoice, setThemeChoice] = useState<'default' | 'light'>(() => {
+    const v = localStorage.getItem('fieldledger_theme') as 'default' | 'light' | null;
+    return v === 'light' ? 'light' : 'default';
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('theme-light', themeChoice === 'light');
+    localStorage.setItem('fieldledger_theme', themeChoice);
+  }, [themeChoice]);
 
   useEffect(() => {
     (async () => {
       try {
         const settings = await data.getBrandingSettings();
         setS(settings);
-        setLogoPreview(await toSignedLogoUrl(settings.logo_url));
+        setLogoPreview(await toSignedLogoUrl(settings.logo_storage_path));
       } catch (e: any) {
         console.error(e);
         setStatus(String(e?.message ?? e));
@@ -38,7 +47,7 @@ export function BrandingPage() {
       setStatus('Saving...');
       const saved = await data.saveBrandingSettings(s);
       setS(saved);
-      setLogoPreview(await toSignedLogoUrl(saved.logo_url));
+      setLogoPreview(await toSignedLogoUrl(saved.logo_storage_path));
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
@@ -63,9 +72,9 @@ export function BrandingPage() {
       });
       if (upErr) throw upErr;
 
-      const saved = await data.saveBrandingSettings({ ...s, logo_url: path });
+      const saved = await data.saveBrandingSettings({ ...s, logo_storage_path: path });
       setS(saved);
-      setLogoPreview(await toSignedLogoUrl(saved.logo_url));
+      setLogoPreview(await toSignedLogoUrl(saved.logo_storage_path));
       setStatus('Uploaded.');
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
@@ -81,10 +90,29 @@ export function BrandingPage() {
       <Card title="Branding" right={<Button variant="primary" onClick={save}>Save</Button>}>
         <div className="grid2">
           <div className="stack">
-            <label className="label">Primary Color (PDF / Accent)</label>
-            <Input value={s.primary_color ?? ''} onChange={(e) => setS({ ...s, primary_color: e.target.value || null })} placeholder="e.g. #D4AF37" />
+            <label className="label">Company Display Name</label>
+            <Input
+              value={s.company_display_name ?? ''}
+              onChange={(e) => setS({ ...s, company_display_name: e.target.value || null })}
+              placeholder="e.g. Quad2 Electric"
+            />
           </div>
 
+          <div className="stack">
+            <label className="label">Theme</label>
+            <select
+              className="input"
+              value={themeChoice}
+              onChange={(e) => setThemeChoice((e.target.value as any) ?? 'default')}
+            >
+              <option value="default">Default (Dark)</option>
+              <option value="light">Light</option>
+            </select>
+            <div className="muted small">This is a visual preference stored in this browser/device.</div>
+          </div>
+        </div>
+
+        <div className="grid2 mt">
           <div className="stack">
             <label className="label">Company Logo</label>
             <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -105,6 +133,22 @@ export function BrandingPage() {
             </div>
             <div className="muted small">Stored in Supabase Storage bucket <strong>company-logos</strong> (private). The app uses signed URLs for preview/PDF.</div>
           </div>
+        </div>
+
+        <div className="grid2 mt">
+          <div className="stack">
+            <label className="label">License Info</label>
+            <textarea className="input" rows={3} value={s.license_info ?? ''} onChange={(e) => setS({ ...s, license_info: e.target.value || null })} />
+          </div>
+          <div className="stack">
+            <label className="label">Warranty Info</label>
+            <textarea className="input" rows={3} value={s.warranty_info ?? ''} onChange={(e) => setS({ ...s, warranty_info: e.target.value || null })} />
+          </div>
+        </div>
+
+        <div className="stack mt">
+          <label className="label">Terms Info</label>
+          <textarea className="input" rows={4} value={s.terms_info ?? ''} onChange={(e) => setS({ ...s, terms_info: e.target.value || null })} />
         </div>
 
         {status ? <div className="muted small mt">{status}</div> : null}
