@@ -317,24 +317,15 @@ export interface CsvSettings {
 }
 
 export interface BrandingSettings {
-  company_id: string;
-
-  // These fields exist in your current Supabase branding_settings table
-  company_display_name?: string;
-  license_info?: string;
-  warranty_info?: string;
-  terms_info?: string;
+  company_id: UUID;
+  company_display_name?: string | null;
+  license_info?: string | null;
+  warranty_info?: string | null;
+  terms_info?: string | null;
   logo_storage_path?: string | null;
-
-  // Back-compat (older UI used logo_url to store the storage path)
-  logo_url?: string | null;
-
-  // Optional (only if you add these columns)
-  primary_color?: string | null;
-  ui_theme?: 'default' | 'light' | string | null;
-
-  updated_at?: string | null;
+  updated_at?: string;
 }
+
 
 
 
