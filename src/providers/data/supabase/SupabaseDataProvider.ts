@@ -931,83 +931,104 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 
+    /**
+   * Normalize branding_settings rows across schema variations.
+   * Current canonical DB columns (per your Supabase): 
+   * - company_id, company_display_name, license_info, warranty_info, terms_info, logo_storage_path, updated_at
+   *
+   * Some older patches referenced logo_url/logo_path/primary_color/ui_theme; we tolerate them if present.
+   */
+  private normalizeBrandingSettingsRow(row: any): BrandingSettings {
+    const r: any = row ?? {};
+    const logo_storage_path =
+      r.logo_storage_path ??
+      r.logo_path ??
+      r.logo_url ??
+      null;
+
+    return {
+      company_id: r.company_id ?? this.companyId,
+      company_display_name: r.company_display_name ?? '',
+      license_info: r.license_info ?? '',
+      warranty_info: r.warranty_info ?? '',
+      terms_info: r.terms_info ?? '',
+      logo_storage_path,
+      // Back-compat: UI may still use logo_url to store the storage path
+      logo_url: logo_storage_path,
+      // Optional (only if your DB adds these columns later)
+      primary_color: r.primary_color ?? null,
+      ui_theme: r.ui_theme ?? null,
+      updated_at: r.updated_at ?? null,
+    } as any;
+  }
+
   async getBrandingSettings(): Promise<BrandingSettings> {
-  const companyId = await this.currentCompanyId();
-
-  const { data, error } = await this.supabase
-    .from('branding_settings')
-    .select('*')
-    .eq('company_id', companyId)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (data) return this.normalizeBrandingSettingsRow(data);
-
-  // Create default row. Some schemas use logo_url, others use logo_path.
-  const base: any = {
-    company_id: companyId,
-    primary_color: null,
-    ui_theme: 'default',
-    updated_at: new Date().toISOString(),
-  };
-
-  // Try logo_url first (newer contract), then fallback to logo_path (older schema).
-  const tryInsert = async (payload: any) => {
-    const { data: created, error: createErr } = await this.supabase
+    // Fetch the row if it exists
+    const { data, error } = await this.supabase
       .from('branding_settings')
-      .insert(payload)
-      .select()
-      .single();
-    if (createErr) throw createErr;
-    return created;
-  };
+      .select('*')
+      .eq('company_id', this.companyId)
+      .maybeSingle();
 
-  try {
-    const created = await tryInsert({ ...base, logo_url: null });
-    return this.normalizeBrandingSettingsRow(created);
-  } catch (e: any) {
-    const msg = String(e?.message ?? e ?? '');
-    if (msg.includes("logo_url") && msg.includes("schema cache")) {
-      const created = await tryInsert({ ...base, logo_path: null });
-      return this.normalizeBrandingSettingsRow(created);
-    }
-    throw e;
-  }
-}
-
-async saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings> {
-  const companyId = await this.currentCompanyId();
-  const payload: any = { ...settings, company_id: companyId, updated_at: new Date().toISOString() };
-
-  const upsert = async (p: any) => {
-    const { data, error } = await this.supabase.from('branding_settings').upsert(p).select().single();
     if (error) throw error;
-    return data;
-  };
 
-  try {
-    const data = await upsert(payload);
-    return this.normalizeBrandingSettingsRow(data);
-  } catch (e: any) {
-    const msg = String(e?.message ?? e ?? '');
-    // Backward-compat: some schemas use logo_path instead of logo_url.
-    if (msg.includes("logo_url") && msg.includes("schema cache")) {
-      const { logo_url, ...rest } = payload;
-      const data = await upsert({ ...rest, logo_path: logo_url ?? null });
-      return this.normalizeBrandingSettingsRow(data);
-    }
-    // Backward-compat: some schemas may not yet have ui_theme.
-    if (msg.includes("ui_theme") && msg.includes("schema cache")) {
-      const { ui_theme, ...rest } = payload;
-      const data = await upsert(rest);
-      return this.normalizeBrandingSettingsRow(data);
-    }
-    throw e;
+    if (data) return this.normalizeBrandingSettingsRow(data);
+
+    // Create a default row (minimal insert to avoid schema-mismatch issues)
+    const { error: insertError } = await this.supabase
+      .from('branding_settings')
+      .insert([{ company_id: this.companyId }]);
+
+    if (insertError) throw insertError;
+
+    const { data: data2, error: error2 } = await this.supabase
+      .from('branding_settings')
+      .select('*')
+      .eq('company_id', this.companyId)
+      .maybeSingle();
+
+    if (error2) throw error2;
+
+    return this.normalizeBrandingSettingsRow(data2);
   }
+
+  async saveBrandingSettings(settings: BrandingSettings): Promise<void> {
+    const base: any = {
+      company_id: this.companyId,
+      company_display_name: (settings as any).company_display_name ?? '',
+      license_info: (settings as any).license_info ?? '',
+      warranty_info: (settings as any).warranty_info ?? '',
+      terms_info: (settings as any).terms_info ?? '',
+      logo_storage_path: (settings as any).logo_storage_path ?? (settings as any).logo_url ?? null,
+      updated_at: new Date().toISOString(),
+      // optional columns (ignore if DB doesn't have them)
+      primary_color: (settings as any).primary_color ?? null,
+      ui_theme: (settings as any).ui_theme ?? null,
+    };
+
+    // Upsert with graceful fallback if optional columns don't exist yet.
+    let payload: any = { ...base };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { error } = await this.supabase
+        .from('branding_settings')
+        .upsert(payload, { onConflict: 'company_id' });
+
+      if (!error) return;
+
+      const msg = String((error as any).message ?? '');
+      const m1 = msg.match(/Could not find the '([^']+)' column/i);
+      const m2 = msg.match(/column "([^"]+)" of relation/i);
+      const col = (m1 && m1[1]) || (m2 && m2[1]);
+
+      if (col && col in payload) {
+        delete payload[col];
+        continue;
+      }
+
+      // Not a "missing column" error → bubble up
+      throw error;
+    }
+  }
+
 }
-}
-
-
-
-
 
