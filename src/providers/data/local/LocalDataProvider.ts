@@ -329,3 +329,4 @@ export class LocalDataProvider implements IDataProvider {
     return settings as BrandingSettings;
   }
 }
+
