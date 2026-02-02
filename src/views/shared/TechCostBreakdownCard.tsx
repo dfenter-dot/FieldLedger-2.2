@@ -122,15 +122,8 @@ export function TechCostBreakdownCard(props: {
           </div>
         </div>
 
-        <div className="stack">
-          <label className="label">Average Job Goal (Derived)</label>
-          <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-            {money((tech.requiredRevenuePerBillableHour * (workhoursPerDay * (jobType?.mode === 'flat_rate' ? (100 / Math.max(1, tech.efficiencyPercent)) : 1))) / Math.max(1, jobsPerTechPerDay))}
-          </div>
-          <div className="muted small">
-            Based on {num2(jobsPerMonth)} jobs/month (Techs × Jobs/Tech/Day × Workdays/Month)
-          </div>
-        </div>
+        {/** UI-only: hide Average Job Goal (Derived) in Estimates tech breakdown view */}
+        {null}
 
         <div className="stack" style={{ gridColumn: '1 / -1' }}>
           <div className="rowBetween" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -159,5 +152,6 @@ export function TechCostBreakdownCard(props: {
     </Card>
   );
 }
+
 
 
