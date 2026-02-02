@@ -407,7 +407,11 @@ export function EstimateEditorPage() {
               className="input"
               disabled={isLocked}
               value={String(Boolean((e as any).customer_supplies_materials))}
-              onChange={(ev) => setE({ ...(e as any), customer_supplies_materials: ev.target.value === 'true' } as any)}
+              onChange={(ev) => {
+                const v = ev.target.value === 'true';
+                // Persist both legacy/canonical names to tolerate partially-migrated schemas.
+                setE({ ...(e as any), customer_supplies_materials: v, customer_supplied_materials: v } as any);
+              }}
             >
               <option value="false">No</option>
               <option value="true">Yes</option>
