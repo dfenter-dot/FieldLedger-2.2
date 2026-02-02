@@ -28,17 +28,17 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ maxWidth: 440, margin: '0 auto', padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
+    <div style={{ maxWidth: 520, margin: '0 auto', padding: 24 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 18 }}>
         <img
           src="/branding/fieldledger-logo.png"
           alt="FieldLedger"
-          style={{ height: 56, width: 'auto', display: 'block' }}
+          style={{ width: '100%', maxWidth: 360, height: 'auto', marginBottom: 10 }}
         />
+        <p style={{ marginTop: 0, opacity: 0.85, marginBottom: 0, fontSize: 16, fontWeight: 600 }}>
+          {mode === 'signin' ? 'Sign in to continue.' : 'Create your account to continue.'}
+        </p>
       </div>
-      <p style={{ marginTop: 0, opacity: 0.8, marginBottom: 16 }}>
-        {mode === 'signin' ? 'Sign in to continue.' : 'Create your account to continue.'}
-      </p>
 
       <Card>
         <div style={{ display: 'grid', gap: 12 }}>
