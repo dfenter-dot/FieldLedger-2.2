@@ -297,6 +297,12 @@ export function EstimateEditorPage() {
     await save({ ...(e as any), items: nextItems } as any);
   }
 
+  async function updateLaborDescription(itemId: string, description: string) {
+    if (!e) return;
+    const nextItems = ((e as any).items ?? []).map((it: any) => (it.id === itemId ? { ...it, description } : it));
+    await save({ ...(e as any), items: nextItems } as any);
+  }
+
   async function removeItem(itemId: string) {
     if (!e) return;
     const nextItems = ((e as any).items ?? []).filter((it: any) => it.id !== itemId);
@@ -639,7 +645,16 @@ export function EstimateEditorPage() {
 
               const sub =
                 r.type === 'labor'
-                  ? `${Math.max(0, Math.floor((r as any).minutes ?? 0))} min`
+                  ? (() => {
+                      const total = Math.max(0, Math.floor(toNum((r as any).minutes ?? (r as any).labor_minutes ?? 0, 0)));
+                      const h = Math.floor(total / 60);
+                      const m = total % 60;
+                      const parts: string[] = [];
+                      parts.push(`${h}h ${m}m`);
+                      const desc = String((r as any).description ?? '').trim();
+                      if (desc) parts.push(desc);
+                      return parts.join(' • ');
+                    })()
                   : r.type === 'material'
                     ? (() => {
                         const m = materialCache[(r as any).materialId] as any;
@@ -671,16 +686,53 @@ export function EstimateEditorPage() {
 
                   <div className="listRight" style={{ gap: 8 }}>
                     {r.type === 'labor' ? (
-                      <Input
-                        style={{ width: 110 }}
-                        type="text"
-                        inputMode="numeric"
-                        value={String((r as any).minutes ?? 0)}
-                        onChange={(ev) => {
-                          const mins = Math.max(0, Math.floor(toNum(ev.target.value, 0)));
-                          updateLaborMinutes(r.id, mins);
-                        }}
-                      />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {(() => {
+                            const total = Math.max(
+                              0,
+                              Math.floor(toNum((r as any).minutes ?? (r as any).labor_minutes ?? 0, 0)),
+                            );
+                            const h = Math.floor(total / 60);
+                            const m = total % 60;
+
+                            return (
+                              <>
+                                <Input
+                                  style={{ width: 70 }}
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={String(h)}
+                                  onChange={(ev) => {
+                                    const nextH = Math.max(0, Math.floor(toNum(ev.target.value, 0)));
+                                    updateLaborMinutes(r.id, nextH * 60 + m);
+                                  }}
+                                  placeholder="Hours"
+                                />
+                                <Input
+                                  style={{ width: 70 }}
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={String(m)}
+                                  onChange={(ev) => {
+                                    const nextM = Math.max(0, Math.floor(toNum(ev.target.value, 0)));
+                                    updateLaborMinutes(r.id, h * 60 + Math.min(59, nextM));
+                                  }}
+                                  placeholder="Min"
+                                />
+                              </>
+                            );
+                          })()}
+                        </div>
+
+                        <Input
+                          style={{ width: 240 }}
+                          type="text"
+                          value={String((r as any).description ?? '')}
+                          onChange={(ev) => updateLaborDescription(r.id, ev.target.value)}
+                          placeholder="Description"
+                        />
+                      </div>
                     ) : (
                       <Input
                         style={{ width: 90 }}
