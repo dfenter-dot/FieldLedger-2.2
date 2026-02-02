@@ -66,6 +66,10 @@ export function EstimateEditorPage() {
     Record<string, { hours: string; minutes: string; description: string }>
   >({});
 
+  // Quantity edit buffer so users can backspace past "0" without double-clicking.
+  // We update the in-memory estimate immediately for live recalculation, and persist on blur.
+  const [qtyEdits, setQtyEdits] = useState<Record<string, string>>({});
+
   // Load admin/config data used by dropdowns and calculations.
   useEffect(() => {
     let cancelled = false;
@@ -283,8 +287,22 @@ export function EstimateEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, rows, assemblyCache]);
 
+  // Allow per-estimate discount % to affect calculations immediately without saving.
+  // We do this by overriding the company settings discount fields for pricing calls only.
+  const effectiveCompanySettings = useMemo(() => {
+    if (!companySettings) return companySettings;
+    const raw = (e as any)?.discount_percent ?? (e as any)?.discountPercent;
+    const n = toNum(raw, NaN);
+    if (!Number.isFinite(n)) return companySettings;
+    return {
+      ...(companySettings as any),
+      discount_percent_default: n,
+      discount_percent: n,
+    };
+  }, [companySettings, (e as any)?.discount_percent]);
+
   const totals = useMemo(() => {
-    if (!e || !companySettings) return null;
+    if (!e || !effectiveCompanySettings) return null;
     const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
     try {
       return computeEstimatePricing({
@@ -292,13 +310,13 @@ export function EstimateEditorPage() {
         materialsById: materialCache,
         assembliesById: assemblyCache,
         jobTypesById,
-        companySettings,
+        companySettings: effectiveCompanySettings,
       } as any);
     } catch (err) {
       console.error(err);
       return null;
     }
-  }, [e, companySettings, jobTypes, materialCache, assemblyCache]);
+  }, [e, effectiveCompanySettings, jobTypes, materialCache, assemblyCache]);
 
   const selectedJobType = useMemo(() => {
     if (!e) return null;
@@ -497,7 +515,7 @@ export function EstimateEditorPage() {
         materialsById: materialCache,
         assembliesById: assemblyCache,
         jobTypesById,
-        companySettings,
+        companySettings: effectiveCompanySettings ?? companySettings,
       } as any) as any;
 
       const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
@@ -1226,10 +1244,43 @@ export function EstimateEditorPage() {
                         style={{ width: 90 }}
                         type="text"
                         inputMode="numeric"
-                        value={String((r as any).quantity ?? 1)}
+                        value={qtyEdits[r.id] ?? String((r as any).quantity ?? 1)}
                         onChange={(ev) => {
-                          const q = Math.max(1, Math.floor(toNum(ev.target.value, 1)));
-                          updateQuantity(r.id, q);
+                          const v = ev.target.value;
+                          // allow blank while editing
+                          if (v.trim() === '' || /^\d+$/.test(v)) {
+                            setQtyEdits((prev) => ({ ...prev, [r.id]: v }));
+                            // Live-update in-memory estimate so totals update immediately,
+                            // but do not persist on each keystroke.
+                            if (e) {
+                              const qNum = v.trim() === '' ? null : Math.max(1, Math.floor(toNum(v, 1)));
+                              const nextItems = ((e as any).items ?? []).map((it: any) =>
+                                it.id === r.id
+                                  ? { ...it, quantity: qNum == null ? (it.quantity ?? 1) : qNum }
+                                  : it,
+                              );
+                              setE({ ...(e as any), items: nextItems } as any);
+                            }
+                          }
+                        }}
+                        onBlur={async () => {
+                          const raw = qtyEdits[r.id];
+                          // If user left it blank, revert to existing quantity
+                          if (raw == null || raw.trim() === '') {
+                            setQtyEdits((prev) => {
+                              const n = { ...prev };
+                              delete n[r.id];
+                              return n;
+                            });
+                            return;
+                          }
+                          const q = Math.max(1, Math.floor(toNum(raw, 1)));
+                          await updateQuantity(r.id, q);
+                          setQtyEdits((prev) => {
+                            const n = { ...prev };
+                            delete n[r.id];
+                            return n;
+                          });
                         }}
                       />
                     )}
