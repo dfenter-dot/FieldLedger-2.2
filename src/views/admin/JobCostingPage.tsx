@@ -183,7 +183,7 @@ return {
                     <div className="metric"><span>Expected Revenue (incl. processing)</span><strong>${expected.total.toFixed(2)}</strong></div>
                     <div className="metric"><span>Expected Labor (efficiency applied)</span><strong>{(expected.labor_minutes_expected / 60).toFixed(2)} hrs</strong></div>
                     <div className="metric"><span>Expected Materials (cost + tax)</span><strong>${expected.material_cost.toFixed(2)}</strong></div>
-                    <div className="metric"><span>Misc Material (embedded in price)</span><strong>{estimate.apply_misc_material ? 'Included' : 'Off'}</strong></div>
+                    <div className="metric"><span>Misc Material (embedded in price)</span><strong>Admin Controlled</strong></div>
                     <div className="metric"><span>Expected Gross Profit</span><strong>${(expected.total - expected.material_cost - expected.labor_cost).toFixed(2)}</strong></div>
                     <div className="metric"><span>Expected Gross Margin</span><strong>{expected.gross_margin_expected_percent === null ? '—' : `${expected.gross_margin_expected_percent.toFixed(1)}%`}</strong></div>
                   </div>
@@ -240,5 +240,6 @@ return {
     </div>
   );
 }
+
 
 
