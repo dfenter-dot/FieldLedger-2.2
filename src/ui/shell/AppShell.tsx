@@ -1,28 +1,26 @@
 import { ReactNode, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
-import { useData } from '../../providers/data/DataContext';
 import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
 import './shell.css';
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const data = useData();
-
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const branding = await data.getBrandingSettings();
-        if (cancelled) return;
-        const theme = branding?.ui_theme ?? 'default';
-        const root = document.documentElement;
-        root.classList.toggle('theme-light', theme === 'light');
-      } catch {
-        // ignore
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [data]);
+    const root = document.documentElement;
+
+    const applyTheme = () => {
+      const v = (localStorage.getItem('fieldledger_theme') as 'default' | 'light' | null) ?? 'default';
+      root.classList.toggle('theme-light', v === 'light');
+    };
+
+    applyTheme();
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'fieldledger_theme') applyTheme();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   return (
     <div className="appShell">
@@ -37,5 +35,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
 
 
