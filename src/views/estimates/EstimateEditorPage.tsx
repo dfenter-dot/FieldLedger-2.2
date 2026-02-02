@@ -1320,11 +1320,14 @@ export function EstimateEditorPage() {
 
               {toNum((totals as any).discount_amount, 0) > 0 ? (
                 <div className="pill">
-                  Pre-Discount: ${safeFixed((totals as any).pre_discount_total)} (−${safeFixed((totals as any).discount_amount)})
+                  Subtotal: ${safeFixed((totals as any).pre_discount_total)} (−${safeFixed((totals as any).discount_amount)})
                 </div>
               ) : null}
 
-              <div className="pill">Subtotal: ${safeFixed((totals as any).subtotal_before_processing)}</div>
+              <div className="pill">
+                {toNum((totals as any).discount_amount, 0) > 0 ? 'After Discount' : 'Subtotal'}:{' '}
+                ${safeFixed((totals as any).subtotal_before_processing)}
+              </div>
               <div className="pill">Processing: ${safeFixed((totals as any).processing_fee)}</div>
               <div className="pill">Total: ${safeFixed((totals as any).total)}</div>
 
