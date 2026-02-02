@@ -310,7 +310,14 @@ function toEngineCompany(s: any) {
       s?.allow_misc_when_customer_supplies ??
       false
     ),
-    discount_percent: toNum(s?.discount_percent_default ?? s?.discount_percent ?? 0),
+    // Admin default discount percent has appeared under several names across builds.
+    // Prefer the explicit default field(s) first.
+    discount_percent: toNum(
+      s?.default_discount_percent ??
+      s?.discount_percent_default ??
+      s?.discount_percent ??
+      0,
+    ),
     processing_fee_percent: toNum(s?.processing_fee_percent, 0),
   };
 }
@@ -370,6 +377,15 @@ export function computeAssemblyPricing(params: {
   ].filter((x) => x.minutes > 0);
 
   const company = toEngineCompany(companySettings);
+  // Discount percent can be set per-estimate in the UI (capped by Company Setup).
+  // If provided, it overrides the company default for both preload and applied discount.
+  const discountPctFromEstimate = toNum(
+    (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent,
+    NaN as any,
+  );
+  if (Number.isFinite(discountPctFromEstimate)) {
+    company.discount_percent = discountPctFromEstimate;
+  }
   const jt = toEngineJobType(jobType);
 
   const breakdown = computePricingBreakdown({
@@ -459,6 +475,17 @@ export function computeEstimatePricing(params: {
     }));
 
   const company = toEngineCompany(companySettings);
+
+  // Discount percent can be stored per-estimate (UI input) and should override
+  // the Company Setup default for both the "preload" subtotal and the applied discount.
+  const discountPctFromEstimate = toNum(
+    (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent,
+    NaN,
+  );
+  if (Number.isFinite(discountPctFromEstimate)) {
+    company.discount_percent = clampPct(discountPctFromEstimate);
+  }
+
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -577,4 +604,5 @@ export function computeEstimateTotalsNormalized(
     total: round2(pricing.total),
   };
 }
+
 
