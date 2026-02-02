@@ -301,7 +301,15 @@ function toEngineCompany(s: any) {
     purchase_tax_percent: toNum(s?.material_purchase_tax_percent ?? s?.purchase_tax_percent, 0),
     material_markup_tiers: tiers,
     misc_material_percent: toNum(s?.misc_material_percent, 0),
-    allow_misc_with_customer_materials: Boolean(s?.allow_misc_with_customer_materials ?? s?.allow_misc_when_customer_supplies_materials ?? false),
+    // Admin toggle label: "Apply misc material when customer supplies materials"
+    // Tolerate legacy/alternate schema field names.
+    allow_misc_with_customer_materials: Boolean(
+      s?.misc_applies_when_customer_supplies ??
+      s?.allow_misc_with_customer_materials ??
+      s?.allow_misc_when_customer_supplies_materials ??
+      s?.allow_misc_when_customer_supplies ??
+      false
+    ),
     discount_percent: toNum(s?.discount_percent_default ?? s?.discount_percent ?? 0),
     processing_fee_percent: toNum(s?.processing_fee_percent, 0),
   };
