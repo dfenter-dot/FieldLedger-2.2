@@ -97,28 +97,25 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
       : actualMinutes;
 
   // --- MATERIALS ---
-  let rawMaterialSell = 0;
   let materialSell = 0;
 
-  // Raw material sell is always computed (used for misc material when customer supplies materials).
-  for (const m of lineItems.materials) {
-    const baseCost = m.custom_cost ?? m.cost;
-    const taxedCost = m.taxable
-      ? baseCost * (1 + company.purchase_tax_percent / 100)
-      : baseCost;
-    const markup = resolveMarkup(taxedCost, company.material_markup_tiers);
-    const sell = taxedCost * (1 + markup / 100);
-    rawMaterialSell += sell * m.quantity;
+  if (!flags.customer_supplies_materials) {
+    for (const m of lineItems.materials) {
+      const baseCost = m.custom_cost ?? m.cost;
+      const taxedCost = m.taxable
+        ? baseCost * (1 + company.purchase_tax_percent / 100)
+        : baseCost;
+      const markup = resolveMarkup(taxedCost, company.material_markup_tiers);
+      const sell = taxedCost * (1 + markup / 100);
+      materialSell += sell * m.quantity;
+    }
   }
 
-  // If customer supplies materials, the customer is not charged for material sell.
-  materialSell = flags.customer_supplies_materials ? 0 : rawMaterialSell;
-
-  const miscBaseSell = flags.customer_supplies_materials
-    ? (company.allow_misc_with_customer_materials ? rawMaterialSell : 0)
-    : rawMaterialSell;
-
-  const miscMaterial = miscBaseSell > 0 ? miscBaseSell * (company.misc_material_percent / 100) : 0;
+  const miscMaterial =
+    materialSell > 0 &&
+    (company.allow_misc_with_customer_materials || !flags.customer_supplies_materials)
+      ? materialSell * (company.misc_material_percent / 100)
+      : 0;
 
   // --- LABOR PRICING ---
   let laborCost = 0;
@@ -372,23 +369,21 @@ export function computeAssemblyPricing(params: {
     flags: {
       apply_discount: false,
       apply_processing_fee: false,
-      customer_supplies_materials: Boolean(assembly?.customer_supplied_materials ?? false),
+      customer_supplies_materials: Boolean(assembly?.customer_supplied_materials ?? (assembly as any)?.customer_supplies_materials ?? false),
     },
   });
-
-  const laborSellRatePerHour = Number(tech?.requiredRevenuePerBillableHour ?? 0) || 0;
   const actualMinutes = breakdown.labor.actual_minutes;
   const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : actualMinutes;
-  const laborSell = (expectedMinutes / 60) * laborSellRatePerHour;
 
-  const materialCost = computeMaterialCostTotal(mats, company.purchase_tax_percent);
+  const customerSupplies = Boolean(assembly?.customer_supplied_materials ?? (assembly as any)?.customer_supplies_materials ?? false);
+  const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
   return {
     labor_minutes_total: expectedMinutes,
     material_cost_total: materialCost,
     material_price_total: breakdown.materials.material_sell,
-    labor_price_total: laborSell,
-    labor_rate_used_per_hour: laborRateUsedPerHour,
+    labor_price_total: breakdown.labor.labor_sell,
+    labor_rate_used_per_hour: breakdown.labor.effective_rate,
     misc_material_price: breakdown.materials.misc_material,
     total_price: breakdown.totals.final_total,
     lines: (Array.isArray(items) ? items : []).map((it: any) => {
@@ -445,7 +440,7 @@ export function computeEstimatePricing(params: {
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
-  const customerSupplies = Boolean(estimate?.customer_supplied_materials ?? estimate?.customerSuppliedMaterials ?? false);
+  const customerSupplies = Boolean(estimate?.customer_supplied_materials ?? (estimate as any)?.customer_supplies_materials ?? estimate?.customerSuppliedMaterials ?? false);
   const applyProcessing = Boolean(estimate?.apply_processing_fee ?? estimate?.applyProcessingFees ?? false);
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
@@ -523,12 +518,34 @@ function round2(n: any): number {
  * - never returns undefined for numeric fields
  * - keeps legacy field names used across Estimate editor/preview/job costing
  */
-export function computeEstimateTotalsNormalized(params: {
-  estimate: any;
-  materialsById: Record<string, any | null | undefined>;
-  assembliesById: Record<string, any | null | undefined>;
-  jobTypesById: Record<string, any>;
-  companySettings: any;
+export function computeEstimateTotalsNormalized(
+  estimate: Estimate,
+  lineItems: LineItem[],
+  companySettings: CompanySettings,
+  jobType: JobType | null,
+) {
+  // Legacy helper used by EstimatePreviewPage — delegate to the unified pricing engine.
+  const pricing = computeEstimatePricing(estimate, lineItems, companySettings, jobType);
+
+  return {
+    material_cost: round2(pricing.materials.material_cost),
+    material_price: round2(pricing.materials.material_sell),
+
+    labor_minutes: pricing.labor.expected_minutes,
+    labor_price: round2(pricing.labor.labor_sell),
+
+    misc_material_cost: round2(pricing.materials.misc_cost),
+    misc_material_price: round2(pricing.materials.misc_sell),
+
+    discount_percent: pricing.discount_applied_percent,
+    discount_amount: round2(pricing.discount_amount),
+
+    subtotal_pre_discount: round2(pricing.subtotal_pre_discount),
+    subtotal_after_discount: round2(pricing.subtotal_after_discount),
+
+    processing_fee: round2(pricing.processing_fee),
+    total: round2(pricing.total),
+  };
 }): EstimateTotalsNormalized {
   // IMPORTANT: do not recompute pricing here.
   // This normalizer must only adapt the pricing-engine output
@@ -552,3 +569,4 @@ export function computeEstimateTotalsNormalized(params: {
     gross_margin_expected_percent: t.gross_margin_expected_percent ?? null,
   };
 }
+
