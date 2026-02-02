@@ -1,3 +1,6 @@
+/* Theme overrides live in a separate file so the Light theme can be swapped cleanly. */
+@import './theme-light.css';
+
 :root{
   --bg: #0b1220;
   --surface: #111827;
@@ -25,8 +28,40 @@ body{
   color: var(--text);
 }
 
-/* Theme overrides live in a separate file so the Light theme can be swapped cleanly. */
-@import './theme-light.css';
+/* Light theme (toggled by adding/removing `theme-light` on <html>) */
+html.theme-light{
+  --bg: #f3f4f6;
+  --card: #ffffff;
+  --border: rgba(17,24,39,0.12);
+  --text: #111827;
+  --muted: rgba(17,24,39,0.65);
+}
+html.theme-light body{
+  background: linear-gradient(180deg, var(--bg), #e5e7eb);
+}
+html.theme-light .card{
+  background: rgba(255,255,255,0.92);
+  border-color: rgba(17,24,39,0.10);
+}
+html.theme-light .pill,
+html.theme-light .row,
+html.theme-light .listRow,
+html.theme-light .folderRow,
+html.theme-light .metric{
+  background: rgba(255,255,255,0.88);
+  border-color: rgba(17,24,39,0.12);
+}
+html.theme-light input,
+html.theme-light textarea,
+html.theme-light select{
+  background: rgba(255,255,255,0.88) !important;
+  border-color: rgba(17,24,39,0.18) !important;
+  color: #111827 !important;
+}
+
+html.theme-light .banner{
+  background: rgba(212,175,55,0.12);
+}
 
 a{ color: inherit; text-decoration: none; }
 
