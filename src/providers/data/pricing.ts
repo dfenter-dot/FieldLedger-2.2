@@ -11,8 +11,6 @@ export type PricingInput = {
     loaded_labor_rate: number;
     purchase_tax_percent: number;
     material_markup_tiers: Array<{ min: number; max: number; percent: number }>;
-    material_markup_mode: 'tiered' | 'fixed';
-    material_markup_fixed_percent: number;
     misc_material_percent: number;
     allow_misc_with_customer_materials: boolean;
     discount_percent: number;
@@ -23,10 +21,6 @@ export type PricingInput = {
     gross_margin_percent: number;
     efficiency_percent: number;
     allow_discounts: boolean;
-    /** Hourly-only override for material markup behavior. */
-    hourly_material_markup_mode?: 'company' | 'tiered' | 'fixed';
-    /** Hourly-only fixed markup percent when hourly_material_markup_mode = 'fixed'. */
-    hourly_material_markup_fixed_percent?: number;
   };
   lineItems: {
     materials: Array<{
@@ -78,18 +72,7 @@ export type PricingBreakdown = {
 
 function resolveMarkup(cost: number, tiers: PricingInput['company']['material_markup_tiers']) {
   for (const t of tiers) {
-    const min = Number((t as any).min ?? 0);
-    const max = Number((t as any).max ?? 0);
-    if (!Number.isFinite(min) || !Number.isFinite(max)) continue;
-    if (cost >= min && cost <= max) {
-      const pctRaw =
-        (t as any).percent ??
-        (t as any).markup_percent ??
-        (t as any).markupPercent ??
-        0;
-      const pct = Number(pctRaw);
-      return Number.isFinite(pct) ? pct : 0;
-    }
+    if (cost >= t.min && cost <= t.max) return t.percent;
   }
   return 0;
 }
@@ -119,31 +102,12 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
   // but misc material may still apply based on Admin setting.
   let rawMaterialSell = 0;
 
-  // Resolve effective markup strategy (company default, with hourly job-type override).
-  let effectiveMarkupMode: 'tiered' | 'fixed' = company.material_markup_mode ?? 'tiered';
-  let effectiveFixedMarkupPercent: number = Number(company.material_markup_fixed_percent) || 0;
-
-  if (jobType.mode === 'hourly') {
-    const jtMode = jobType.hourly_material_markup_mode ?? 'company';
-    if (jtMode === 'tiered') {
-      effectiveMarkupMode = 'tiered';
-    } else if (jtMode === 'fixed') {
-      effectiveMarkupMode = 'fixed';
-      const jtFixed = Number(jobType.hourly_material_markup_fixed_percent);
-      if (Number.isFinite(jtFixed) && jtFixed >= 0) effectiveFixedMarkupPercent = jtFixed;
-    }
-  }
-
   for (const m of lineItems.materials) {
-    const baseCost = Number(m.custom_cost != null ? m.custom_cost : m.cost);
-    if (!Number.isFinite(baseCost) || baseCost < 0) continue;
+    const baseCost = m.custom_cost ?? m.cost;
     const taxedCost = m.taxable
       ? baseCost * (1 + company.purchase_tax_percent / 100)
       : baseCost;
-    const markup =
-      effectiveMarkupMode === 'fixed'
-        ? effectiveFixedMarkupPercent
-        : resolveMarkup(taxedCost, company.material_markup_tiers);
+    const markup = resolveMarkup(taxedCost, company.material_markup_tiers);
     const sell = taxedCost * (1 + markup / 100);
     rawMaterialSell += sell * m.quantity;
   }
@@ -336,8 +300,6 @@ function toEngineCompany(s: any) {
     loaded_labor_rate: loadedLaborRate,
     purchase_tax_percent: toNum(s?.material_purchase_tax_percent ?? s?.purchase_tax_percent, 0),
     material_markup_tiers: tiers,
-    material_markup_mode: (s?.material_markup_mode === 'fixed' ? 'fixed' : 'tiered'),
-    material_markup_fixed_percent: toNum(s?.material_markup_fixed_percent, 0),
     misc_material_percent: toNum(s?.misc_material_percent, 0),
     // Admin toggle label: "Apply misc material when customer supplies materials"
     // Tolerate legacy/alternate schema field names.
@@ -360,8 +322,6 @@ function toEngineJobType(jobType: any) {
     gross_margin_percent: clampPct(toNum(jobType?.profit_margin_percent, 0)),
     efficiency_percent: clampPct(toNum(jobType?.efficiency_percent ?? 100, 100)),
     allow_discounts: Boolean(jobType?.allow_discounts ?? true),
-    hourly_material_markup_mode: (jobType?.hourly_material_markup_mode ?? 'company') as any,
-    hourly_material_markup_fixed_percent: toNum(jobType?.hourly_material_markup_fixed_percent, 0),
   } as PricingInput['jobType'];
 }
 
@@ -498,7 +458,20 @@ export function computeEstimatePricing(params: {
       minutes: toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0),
     }));
 
-  const company = toEngineCompany(companySettings);
+  // Discount percent source of truth:
+  // - Company settings define the admin "default discount".
+  // - Estimates may store a discount_percent (often prefilled from admin default).
+  // For pricing preload behavior, prefer the estimate's stored percent when present;
+  // otherwise fall back to company settings.
+  const companyBase = toEngineCompany(companySettings);
+  const estDiscountPct = toNum(
+    (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent,
+    NaN,
+  );
+  const company = {
+    ...companyBase,
+    discount_percent: Number.isFinite(estDiscountPct) ? estDiscountPct : companyBase.discount_percent,
+  };
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
