@@ -287,19 +287,41 @@ export function EstimateEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, rows, assemblyCache]);
 
-  // Allow per-estimate discount % to affect calculations immediately without saving.
-  // We do this by overriding the company settings discount fields for pricing calls only.
+  // Ensure discount preload is ALWAYS driven by the admin default (or per-estimate override)
+  // and updates totals live (no Save required).
+  //
+  // IMPORTANT: Even when Apply Discount is OFF, we still want the subtotal to be preloaded
+  // by the admin discount percent so the business doesn't lose money when a discount IS applied.
   const effectiveCompanySettings = useMemo(() => {
     if (!companySettings) return companySettings;
-    const raw = (e as any)?.discount_percent ?? (e as any)?.discountPercent;
-    const n = toNum(raw, NaN);
+
+    const candidates = [
+      (e as any)?.discount_percent,
+      (e as any)?.discountPercent,
+      (companySettings as any)?.discount_percent_default,
+      (companySettings as any)?.discount_percent,
+      (companySettings as any)?.discountPercent,
+    ];
+
+    let n = NaN;
+    for (const c of candidates) {
+      const v = toNum(c as any, NaN);
+      if (Number.isFinite(v)) {
+        n = v;
+        break;
+      }
+    }
+
+    // If no configured discount exists, return as-is.
     if (!Number.isFinite(n)) return companySettings;
+
+    // For pricing calls ONLY: force the engine to see the effective admin discount percent.
     return {
       ...(companySettings as any),
       discount_percent_default: n,
       discount_percent: n,
     };
-  }, [companySettings, (e as any)?.discount_percent]);
+  }, [companySettings, (e as any)?.discount_percent, (e as any)?.discountPercent]);
 
   const totals = useMemo(() => {
     if (!e || !effectiveCompanySettings) return null;
