@@ -75,15 +75,19 @@ export function computeTechCostBreakdown(company: CompanySettings, jobType: JobT
   const hoursPerTechYear = workdaysPerYear * hoursPerDay;
   const totalHoursYear = hoursPerTechYear * technicians;
 
-  // Apply efficiency (same as Admin card)
+  // Efficiency affects *expected time* (minutes) in estimates/assemblies, not the loaded labor rate.
+  // If we apply efficiency here (by dividing overhead by effective hours), and also inflate minutes
+  // elsewhere, we double-apply efficiency and pricing explodes.
   const effectiveHoursYear = (totalHoursYear * Math.max(0, efficiencyPercent)) / 100;
 
-  const overheadPerHour = effectiveHoursYear > 0 ? overheadAnnual / effectiveHoursYear : 0;
+  // Loaded labor rate is based on paid hours capacity (totalHoursYear), not efficiency-adjusted hours.
+  const overheadPerHour = totalHoursYear > 0 ? overheadAnnual / totalHoursYear : 0;
 
   const wages = (company as any)?.technician_wages ?? [];
   const avgTechWage = avgWage(wages);
 
-  const wageCostPerBillableHour = effectiveHoursYear > 0 ? (avgTechWage * totalHoursYear) / effectiveHoursYear : 0;
+  // Wage cost per labor hour is simply the average hourly wage.
+  const wageCostPerBillableHour = avgTechWage;
 
   const loadedLaborRate = overheadPerHour + wageCostPerBillableHour;
 
@@ -101,7 +105,8 @@ export function computeTechCostBreakdown(company: CompanySettings, jobType: JobT
   const npPct = Math.max(0, toNum((company as any)?.net_profit_goal_percent_of_revenue, 0)) / 100;
   const npDollar = Math.max(0, toNum((company as any)?.net_profit_goal_amount_monthly, 0));
 
-  const billableHoursPerMonth = effectiveHoursYear / 12;
+  // Billable hours capacity (for fixed net-profit allocation) is based on paid hours.
+  const billableHoursPerMonth = totalHoursYear / 12;
 
   const cogsLaborPerBillableHour = wageCostPerBillableHour;
   const cogsPerBillableHour = cogsLaborPerBillableHour;
