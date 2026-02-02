@@ -1,0 +1,326 @@
+/* views.css (replace your current file with this)
+   Keeps dark theme as-is, but makes theme-light a DISTINCT green + beige theme
+   WITHOUT requiring you to change existing markup/classes. */
+
+:root{
+  /* ---------- Dark theme (unchanged) ---------- */
+  --bg: #0b1220;
+  --surface: #111827;
+  --card: #1f2937;
+  --border: #2b3647;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+
+  --navy: #0B1F3A;
+  --navy2: #102B52;
+  --gold: #D4AF37;
+
+  --danger: #ef4444;
+  --good: #22c55e;
+  --warn: #f59e0b;
+
+  --radius: 12px;
+}
+
+*{ box-sizing: border-box; }
+html, body{ height: 100%; }
+
+body{
+  margin:0;
+  overflow-x: hidden;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  background: linear-gradient(180deg, var(--bg), #070b13);
+  color: var(--text);
+}
+
+a{ color: inherit; text-decoration: none; }
+
+/* Native select dropdown readability */
+select{ color: var(--text); }
+select option{ color: #111 !important; background: #fff !important; }
+
+.stack{ display:flex; flex-direction:column; gap:12px; }
+.row{ display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+.rowBetween{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.grid2{ display:grid; grid-template-columns: 1fr; gap:12px; }
+@media (min-width: 900px){
+  .grid2{ grid-template-columns: 1fr 1fr; }
+}
+.mt{ margin-top: 12px; }
+.small{ font-size: 12px; }
+.muted{ color: var(--muted); }
+.label{ font-size: 12px; color: var(--muted); }
+.bullets{ margin:0; padding-left: 18px; color: var(--muted); }
+.bullets li{ margin: 6px 0; }
+
+.pill{
+  display:inline-flex;
+  align-items:center;
+  padding: 6px 10px;
+  border:1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text);
+}
+.pill.gold{
+  border-color: rgba(212,175,55,0.45);
+  color: var(--gold);
+}
+
+.banner{
+  border:1px solid rgba(212,175,55,0.35);
+  background: rgba(212,175,55,0.08);
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+.list{ display:flex; flex-direction:column; }
+.listRow{
+  display:flex;
+  justify-content:space-between;
+  gap: 12px;
+  padding: 12px;
+  border:1px solid var(--border);
+  background: rgba(31,41,55,0.6);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+}
+.listRow.clickable{ cursor:pointer; }
+.listRow.clickable:hover{ border-color: rgba(212,175,55,0.35); }
+.listRow.selected{
+  border-color: rgba(212,175,55,0.65);
+  box-shadow: 0 0 0 1px rgba(212,175,55,0.25) inset;
+}
+
+.listMain{ display:flex; flex-direction:column; gap:4px; }
+.listTitle{ font-weight: 650; }
+.listSub{ font-size: 12px; color: var(--muted); }
+.listRight{ display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+
+.folderList{ display:flex; flex-direction:column; gap:10px; }
+.folderRow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding: 12px;
+  border:1px solid var(--border);
+  background: rgba(31,41,55,0.5);
+  border-radius: var(--radius);
+}
+.folderIcon{ width: 28px; text-align:center; }
+.folderName{ font-weight: 600; }
+
+.metric{
+  display:flex;
+  justify-content:space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border:1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.02);
+}
+.good{ color: var(--good); }
+.warn{ color: var(--warn); }
+
+.textarea{
+  width:100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: rgba(17,24,39,0.7);
+  color: var(--text);
+  padding: 10px 12px;
+  outline: none;
+}
+.textarea:focus{ border-color: rgba(212,175,55,0.45); }
+
+/* ---------------- DISTINCT Light Theme (Green + Beige) ----------------
+   Toggled by adding/removing `theme-light` on <html>.
+   IMPORTANT: keeps lettering white by setting --text to an off-white. */
+
+html.theme-light{
+  /* New identity */
+  --bg: #F3EFE6;            /* warm beige page background */
+  --surface: #26473F;       /* deep evergreen for app chrome */
+  --card: #2F5A50;          /* panels/cards */
+  --border: rgba(233,229,220,0.28);
+
+  /* Keep text white-ish (as requested) */
+  --text: #F7F3EA;          /* warm off-white */
+  --muted: rgba(247,243,234,0.70);
+
+  /* Keep gold accent, but harmonize with warm neutrals */
+  --gold: #D4AF37;
+
+  /* Optional: success/warn/danger tuned to look good on green */
+  --good: #34D399;
+  --warn: #FBBF24;
+  --danger: #F87171;
+}
+
+/* Page background switches to beige, but UI elements become green.
+   This makes it feel like a totally different app. */
+html.theme-light body{
+  background: radial-gradient(1200px 700px at 20% 0%, rgba(212,175,55,0.14), transparent 60%),
+              linear-gradient(180deg, var(--bg), #E7E1D4);
+  color: var(--text);
+}
+
+/* Cards/panels */
+html.theme-light .card{
+  background: rgba(47,90,80,0.94);
+  border-color: rgba(233,229,220,0.22);
+}
+
+/* Re-skin the common containers that were previously just "lightened dark" */
+html.theme-light .pill,
+html.theme-light .row,
+html.theme-light .listRow,
+html.theme-light .folderRow,
+html.theme-light .metric{
+  background: rgba(38,71,63,0.70);
+  border-color: rgba(233,229,220,0.22);
+}
+
+/* Click/hover behavior */
+html.theme-light .listRow.clickable:hover{
+  border-color: rgba(212,175,55,0.55);
+  box-shadow: 0 0 0 1px rgba(212,175,55,0.15) inset;
+}
+html.theme-light .listRow.selected{
+  border-color: rgba(212,175,55,0.75);
+  box-shadow: 0 0 0 1px rgba(212,175,55,0.25) inset;
+}
+
+/* Banner gets a warmer highlight (still gold-based) */
+html.theme-light .banner{
+  border-color: rgba(212,175,55,0.45);
+  background: rgba(212,175,55,0.14);
+}
+
+/* Inputs:
+   You said you don't want to change lettering (white).
+   So keep input text white and use a beige-tinted field background for "light mode" feel. */
+html.theme-light input,
+html.theme-light textarea,
+html.theme-light select{
+  background: rgba(233,229,220,0.14) !important;
+  border-color: rgba(233,229,220,0.28) !important;
+  color: var(--text) !important;
+}
+html.theme-light input::placeholder,
+html.theme-light textarea::placeholder{
+  color: rgba(247,243,234,0.65) !important;
+}
+
+/* Textarea focus ring */
+html.theme-light .textarea{
+  background: rgba(233,229,220,0.12);
+  border-color: rgba(233,229,220,0.26);
+  color: var(--text);
+}
+html.theme-light .textarea:focus{
+  border-color: rgba(212,175,55,0.55);
+}
+
+/* ---------------- Print (Estimate + Job Costing) ---------------- */
+.printPage{
+  background: rgba(11,18,32,0.35);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.printHeader{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.printTitle{
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.printMeta{
+  display:flex;
+  flex-direction:column;
+  gap: 4px;
+  text-align:right;
+}
+
+.printSection{
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.printSectionTitle{
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.printTable{
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.printTable th, .printTable td{
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(43,54,71,0.65);
+  vertical-align: top;
+}
+
+.printTable th{
+  text-align:left;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.printTotals{
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.printTotals td{
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(43,54,71,0.4);
+}
+
+.printTotalRow td{
+  padding-top: 10px;
+  font-weight: 800;
+  border-bottom: none;
+}
+
+.printFooter{
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display:grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.printFooterTitle{
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+@media print{
+  body{
+    background: #fff;
+    color: #000;
+  }
+  .sidebar, .mobilenav, .topbar, .noPrint{ display:none !important; }
+  .card{ border: none !important; background: transparent !important; }
+  .printPage{ border: none !important; background: transparent !important; padding: 0 !important; }
+  .printTable th, .printTable td, .printTotals td{ border-color: #ddd !important; }
+}
