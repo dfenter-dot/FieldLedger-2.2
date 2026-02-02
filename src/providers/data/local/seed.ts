@@ -44,6 +44,10 @@ export function seedCompanySettings(companyId: string): CompanySettings {
       { min: 500, max: 999999, markup_percent: 50 },
     ],
 
+    // Material markup strategy
+    material_markup_mode: 'tiered',
+    material_markup_fixed_percent: 50,
+
     misc_applies_when_customer_supplies: false,
 
     show_tech_view_breakdown: false,
@@ -83,5 +87,6 @@ export function seedCompanySettings(companyId: string): CompanySettings {
     updated_at: now,
   };
 }
+
 
 
