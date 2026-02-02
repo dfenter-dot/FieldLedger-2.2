@@ -29,18 +29,24 @@ export type PricingInput = {
       taxable: boolean;
       labor_minutes: number;
       quantity: number;
+      /** Labor-only items are priced through labor, not materials markup/tax. */
+      labor_only?: boolean;
     }>;
     labor_lines: Array<{
       minutes: number;
     }>;
   };
   tech?: {
-    requiredRevenuePerBillableHour?: number;
+    /** Authoritative flat-rate labor SELL rate per hour, derived from Tech View (Sheet 2). */
+    loadedLaborSellRate?: number;
   } | null;
   flags: {
     apply_discount: boolean;
     apply_processing_fee: boolean;
+    /** Canonical flag name */
     customer_supplies_materials: boolean;
+    /** Legacy/back-compat (tolerated) */
+    customer_supplied_materials?: boolean;
   };
 };
 
@@ -80,6 +86,11 @@ function resolveMarkup(cost: number, tiers: PricingInput['company']['material_ma
 export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
   const { company, jobType, lineItems, flags, tech } = input;
 
+  // Backward-compat: tolerate both flag names.
+  const customerSuppliesMaterials = Boolean(
+    (flags as any)?.customer_supplies_materials ?? (flags as any)?.customer_supplied_materials ?? false
+  );
+
   // --- LABOR TIME ---
   const materialLabor = lineItems.materials.reduce(
     (sum, m) => sum + m.labor_minutes * m.quantity,
@@ -97,25 +108,29 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
       : actualMinutes;
 
   // --- MATERIALS ---
-  let materialSell = 0;
+  let materialSellAsIfProvided = 0;
+  for (const m of lineItems.materials) {
+    // labor_only lines are priced through labor, not as materials.
+    if ((m as any)?.labor_only) continue;
 
-  if (!flags.customer_supplies_materials) {
-    for (const m of lineItems.materials) {
-      const baseCost = m.custom_cost ?? m.cost;
-      const taxedCost = m.taxable
-        ? baseCost * (1 + company.purchase_tax_percent / 100)
-        : baseCost;
-      const markup = resolveMarkup(taxedCost, company.material_markup_tiers);
-      const sell = taxedCost * (1 + markup / 100);
-      materialSell += sell * m.quantity;
-    }
+    const baseCost = m.custom_cost ?? m.cost;
+    const taxedCost = m.taxable ? baseCost * (1 + company.purchase_tax_percent / 100) : baseCost;
+    const markup = resolveMarkup(taxedCost, company.material_markup_tiers);
+    const sell = taxedCost * (1 + markup / 100);
+    materialSellAsIfProvided += sell * m.quantity;
   }
 
-  const miscMaterial =
-    materialSell > 0 &&
-    (company.allow_misc_with_customer_materials || !flags.customer_supplies_materials)
-      ? materialSell * (company.misc_material_percent / 100)
-      : 0;
+  // Customer-facing material sell is zeroed when customer supplies materials.
+  const materialSell = customerSuppliesMaterials ? 0 : materialSellAsIfProvided;
+
+  // Misc material is governed solely by Admin configuration.
+  // If customer supplies materials and Admin allows misc, misc uses the raw material totals
+  // (as-if-provided) as its base, not the customer-facing material sell (which is zeroed).
+  const miscBase = customerSuppliesMaterials
+    ? (company.allow_misc_with_customer_materials ? materialSellAsIfProvided : 0)
+    : materialSell;
+
+  const miscMaterial = miscBase > 0 ? miscBase * (company.misc_material_percent / 100) : 0;
 
   // --- LABOR PRICING ---
   let laborCost = 0;
@@ -124,15 +139,17 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
   let effectiveRate = 0;
 
   if (jobType.mode === 'flat_rate') {
-    // Flat-rate labor sell rate must come from "Sheet 2" (Tech View) so we don't apply GM twice.
-    // Use Tech View's Loaded Labor Rate (Wage + Overhead) for the selected job type.
-    // This prevents applying gross margin twice.
+    // Flat-rate labor sell rate MUST come from Tech View (Sheet 2) so GM is applied exactly once.
     baseRate = company.loaded_labor_rate;
-    effectiveRate = Number((tech as any)?.loadedLaborRate ?? 0) || 0;
+    effectiveRate = Number((tech as any)?.loadedLaborSellRate ?? 0) || 0;
 
-    // Fallback (should be rare): derive from loaded labor rate if tech view isn't available.
+    // Fallback (legacy/partially-migrated schemas): approximate Tech View.
+    // Company.loaded_labor_rate is not efficiency-adjusted; Tech View is.
     if (effectiveRate <= 0) {
-      effectiveRate = baseRate / (1 - jobType.gross_margin_percent / 100);
+      const eff = Math.max(jobType.efficiency_percent / 100, 0.0001);
+      const efficiencyAdjustedLoaded = baseRate / eff;
+      const denom = 1 - jobType.gross_margin_percent / 100;
+      effectiveRate = denom > 0 ? efficiencyAdjustedLoaded / denom : 0;
     }
 
     laborSell = effectiveRate * (expectedMinutes / 60);
@@ -313,6 +330,8 @@ function toEngineJobType(jobType: any) {
 
 function computeMaterialCostTotal(materials: any[], purchaseTaxPercent: number): number {
   return (Array.isArray(materials) ? materials : []).reduce((sum, m) => {
+    // labor_only lines are not material costs.
+    if (Boolean((m as any)?.labor_only ?? false)) return sum;
     const qty = Math.max(0, toNum(m?.quantity, 1));
     const cost = toNum(m?.custom_cost ?? m?.cost ?? m?.base_cost ?? m?.unit_cost ?? m?.material_cost, 0);
     const taxable = Boolean(m?.taxable ?? m?.is_taxable ?? false);
@@ -346,6 +365,7 @@ export function computeAssemblyPricing(params: {
         cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost ?? 0, 0),
         custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
         taxable: Boolean(mat?.taxable ?? false),
+        labor_only: Boolean((mat as any)?.labor_only ?? false),
         labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
         quantity: Math.max(0, toNum(it?.quantity, 1)),
       };
@@ -362,20 +382,19 @@ export function computeAssemblyPricing(params: {
     company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
-    tech: { 
-      loadedLaborRate: (tech as any)?.loadedLaborRate,
-      requiredRevenuePerBillableHour: (tech as any)?.requiredRevenuePerBillableHour,
+    tech: {
+      loadedLaborSellRate: (tech as any)?.loadedLaborSellRate,
     },
     flags: {
       apply_discount: false,
       apply_processing_fee: false,
-      customer_supplies_materials: Boolean(assembly?.customer_supplied_materials ?? (assembly as any)?.customer_supplies_materials ?? false),
+      customer_supplies_materials: Boolean(assembly?.customer_supplies_materials ?? (assembly as any)?.customer_supplied_materials ?? (assembly as any)?.customer_supplies_materials ?? false),
     },
   });
   const actualMinutes = breakdown.labor.actual_minutes;
   const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : actualMinutes;
 
-  const customerSupplies = Boolean(assembly?.customer_supplied_materials ?? (assembly as any)?.customer_supplies_materials ?? false);
+  const customerSupplies = Boolean(assembly?.customer_supplied_materials ?? (assembly as any)?.customer_supplied_materials ?? (assembly as any)?.customer_supplies_materials ?? false);
   const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
   return {
@@ -426,6 +445,7 @@ export function computeEstimatePricing(params: {
         cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost, 0),
         custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
         taxable: Boolean(mat?.taxable ?? false),
+        labor_only: Boolean((mat as any)?.labor_only ?? false),
         labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
         quantity: qty,
       };
@@ -448,10 +468,7 @@ export function computeEstimatePricing(params: {
     company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
-    tech: { 
-      loadedLaborRate: (tech as any)?.loadedLaborRate,
-      requiredRevenuePerBillableHour: (tech as any)?.requiredRevenuePerBillableHour,
-    },
+    tech: { loadedLaborSellRate: (tech as any)?.loadedLaborSellRate },
     flags: {
       apply_discount: applyDiscount,
       apply_processing_fee: applyProcessing,
@@ -547,3 +564,4 @@ export function computeEstimateTotalsNormalized(
     total: round2(pricing.total),
   };
 }
+
