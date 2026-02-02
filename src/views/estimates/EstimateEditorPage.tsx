@@ -303,7 +303,8 @@ export function EstimateEditorPage() {
   const selectedJobType = useMemo(() => {
     if (!e) return null;
     const byId = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
-    const direct = (e as any).job_type_id ? byId[(e as any).job_type_id] : null;
+    // e can be null during initial load; guard all property reads
+    const direct = (e as any)?.job_type_id ? byId[(e as any).job_type_id] : null;
     if (direct) return direct;
     const def = (jobTypes ?? []).find((j) => (j as any).is_default || (j as any).isDefault);
     return def ?? null;
@@ -462,7 +463,8 @@ export function EstimateEditorPage() {
 
   const jobTypeOptions = (jobTypes ?? []).filter((j: any) => j.enabled !== false);
   const defaultJobTypeId = (jobTypes ?? []).find((j: any) => j.is_default)?.id ?? null;
-  const effectiveJobTypeId = (e as any).job_type_id ?? defaultJobTypeId;
+  // e can be null before the estimate loads; avoid null property access
+  const effectiveJobTypeId = (e as any)?.job_type_id ?? defaultJobTypeId;
   const activeJobType = (jobTypes ?? []).find((j: any) => j.id === effectiveJobTypeId) ?? null;
 
   const allowDiscounts = activeJobType?.allow_discounts !== false;
