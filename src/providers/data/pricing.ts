@@ -453,7 +453,10 @@ export function computeEstimatePricing(params: {
   // For now, we only include estimate labor rows + material labor. Assembly internals will be finalized later in Phase 3+.
   const laborLines: PricingInput['lineItems']['labor_lines'] = rows
     .filter((it: any) => it?.type === 'labor')
-    .map((it: any) => ({ minutes: toNum(it?.minutes, 0) }));
+    .map((it: any) => ({
+      // Back-compat: labor line minutes may be stored as `minutes` (UI) or `labor_minutes` (DB/provider)
+      minutes: toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0),
+    }));
 
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
