@@ -95,6 +95,7 @@ export function AssemblyEditorPage() {
   const [a, setA] = useState<Assembly | null>(null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
+  const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
@@ -119,6 +120,7 @@ export function AssemblyEditorPage() {
   async function refreshAssembly(id: string) {
     const asm = await dataRef.current.getAssembly(id);
     setA(asm);
+    setLaborMinutesText(asm?.labor_minutes == null ? '' : String(asm.labor_minutes));
   }
 
   useEffect(() => {
@@ -358,7 +360,11 @@ export function AssemblyEditorPage() {
 
   async function saveAll() {
     if (!a) return;
-    await save({ ...a } as any);
+    const lm = laborMinutesText.trim() === '' ? 0 : Number(laborMinutesText);
+    await save({
+      ...a,
+      labor_minutes: Number.isFinite(lm) ? lm : 0,
+    } as any);
   }
 
   async function duplicate() {
@@ -410,159 +416,66 @@ export function AssemblyEditorPage() {
   }
 
   if (!a) return <div className="muted">Loading…</div>;
-  async function applyAdminRules(nextAssembly?: Assembly | null) {
-  const asm = (nextAssembly ?? a) as any;
-  if (!asm || !asm.use_admin_rules) return;
+  async function applyAdminRules() {
+    if (!a || !a.use_admin_rules) return;
+    try {
+      setStatus('Applying rules...');
 
-  try {
-    const rulesRaw = (await dataRef.current.listAdminRules()) as any[];
-    const rules = (rulesRaw ?? [])
-      .filter((r) => {
-        const enabled = r.enabled ?? true;
-        const scope = (r.scope ?? r.applies_to ?? 'both') as string;
-        const scopeOk = scope === 'both' || scope === 'assembly';
-        return !!enabled && scopeOk;
-      })
-      .sort((x, y) => Number(x.priority ?? 0) - Number(y.priority ?? 0));
+      const rulesRaw = (await data.listAdminRules()) as any[];
+      const rules = (rulesRaw ?? [])
+        .filter((r) => {
+          const enabled = r.enabled ?? true;
+          const scope = (r.scope ?? r.applies_to ?? 'both') as string;
+          const scopeOk = scope === 'both' || scope === 'assembly';
+          return !!enabled && scopeOk;
+        })
+        .sort((x, y) => Number(x.priority ?? 0) - Number(y.priority ?? 0));
 
-    if (rules.length === 0) return;
+            const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+      const pricing = computeAssemblyPricing({
+        assembly: a as any,
+        materialsById: materialCache,
+        jobTypesById,
+        companySettings,
+      } as any) as any;
 
-    const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
-    const pricing = computeAssemblyPricing({
-      assembly: asm,
-      items: (asm.items ?? []) as any[],
-      materialsById: materialCache,
-      jobTypesById,
-      companySettings,
-    } as any) as any;
+      const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
+      const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
 
-    const expectedLaborMinutes = Number(
-      pricing?.expected_labor_minutes ??
-        pricing?.expectedLaborMinutes ??
-        pricing?.labor_minutes_total ??
-        pricing?.laborMinutesTotal ??
+      const maxQty = Math.max(
         0,
-    );
-    const expectedMaterialCost = Number(
-      pricing?.material_cost ??
-        pricing?.materialCost ??
-        pricing?.material_cost_total ??
-        pricing?.materialCostTotal ??
-        0,
-    );
+        ...(((a as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0))
+      );
 
-    const relevantItems = (((asm.items ?? []) as any[]) ?? []).filter((it) =>
-      ['material', 'blank_material', 'labor'].includes(String(it?.type ?? it?.item_type)),
-    );
-    const lineItemCount = relevantItems.length;
+      const match = rules.find((r) => {
+        const minLabor = r.min_expected_labor_minutes ?? r.min_expected_labor_minutes;
+        const minMat = r.min_material_cost ?? r.min_material_cost;
+        const minQty = r.min_quantity ?? r.min_quantity;
 
-    const maxQty = Math.max(0, ...relevantItems.map((it) => Number(it?.quantity ?? 0)));
+        if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
+        if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
+        if (minQty != null && maxQty < Number(minQty)) return false;
 
-    const cmp = (op: string, left: number, right: number) => {
-      switch (op) {
-        case '>':
-          return left > right;
-        case '>=':
-          return left >= right;
-        case '<':
-          return left < right;
-        case '<=':
-          return left <= right;
-        case '==':
-          return left === right;
-        case '!=':
-          return left !== right;
-        default:
-          return left >= right;
-      }
-    };
+        const hasAny = minLabor != null || minMat != null || minQty != null;
+        return hasAny;
+      });
 
-    const getMetric = (cond: string): number | null => {
-      switch (cond) {
-        case 'expected_labor_hours':
-          return expectedLaborMinutes / 60;
-        case 'expected_labor_minutes':
-          return expectedLaborMinutes;
-        case 'material_cost':
-          return expectedMaterialCost;
-        case 'line_item_count':
-          return lineItemCount;
-        case 'any_line_item_qty':
-          return maxQty;
-        default:
-          return null;
-      }
-    };
-
-    const match = rules.find((r: any) => {
-      const conditionTypeA = String(r.condition_type ?? r.conditionType ?? '').trim();
-      const operatorA = String(r.operator ?? r.op ?? '>=').trim();
-      const thresholdA = r.threshold_value ?? r.thresholdValue;
-
-      const conditionTypeB = String(r.rule_type ?? '').trim();
-      const ruleValue = r.rule_value ?? {};
-      const operatorB = String(ruleValue.operator ?? ruleValue.op ?? '>=').trim();
-      const thresholdB =
-        ruleValue.threshold_value ??
-        ruleValue.thresholdValue ??
-        ruleValue.threshold ??
-        ruleValue.value;
-
-      const minLabor = r.min_expected_labor_minutes ?? r.minExpectedLaborMinutes;
-      const minMat = r.min_material_cost ?? r.minMaterialCost;
-      const minQty = r.min_quantity ?? r.minQuantity;
-      const minLineItems = r.min_line_item_count ?? r.minLineItemCount;
-
-      if (conditionTypeA && thresholdA != null) {
-        const metric = getMetric(conditionTypeA);
-        if (metric == null) return false;
-        return cmp(operatorA, metric, Number(thresholdA));
+      const nextJobTypeId = match?.job_type_id ?? match?.set_job_type_id;
+      if (nextJobTypeId) {
+        const saved = await data.upsertAssembly({ ...(a as any), job_type_id: nextJobTypeId } as any);
+        setA(saved);
+        setStatus('Rules applied.');
+      } else {
+        setStatus('No matching rules.');
       }
 
-      if (conditionTypeB && thresholdB != null) {
-        const metric = getMetric(conditionTypeB);
-        if (metric == null) return false;
-        return cmp(operatorB, metric, Number(thresholdB));
-      }
-
-      if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
-      if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
-      if (minQty != null && maxQty < Number(minQty)) return false;
-      if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
-
-      const hasAny =
-        minLabor != null || minMat != null || minQty != null || minLineItems != null;
-      return hasAny;
-    });
-
-    const nextJobTypeId = match?.job_type_id ?? match?.set_job_type_id ?? match?.setJobTypeId;
-    if (!nextJobTypeId) return;
-
-    if (String(asm.job_type_id ?? '') !== String(nextJobTypeId)) {
-      setA({ ...asm, job_type_id: nextJobTypeId } as any);
+      setTimeout(() => setStatus(''), 1200);
+    } catch (err: any) {
+      console.error(err);
+      setStatus(String(err?.message ?? err));
     }
-  } catch (err) {
-    console.error(err);
   }
-}
 
-// Auto-apply Admin Rules whenever relevant assembly inputs change.
-useEffect(() => {
-  if (!a || !a.use_admin_rules) return;
-  const t = window.setTimeout(() => {
-    applyAdminRules().catch(() => {});
-  }, 0);
-  return () => window.clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [
-  a?.use_admin_rules,
-  a?.customer_supplied_materials,
-  a?.customer_supplies_materials,
-  a?.items,
-  companySettings,
-  jobTypes,
-  materialCache,
-]);
 
   return (
     <div className="stack">
@@ -591,6 +504,7 @@ useEffect(() => {
             <Button variant="danger" onClick={remove}>
               Delete
             </Button>
+            {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll} disabled={saving}>
               Save
             </Button>
@@ -646,7 +560,6 @@ useEffect(() => {
               <option value="true">Yes</option>
             </select>
           </div>
-
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Description</label>
             <Input value={a.description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
@@ -823,25 +736,15 @@ useEffect(() => {
                   </div>
                   <div className="listRight" style={{ gap: 8 }}>
                     <Input
-                  style={{ width: 90 }}
-                  type="text"
-                  inputMode="numeric"
-                  value={(((a?.items ?? []) as any[]).find((x: any) => x.id === r.itemId) as any)?._ui_qty_text ?? String(r.quantity)}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    updateItem(r.itemId, { _ui_qty_text: raw } as any);
-                    if (raw.trim() === '') return;
-                    const q = Math.max(1, Math.floor(Number(raw)));
-                    if (Number.isFinite(q)) updateItemQuantity(r.itemId, q);
-                  }}
-                  onBlur={() => {
-                    const it = (a?.items ?? []).find((x: any) => x.id === r.itemId) as any;
-                    const raw = String(it?._ui_qty_text ?? '').trim();
-                    const current = Number(r.quantity ?? 1);
-                    const q = Math.max(1, Math.floor(Number(raw === '' ? current : raw)));
-                    updateItem(r.itemId, { quantity: q, _ui_qty_text: undefined } as any);
-                  }}
-                />
+                      style={{ width: 90 }}
+                      type="text"
+                      inputMode="numeric"
+                      value={String(r.quantity)}
+                      onChange={(e) => {
+                        const q = Math.max(1, Number(e.target.value || 1));
+                        if (Number.isFinite(q)) updateItemQuantity(r.itemId, q);
+                      }}
+                    />
                     <Button variant="danger" onClick={() => removeItem(r.itemId)}>
                       Remove
                     </Button>
@@ -892,10 +795,7 @@ useEffect(() => {
                       <div className="muted small">Taxable</div>
                       <Toggle
                         checked={Boolean(it.taxable)}
-                        onChange={(v) => {
-                          const nextItems = (a.items ?? []).map((x: any) => (x.id === it.id ? { ...x, taxable: v } : x));
-                          setA({ ...a, items: nextItems } as any);
-                        }}
+                        onChange={(v) => updateItem(it.id, { taxable: v })}
                         label={it.taxable ? 'Yes' : 'No'}
                       />
                     </div>
@@ -907,17 +807,11 @@ useEffect(() => {
                         inputMode="numeric"
                         placeholder="1"
                         value={it._ui_qty_text ?? String(it.quantity ?? 1)}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          updateItem(it.id, { _ui_qty_text: raw });
-                          if (raw.trim() === '') return;
-                          const q = Math.max(1, Math.floor(Number(raw)));
-                          if (!Number.isFinite(q)) return;
-                          updateItem(it.id, { quantity: q });
-                        }}
+                        onChange={(e) => updateItem(it.id, { _ui_qty_text: e.target.value })}
                         onBlur={() => {
                           const raw = String(it._ui_qty_text ?? '').trim();
-                          const q = Math.max(1, Math.floor(Number(raw === '' ? (it.quantity ?? 1) : raw)));
+                          const v = raw === '' ? 1 : Number(raw);
+                          const q = Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
                           updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
                         }}
                       />
@@ -963,6 +857,8 @@ useEffect(() => {
                           </div>
                         );
                       })()}
+                    </div>
+
                     <div className="stack" style={{ minWidth: 240, flex: 1 }}>
                       <div className="muted small">Description</div>
                       <Input
@@ -972,18 +868,7 @@ useEffect(() => {
                       />
                     </div>
 
-                    </div>
-
-                  </div>
-                  <div className="mt">
-                    <div className="muted small">Description</div>
-                    <Input
-                      value={it.description ?? ''}
-                      onChange={(e) => updateItem(it.id, { description: e.target.value })}
-                    />
-                  </div>
-                  <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-                    <Button variant="danger" onClick={() => removeItem(it.id)}>
+                    <Button style={{ marginLeft: 'auto' }} variant="danger" onClick={() => removeItem(it.id)}>
                       Remove
                     </Button>
                   </div>
@@ -1015,22 +900,17 @@ useEffect(() => {
                         inputMode="numeric"
                         placeholder="1"
                         value={it._ui_qty_text ?? String(it.quantity ?? 1)}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      updateItem(it.id, { _ui_qty_text: raw });
-                      if (raw.trim() === '') return;
-                      const q = Math.max(1, Math.floor(Number(raw)));
-                      if (!Number.isFinite(q)) return;
-                      updateItem(it.id, { quantity: q });
-                    }}
-                    onBlur={() => {
-                      const raw = String(it._ui_qty_text ?? '').trim();
-                      const q = Math.max(1, Math.floor(Number(raw === '' ? (it.quantity ?? 1) : raw)));
-                      updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
-                    }}
+                        onChange={(e) => updateItem(it.id, { _ui_qty_text: e.target.value })}
+                        onBlur={() => {
+                          const raw = String(it._ui_qty_text ?? '').trim();
+                          const v = raw === '' ? 1 : Number(raw);
+                          const q = Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
+                          updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
+                        }}
+                      />
                     </div>
 
-                    <div className="stack" style={{ width: 220 }}>
+                    <div className="stack" style={{ width: 200 }}>
                       <div className="muted small">Labor</div>
                       {(() => {
                         const { h, m } = splitHM(it.labor_minutes ?? 0);
@@ -1050,7 +930,7 @@ useEffect(() => {
                         return (
                           <div className="row" style={{ gap: 8 }}>
                             <Input
-                              style={{ width: 100 }}
+                              style={{ width: 90 }}
                               type="text"
                               inputMode="numeric"
                               placeholder="Hours"
@@ -1059,7 +939,7 @@ useEffect(() => {
                               onBlur={commit}
                             />
                             <Input
-                              style={{ width: 100 }}
+                              style={{ width: 90 }}
                               type="text"
                               inputMode="numeric"
                               placeholder="Minutes"
@@ -1072,9 +952,16 @@ useEffect(() => {
                       })()}
                     </div>
 
-                  </div>
-                  <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-                    <Button variant="danger" onClick={() => removeItem(it.id)}>
+                    <div className="stack" style={{ minWidth: 240, flex: 1 }}>
+                      <div className="muted small">Description</div>
+                      <Input
+                        placeholder="Description"
+                        value={it.description ?? ''}
+                        onChange={(e) => updateItem(it.id, { description: e.target.value })}
+                      />
+                    </div>
+
+                    <Button style={{ marginLeft: 'auto' }} variant="danger" onClick={() => removeItem(it.id)}>
                       Remove
                     </Button>
                   </div>
