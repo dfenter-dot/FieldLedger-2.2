@@ -151,6 +151,9 @@ export interface Material {
 
   taxable: boolean;
 
+  /** Labor-only materials represent non-material charges (diagnostics, dispatch, etc.). */
+  labor_only?: boolean;
+
   job_type_id?: UUID | null;
 
   labor_hours?: number; // UI only
@@ -236,6 +239,7 @@ export interface Estimate {
   use_admin_rules?: boolean;
 
   customer_supplied_materials?: boolean;
+  /** Deprecated: misc material is governed solely by Admin configuration. */
   apply_misc_material?: boolean;
   apply_processing_fees?: boolean;
 
@@ -325,6 +329,7 @@ export interface BrandingSettings {
   logo_storage_path?: string | null;
   updated_at?: string;
 }
+
 
 
 
