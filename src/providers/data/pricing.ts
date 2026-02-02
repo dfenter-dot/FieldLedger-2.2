@@ -465,7 +465,13 @@ export function computeEstimatePricing(params: {
     Boolean(estimate?.customer_supplied_materials === true) ||
     Boolean((estimate as any)?.customer_supplies_materials === true) ||
     Boolean((estimate as any)?.customerSuppliedMaterials === true);
-  const applyProcessing = Boolean(estimate?.apply_processing_fee ?? estimate?.applyProcessingFees ?? false);
+  // Back-compat: some builds used apply_processing_fees (plural) while others used apply_processing_fee (singular)
+  const applyProcessing = Boolean(
+    (estimate as any)?.apply_processing_fee ??
+      (estimate as any)?.apply_processing_fees ??
+      (estimate as any)?.applyProcessingFees ??
+      false,
+  );
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
   const breakdown = computePricingBreakdown({
