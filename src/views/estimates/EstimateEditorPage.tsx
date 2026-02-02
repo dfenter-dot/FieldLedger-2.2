@@ -42,6 +42,12 @@ export function EstimateEditorPage() {
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
+  // Local edit buffer so numeric inputs can be blank while editing.
+  // App-wide rule: backspacing should not require double-clicking.
+  const [laborEdits, setLaborEdits] = useState<
+    Record<string, { hours: string; minutes: string; description: string }>
+  >({});
+
   // Load admin/config data used by dropdowns and calculations.
   useEffect(() => {
     let cancelled = false;
@@ -160,6 +166,30 @@ export function EstimateEditorPage() {
       })
       .filter(Boolean) as ItemRow[];
   }, [e]);
+
+  // Keep local edit buffers in sync with loaded items.
+  useEffect(() => {
+    const laborRows = rows.filter((r) => r.type === 'labor') as any[];
+    if (laborRows.length === 0) return;
+
+    setLaborEdits((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const r of laborRows) {
+        if (next[r.id]) continue;
+        const total = Math.max(0, Math.floor(toNum(r.minutes ?? 0, 0)));
+        const h = Math.floor(total / 60);
+        const m = total % 60;
+        next[r.id] = {
+          hours: String(h),
+          minutes: String(m),
+          description: String((r as any).description ?? ''),
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [rows]);
 
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
   const [assemblyCache, setAssemblyCache] = useState<Record<string, Assembly | null>>({});
@@ -689,12 +719,36 @@ export function EstimateEditorPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
                         <div style={{ display: 'flex', gap: 8 }}>
                           {(() => {
+                            const buf = laborEdits[r.id];
                             const total = Math.max(
                               0,
                               Math.floor(toNum((r as any).minutes ?? (r as any).labor_minutes ?? 0, 0)),
                             );
-                            const h = Math.floor(total / 60);
-                            const m = total % 60;
+                            const h0 = Math.floor(total / 60);
+                            const m0 = total % 60;
+
+                            const hoursVal = buf ? buf.hours : String(h0);
+                            const minsVal = buf ? buf.minutes : String(m0);
+
+                            const commit = async () => {
+                              const rawH = (laborEdits[r.id]?.hours ?? '').trim();
+                              const rawM = (laborEdits[r.id]?.minutes ?? '').trim();
+                              const nextH = rawH === '' ? 0 : Math.max(0, Math.floor(toNum(rawH, 0)));
+                              const nextM = rawM === '' ? 0 : clamp(Math.floor(toNum(rawM, 0)), 0, 59);
+                              const nextTotal = nextH * 60 + nextM;
+
+                              // Normalize buffer after commit.
+                              setLaborEdits((prev) => ({
+                                ...prev,
+                                [r.id]: {
+                                  hours: String(nextH),
+                                  minutes: String(nextM),
+                                  description: prev[r.id]?.description ?? String((r as any).description ?? ''),
+                                },
+                              }));
+
+                              if (nextTotal !== total) await updateLaborMinutes(r.id, nextTotal);
+                            };
 
                             return (
                               <>
@@ -702,22 +756,38 @@ export function EstimateEditorPage() {
                                   style={{ width: 70 }}
                                   type="text"
                                   inputMode="numeric"
-                                  value={String(h)}
+                                  value={hoursVal}
                                   onChange={(ev) => {
-                                    const nextH = Math.max(0, Math.floor(toNum(ev.target.value, 0)));
-                                    updateLaborMinutes(r.id, nextH * 60 + m);
+                                    const v = ev.target.value;
+                                    setLaborEdits((prev) => ({
+                                      ...prev,
+                                      [r.id]: {
+                                        hours: v,
+                                        minutes: prev[r.id]?.minutes ?? String(m0),
+                                        description: prev[r.id]?.description ?? String((r as any).description ?? ''),
+                                      },
+                                    }));
                                   }}
+                                  onBlur={commit}
                                   placeholder="Hours"
                                 />
                                 <Input
                                   style={{ width: 70 }}
                                   type="text"
                                   inputMode="numeric"
-                                  value={String(m)}
+                                  value={minsVal}
                                   onChange={(ev) => {
-                                    const nextM = Math.max(0, Math.floor(toNum(ev.target.value, 0)));
-                                    updateLaborMinutes(r.id, h * 60 + Math.min(59, nextM));
+                                    const v = ev.target.value;
+                                    setLaborEdits((prev) => ({
+                                      ...prev,
+                                      [r.id]: {
+                                        hours: prev[r.id]?.hours ?? String(h0),
+                                        minutes: v,
+                                        description: prev[r.id]?.description ?? String((r as any).description ?? ''),
+                                      },
+                                    }));
                                   }}
+                                  onBlur={commit}
                                   placeholder="Min"
                                 />
                               </>
@@ -728,8 +798,18 @@ export function EstimateEditorPage() {
                         <Input
                           style={{ width: 240 }}
                           type="text"
-                          value={String((r as any).description ?? '')}
-                          onChange={(ev) => updateLaborDescription(r.id, ev.target.value)}
+                          value={String(laborEdits[r.id]?.description ?? (r as any).description ?? '')}
+                          onChange={(ev) =>
+                            setLaborEdits((prev) => ({
+                              ...prev,
+                              [r.id]: {
+                                hours: prev[r.id]?.hours ?? '0',
+                                minutes: prev[r.id]?.minutes ?? '0',
+                                description: ev.target.value,
+                              },
+                            }))
+                          }
+                          onBlur={() => updateLaborDescription(r.id, laborEdits[r.id]?.description ?? '')}
                           placeholder="Description"
                         />
                       </div>
