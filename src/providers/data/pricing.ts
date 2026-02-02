@@ -523,7 +523,7 @@ export function computeEstimateTotalsNormalized(
   lineItems: LineItem[],
   companySettings: CompanySettings,
   jobType: JobType | null,
-) {
+): EstimateTotalsNormalized {
   // Legacy helper used by EstimatePreviewPage — delegate to the unified pricing engine.
   const pricing = computeEstimatePricing(estimate, lineItems, companySettings, jobType);
 
@@ -546,27 +546,4 @@ export function computeEstimateTotalsNormalized(
     processing_fee: round2(pricing.processing_fee),
     total: round2(pricing.total),
   };
-}): EstimateTotalsNormalized {
-  // IMPORTANT: do not recompute pricing here.
-  // This normalizer must only adapt the pricing-engine output
-  // to the stable UI field names.
-  const t: any = computeEstimatePricing(params as any);
-
-  return {
-    labor_minutes_actual: Number(t.labor_minutes_actual ?? t.labor_minutes_total ?? 0) || 0,
-    labor_minutes_expected: Number(t.labor_minutes_expected ?? t.labor_minutes_total ?? 0) || 0,
-    material_cost: round2(t.material_cost_total ?? t.material_cost ?? 0),
-    material_price: round2(t.material_price_total ?? t.material_price ?? 0),
-    labor_price: laborSell,
-    misc_material: round2(t.misc_material_price ?? t.misc_material ?? 0),
-    pre_discount_total: round2(t.subtotal_price ?? t.pre_discount_total ?? 0),
-    discount_percent: round2(t.discount_percent ?? 0),
-    discount_amount: round2(t.discount_amount ?? 0),
-    subtotal_before_processing: round2(t.subtotal_before_processing ?? (t.total_price ?? t.total ?? 0)),
-    processing_fee: round2(t.processing_fee ?? 0),
-    total: round2(t.total_price ?? t.total ?? 0),
-    gross_margin_target_percent: t.gross_margin_target_percent ?? null,
-    gross_margin_expected_percent: t.gross_margin_expected_percent ?? null,
-  };
 }
-
