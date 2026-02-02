@@ -18,6 +18,8 @@ function makeNewJobType(): JobType {
     efficiency_percent: 50,
     allow_discounts: true,
     billing_mode: 'flat',
+    hourly_material_markup_mode: 'company',
+    hourly_material_markup_fixed_percent: 0,
     created_at: new Date().toISOString(),
   };
 }
@@ -169,6 +171,51 @@ export function JobTypesPage() {
                       </select>
                     </div>
 
+                    {row.billing_mode === 'hourly' ? (
+                      <>
+                        <div className="stack">
+                          <label className="label">Material Markup (Hourly)</label>
+                          <select
+                            className="input"
+                            value={(row as any).hourly_material_markup_mode ?? 'company'}
+                            onChange={(ev) =>
+                              setEditing((prev) => ({
+                                ...prev,
+                                [jt.id]: { ...row, hourly_material_markup_mode: (ev.target.value as any) },
+                              }))
+                            }
+                          >
+                            <option value="company">Use Company Setting</option>
+                            <option value="fixed">Use Fixed Markup</option>
+                            <option value="tiered">Use Tiered Markup</option>
+                          </select>
+                        </div>
+
+                        {(row as any).hourly_material_markup_mode === 'fixed' ? (
+                          <div className="stack">
+                            <label className="label">Hourly Fixed Markup (%)</label>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              value={(row as any).hourly_material_markup_fixed_percent == null ? '' : String((row as any).hourly_material_markup_fixed_percent)}
+                              onChange={(e) => {
+                                const v = e.target.value.trim() === '' ? null : Number(e.target.value);
+                                setEditing((prev) => ({
+                                  ...prev,
+                                  [jt.id]: {
+                                    ...row,
+                                    hourly_material_markup_fixed_percent: Number.isFinite(v as any) ? (v as any) : null,
+                                  },
+                                }));
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div />
+                        )}
+                      </>
+                    ) : null}
+
                     <div className="stack">
                       <label className="label">Gross Margin Target (%)</label>
                       <Input
@@ -221,5 +268,6 @@ export function JobTypesPage() {
     </div>
   );
 }
+
 
 
