@@ -282,23 +282,66 @@ export function AssemblyEditorPage() {
   }
 
   if (!a) return <div className="muted">Loading…</div>;
-
   async function applyAdminRules() {
     if (!a || !a.use_admin_rules) return;
     try {
       setStatus('Applying rules...');
-      const rules = await data.listAdminRules();
-      const match = rules
-        .filter((r) => r.enabled && r.applies_to === 'assembly' && (r.match_text ?? '').trim().length > 0)
-        .sort((x, y) => x.priority - y.priority)
-        .find((r) => (a.name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
-      if (match?.set_job_type_id) {
-        const saved = await data.upsertAssembly({ ...a, job_type_id: match.set_job_type_id } as any);
-        setA(saved as any);
+
+      const rulesRaw = (await data.listAdminRules()) as any[];
+      const rules = (rulesRaw ?? [])
+        .filter((r) => {
+          const enabled = r.enabled ?? true;
+          const scope = (r.scope ?? r.applies_to ?? 'both') as string;
+          const scopeOk = scope === 'both' || scope === 'assembly';
+          return !!enabled && scopeOk;
+        })
+        .sort((x, y) => Number(x.priority ?? 0) - Number(y.priority ?? 0));
+
+            const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+      const pricing = computeAssemblyPricing({
+        assembly: a as any,
+        materialsById: materialCache,
+        jobTypesById,
+        companySettings,
+      } as any) as any;
+
+      const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
+      const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
+
+      const maxQty = Math.max(
+        0,
+        ...(((a as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0))
+      );
+
+      const match = rules.find((r) => {
+        const minLabor = r.min_expected_labor_minutes ?? r.min_expected_labor_minutes;
+        const minMat = r.min_material_cost ?? r.min_material_cost;
+        const minQty = r.min_quantity ?? r.min_quantity;
+
+        if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
+        if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
+        if (minQty != null && maxQty < Number(minQty)) return false;
+
+        const hasAny = minLabor != null || minMat != null || minQty != null;
+        return hasAny;
+      });
+
+      const nextJobTypeId = match?.job_type_id ?? match?.set_job_type_id;
+      if (nextJobTypeId) {
+        const saved = await data.upsertAssembly({ ...(a as any), job_type_id: nextJobTypeId } as any);
+        setA(saved);
         setStatus('Rules applied.');
       } else {
         setStatus('No matching rules.');
       }
+
+      setTimeout(() => setStatus(''), 1200);
+    } catch (err: any) {
+      console.error(err);
+      setStatus(String(err?.message ?? err));
+    }
+  }
+
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
       console.error(e);
@@ -742,6 +785,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
