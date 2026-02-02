@@ -101,6 +101,9 @@ export interface CompanySettings {
   company_license_text: string;
   company_warranty_text: string;
 
+  /** Controls visibility of Tech View breakdown across Estimates and Assemblies. */
+  show_tech_view_breakdown?: boolean;
+
   created_at?: string;
   updated_at?: string;
 }
@@ -182,10 +185,12 @@ export interface BrandingSettings {
   company_id: string;
 
   company_name: string;
-  logo_url?: string;
+  /** Storage-backed logo path (resolved via signed URL). */
+  logo_storage_path?: string | null;
   primary_color?: string;
   secondary_color?: string;
 
   created_at?: string;
   updated_at?: string;
 }
+
