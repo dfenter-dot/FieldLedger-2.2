@@ -57,6 +57,7 @@ export function EstimateEditorPage() {
   const [status, setStatus] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
+  const [adminRules, setAdminRules] = useState<any[]>([]);
 
   // Local edit buffer so numeric inputs can be blank while editing.
   // App-wide rule: backspacing should not require double-clicking.
@@ -75,10 +76,11 @@ export function EstimateEditorPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [s, jts] = await Promise.all([data.getCompanySettings(), data.listJobTypes()]);
+        const [s, jts, rules] = await Promise.all([data.getCompanySettings(), data.listJobTypes(), data.listAdminRules()]);
         if (!cancelled) {
           setCompanySettings(s);
           setJobTypes(jts);
+          setAdminRules((rules as any[]) ?? []);
         }
       } catch (err) {
         console.error(err);
@@ -314,10 +316,157 @@ export function EstimateEditorPage() {
   }, [e, jobTypes]);
 
 
+  function normalizeRules(rulesRaw: any[]) {
+    return (rulesRaw ?? [])
+      .filter((r) => {
+        const enabled = r.enabled ?? true;
+        const scope = (r.scope ?? r.applies_to ?? 'both') as string;
+        const scopeOk = scope === 'both' || scope === 'estimate';
+        return !!enabled && scopeOk;
+      })
+      .sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0));
+  }
+
+  function getRuleTargetJobTypeId(rule: any): string | null {
+    return (
+      rule?.target_job_type_id ??
+      rule?.job_type_id ??
+      rule?.set_job_type_id ??
+      rule?.rule_value?.target_job_type_id ??
+      rule?.rule_value?.job_type_id ??
+      null
+    );
+  }
+
+  function matchesRule(
+    rule: any,
+    metrics: {
+      expectedLaborMinutes: number;
+      expectedMaterialCost: number;
+      maxQty: number;
+      lineItemCount: number;
+    },
+  ) {
+    const { expectedLaborMinutes, expectedMaterialCost, maxQty, lineItemCount } = metrics;
+
+    const conditionTypeA = String(rule.condition_type ?? rule.conditionType ?? '').trim();
+    const operatorA = String(rule.operator ?? rule.op ?? '>=').trim();
+    const thresholdA = rule.threshold_value ?? rule.thresholdValue;
+
+    const conditionTypeB = String(rule.rule_type ?? '').trim();
+    const ruleValue = rule.rule_value ?? {};
+    const operatorB = String(ruleValue.operator ?? ruleValue.op ?? '>=').trim();
+    const thresholdB =
+      ruleValue.threshold_value ??
+      ruleValue.thresholdValue ??
+      ruleValue.threshold ??
+      ruleValue.value;
+
+    const cmp = (op: string, left: number, right: number) => {
+      switch (op) {
+        case '>':
+          return left > right;
+        case '>=':
+          return left >= right;
+        case '<':
+          return left < right;
+        case '<=':
+          return left <= right;
+        case '==':
+          return left === right;
+        case '!=':
+          return left !== right;
+        default:
+          return left >= right;
+      }
+    };
+
+    const getMetric = (cond: string): number | null => {
+      switch (cond) {
+        case 'expected_labor_hours':
+          return expectedLaborMinutes / 60;
+        case 'expected_labor_minutes':
+          return expectedLaborMinutes;
+        case 'material_cost':
+          return expectedMaterialCost;
+        case 'line_item_count':
+          return lineItemCount;
+        case 'any_line_item_qty':
+          return maxQty;
+        default:
+          return null;
+      }
+    };
+
+    if (conditionTypeA && thresholdA != null) {
+      const metric = getMetric(conditionTypeA);
+      const thr = Number(thresholdA);
+      if (metric == null || !Number.isFinite(thr)) return false;
+      return cmp(operatorA, metric, thr);
+    }
+
+    if (conditionTypeB && thresholdB != null) {
+      const metric = getMetric(conditionTypeB);
+      const thr = Number(thresholdB);
+      if (metric == null || !Number.isFinite(thr)) return false;
+      return cmp(operatorB, metric, thr);
+    }
+
+    const minLabor = rule.min_expected_labor_minutes ?? rule.minExpectedLaborMinutes;
+    const minMat = rule.min_material_cost ?? rule.minMaterialCost;
+    const minQty = rule.min_quantity ?? rule.minQuantity;
+    const minLineItems =
+      rule.min_line_item_count ??
+      rule.min_line_items ??
+      rule.minItemCount ??
+      rule.min_items;
+
+    if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
+    if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
+    if (minQty != null && maxQty < Number(minQty)) return false;
+    if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
+
+    const hasAny = minLabor != null || minMat != null || minQty != null || minLineItems != null;
+    return hasAny;
+  }
+
+  function applyRulesToEstimate(next: any): { nextEstimate: any; matched: boolean } {
+    if (!next || !companySettings) return { nextEstimate: next, matched: false };
+    const rules = normalizeRules(adminRules as any[]);
+    if (rules.length === 0) return { nextEstimate: next, matched: false };
+
+    const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+    const pricing = computeEstimatePricing({
+      estimate: next as any,
+      materialsById: materialCache,
+      assembliesById: assemblyCache,
+      jobTypesById,
+      companySettings,
+    } as any) as any;
+
+    const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
+    const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
+
+    const items = ((next as any).items ?? []) as any[];
+    const maxQty = Math.max(0, ...items.map((it) => Number(it.quantity ?? 0)));
+    const lineItemCount = items.length;
+
+    const match = rules.find((r: any) =>
+      matchesRule(r, { expectedLaborMinutes, expectedMaterialCost, maxQty, lineItemCount }),
+    );
+    const nextJobTypeId = match ? getRuleTargetJobTypeId(match) : null;
+
+    if (!nextJobTypeId) return { nextEstimate: next, matched: false };
+    if ((next as any).job_type_id === nextJobTypeId) return { nextEstimate: next, matched: true };
+
+    return { nextEstimate: { ...(next as any), job_type_id: nextJobTypeId }, matched: true };
+  }
+
   async function save(next: Estimate) {
     try {
       setStatus('Saving…');
-      const saved = await data.upsertEstimate(next);
+      const toSave = (next as any)?.use_admin_rules && !isLocked ? applyRulesToEstimate(next as any).nextEstimate : next;
+      const saved = await data.upsertEstimate(toSave as any);
       setE(saved);
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1200);
@@ -479,140 +628,13 @@ export function EstimateEditorPage() {
     if (!e || isLocked || !(e as any).use_admin_rules) return;
     try {
       setStatus('Applying rules...');
-
-      const rulesRaw = (await data.listAdminRules()) as any[];
-      const rules = (rulesRaw ?? [])
-        .filter((r) => {
-          // tolerate legacy schemas
-          const enabled = r.enabled ?? true;
-          const scope = (r.scope ?? r.applies_to ?? 'both') as string;
-          const scopeOk = scope === 'both' || scope === 'estimate';
-          return !!enabled && scopeOk;
-        })
-        .sort((a, b) => (Number(a.priority ?? 0) - Number(b.priority ?? 0)));
-
-      // Compute rule metrics using current estimate state + current effective job type.
-      // Rules evaluate "expected" values (not sell totals):
-      // - expected labor: efficiency-adjusted in flat-rate mode
-      // - expected material cost: cost + purchase tax, no markup; customer-supplied = 0
-            const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
-      const pricing = computeEstimatePricing({
-        estimate: e as any,
-        materialsById: materialCache,
-        assembliesById: assemblyCache,
-        jobTypesById,
-        companySettings,
-      } as any) as any;
-
-      const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
-      const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
-
-      // Quantity threshold uses "any single line item quantity ≥ X"
-      const maxQty = Math.max(
-        0,
-        ...(((e as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0))
-      );
-
-      const match = rules.find((r: any) => {
-        // Support multiple rule schemas (legacy + current) to tolerate partially migrated DBs.
-
-        // ---------- Schema A: condition_type/operator/threshold_value ----------
-        const conditionTypeA = String(r.condition_type ?? r.conditionType ?? '').trim();
-        const operatorA = String(r.operator ?? r.op ?? '>=').trim();
-        const thresholdA = r.threshold_value ?? r.thresholdValue;
-
-        // ---------- Schema B: rule_type + rule_value (older) ----------
-        const conditionTypeB = String(r.rule_type ?? '').trim();
-        const ruleValue = r.rule_value ?? {};
-        const operatorB = String(ruleValue.operator ?? ruleValue.op ?? '>=').trim();
-        const thresholdB =
-          ruleValue.threshold_value ??
-          ruleValue.thresholdValue ??
-          ruleValue.threshold ??
-          ruleValue.value;
-
-        const cmp = (op: string, left: number, right: number) => {
-          switch (op) {
-            case '>': return left > right;
-            case '>=': return left >= right;
-            case '<': return left < right;
-            case '<=': return left <= right;
-            case '==': return left === right;
-            case '!=': return left !== right;
-            default: return left >= right;
-          }
-        };
-
-        const getMetric = (cond: string): number | null => {
-          switch (cond) {
-            case 'expected_labor_hours':
-              return expectedLaborMinutes / 60;
-            case 'expected_labor_minutes':
-              return expectedLaborMinutes;
-            case 'material_cost':
-              return expectedMaterialCost;
-            case 'line_item_count':
-              return lineItemCount;
-            case 'any_line_item_qty':
-              return maxQty;
-            default:
-              return null;
-          }
-        };
-
-        // Try schema A first
-        if (conditionTypeA && thresholdA != null) {
-          const metric = getMetric(conditionTypeA);
-          const thr = Number(thresholdA);
-          if (metric == null || !Number.isFinite(thr)) return false;
-          return cmp(operatorA, metric, thr);
-        }
-
-        // Then schema B
-        if (conditionTypeB && thresholdB != null) {
-          const metric = getMetric(conditionTypeB);
-          const thr = Number(thresholdB);
-          if (metric == null || !Number.isFinite(thr)) return false;
-          return cmp(operatorB, metric, thr);
-        }
-
-        // ---------- Schema C: legacy min_* fields ----------
-        const minLabor = r.min_expected_labor_minutes ?? r.minExpectedLaborMinutes;
-        const minMat = r.min_material_cost ?? r.minMaterialCost;
-        const minQty = r.min_quantity ?? r.minQuantity;
-        const minLineItems =
-          r.min_line_item_count ??
-          r.min_line_items ??
-          r.minItemCount ??
-          r.min_items;
-
-        if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
-        if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
-        if (minQty != null && maxQty < Number(minQty)) return false;
-        if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
-
-        const hasAny =
-          minLabor != null || minMat != null || minQty != null || minLineItems != null;
-
-        // If it has no thresholds at all, do not auto-match it (prevents accidental always-on).
-        return hasAny;
-      });
-
-      const nextJobTypeId =
-        (match as any)?.target_job_type_id ??
-        (match as any)?.job_type_id ??
-        (match as any)?.set_job_type_id ??
-        (match as any)?.rule_value?.target_job_type_id ??
-        (match as any)?.rule_value?.job_type_id;
-      if (nextJobTypeId) {
-        const next = { ...(e as any), job_type_id: nextJobTypeId } as any;
-        const saved = await data.upsertEstimate(next);
-        setE(saved as any);
+      const { nextEstimate, matched } = applyRulesToEstimate(e as any);
+      if (matched && (nextEstimate as any)?.job_type_id) {
+        await save(nextEstimate as any);
         setStatus('Rules applied.');
       } else {
         setStatus('No matching rules.');
       }
-
       setTimeout(() => setStatus(''), 1200);
     } catch (err: any) {
       console.error(err);
@@ -654,7 +676,11 @@ export function EstimateEditorPage() {
             <label className="label">Use Admin Rules</label>
             <Toggle
               checked={Boolean((e as any).use_admin_rules)}
-              onChange={(v) => setE({ ...(e as any), use_admin_rules: v } as any)}
+              onChange={async (v) => {
+                const next = { ...(e as any), use_admin_rules: v } as any;
+                setE(next);
+                await save(next);
+              }}
               label={(e as any).use_admin_rules ? 'Yes (locks job type)' : 'No'}
             />
           </div>
