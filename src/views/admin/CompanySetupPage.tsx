@@ -118,6 +118,9 @@ export function CompanySetupPage() {
           misc_material_percent: cs.misc_material_percent != null ? String(cs.misc_material_percent) : '',
           default_discount_percent: cs.default_discount_percent != null ? String(cs.default_discount_percent) : '',
           processing_fee_percent: cs.processing_fee_percent != null ? String(cs.processing_fee_percent) : '',
+          material_markup_mode: (cs as any)?.material_markup_mode ?? 'tiered',
+          material_markup_fixed_percent:
+            (cs as any)?.material_markup_fixed_percent != null ? String((cs as any).material_markup_fixed_percent) : '',
         }));
 
         const tiers = Array.isArray(cs.material_markup_tiers) ? (cs.material_markup_tiers as any as Tier[]) : [];
@@ -371,6 +374,13 @@ export function CompanySetupPage() {
     (next as any).default_discount_percent = toNum(draft.default_discount_percent ?? '', next.default_discount_percent ?? 0);
     (next as any).processing_fee_percent = toNum(draft.processing_fee_percent ?? '', next.processing_fee_percent ?? 0);
 
+    // Material markup strategy
+    ;(next as any).material_markup_mode = (draft.material_markup_mode === 'fixed' ? 'fixed' : 'tiered');
+    ;(next as any).material_markup_fixed_percent = toNum(
+      draft.material_markup_fixed_percent ?? '',
+      Number((next as any).material_markup_fixed_percent) || 0
+    );
+
     // Tiers
     ;(next as any).material_markup_tiers = (tierDrafts.length ? tierDrafts : tiers.map((t) => ({ min: String(t.min ?? 0), max: String(t.max ?? 0), markup_percent: String(t.markup_percent ?? 0) }))).map(
       (d) => ({
@@ -456,6 +466,9 @@ export function CompanySetupPage() {
         misc_material_percent: fresh.misc_material_percent != null ? String(fresh.misc_material_percent) : '',
         default_discount_percent: fresh.default_discount_percent != null ? String(fresh.default_discount_percent) : '',
         processing_fee_percent: fresh.processing_fee_percent != null ? String(fresh.processing_fee_percent) : '',
+        material_markup_mode: (fresh as any)?.material_markup_mode ?? 'tiered',
+        material_markup_fixed_percent:
+          (fresh as any)?.material_markup_fixed_percent != null ? String((fresh as any).material_markup_fixed_percent) : '',
       }));
 
       const ft = Array.isArray(fresh.material_markup_tiers) ? (fresh.material_markup_tiers as any as Tier[]) : [];
@@ -725,6 +738,42 @@ export function CompanySetupPage() {
         }
       >
         <div className="muted small">Define tiered material markups based on material cost. These are used by the pricing engine.</div>
+
+        <div className="rowBetween" style={{ marginTop: 12, gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
+          <div className="stack" style={{ minWidth: 260 }}>
+            <label className="label">Use Fixed Material Markup</label>
+            <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+              <Toggle
+                checked={(draft.material_markup_mode ?? (s as any)?.material_markup_mode ?? 'tiered') === 'fixed'}
+                onChange={(checked) => {
+                  const mode = checked ? 'fixed' : 'tiered';
+                  setDraft((d) => ({ ...d, material_markup_mode: mode }));
+                  if (s) setS({ ...(s as any), material_markup_mode: mode } as any);
+                }}
+              />
+              <div className="muted">{(draft.material_markup_mode ?? (s as any)?.material_markup_mode ?? 'tiered') === 'fixed' ? 'Fixed' : 'Tiered'}</div>
+            </div>
+          </div>
+
+          <div className="stack" style={{ minWidth: 220 }}>
+            <label className="label">Fixed Markup %</label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={draft.material_markup_fixed_percent ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...d, material_markup_fixed_percent: e.target.value }))}
+              onBlur={() => {
+                // Normalize to number on blur, but allow blank while editing
+                const raw = (draft.material_markup_fixed_percent ?? '').trim();
+                if (raw === '') return;
+                const n = toNum(raw, Number((s as any)?.material_markup_fixed_percent) || 0);
+                setDraft((d) => ({ ...d, material_markup_fixed_percent: String(n) }));
+                if (s) setS({ ...(s as any), material_markup_fixed_percent: n } as any);
+              }}
+              disabled={(draft.material_markup_mode ?? (s as any)?.material_markup_mode ?? 'tiered') !== 'fixed'}
+            />
+          </div>
+        </div>
 
         <div className="stack" style={{ marginTop: 10, gap: 10 }}>
           {(tierDrafts.length ? tierDrafts : [{ min: '0', max: '0', markup_percent: '0' }]).map((t, idx) => (
@@ -1246,5 +1295,6 @@ export function CompanySetupPage() {
     </div>
   );
 }
+
 
 
