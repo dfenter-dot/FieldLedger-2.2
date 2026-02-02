@@ -342,12 +342,6 @@ export function AssemblyEditorPage() {
     }
   }
 
-      setTimeout(() => setStatus(''), 1500);
-    } catch (e: any) {
-      console.error(e);
-      setStatus(String(e?.message ?? e));
-    }
-  }
 
   return (
     <div className="stack">
@@ -785,7 +779,6 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
-
 
 
 
