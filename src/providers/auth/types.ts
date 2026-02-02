@@ -50,6 +50,10 @@ export interface CompanySettings {
   starting_estimate_number: number;
 
   material_markup_tiers: MaterialMarkupTier[];
+  /** Default material markup strategy used by the pricing engine. */
+  material_markup_mode?: 'tiered' | 'fixed';
+  /** Fixed material markup percent when material_markup_mode = 'fixed'. */
+  material_markup_fixed_percent?: number;
   misc_applies_when_customer_supplies: boolean;
 
   /* -------------------------
@@ -193,4 +197,5 @@ export interface BrandingSettings {
   created_at?: string;
   updated_at?: string;
 }
+
 
