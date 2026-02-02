@@ -3,7 +3,7 @@ import { useAuth } from '../../providers/auth/AuthContext';
 import './sidebar.css';
 
 export function Sidebar() {
-  const { user, signOut } = useAuth();
+  const { signOut } = useAuth();
 
   async function handleLogout() {
     try {
@@ -16,10 +16,8 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="sidebarBrand">
+      <div className="sidebarBrand" aria-label="FieldLedger">
         <div className="brandMark">FL</div>
-        <div className="brandSub">{user?.email ?? 'Not signed in'}</div>
-        </div>
       </div>
 
       <nav className="sidebarNav">
