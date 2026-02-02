@@ -903,24 +903,24 @@ useEffect(() => {
                     <div className="stack" style={{ width: 110 }}>
                       <div className="muted small">Quantity</div>
                       <Input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="1"
-                    value={it._ui_qty_text ?? String(it.quantity ?? 1)}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      updateItem(it.id, { _ui_qty_text: raw });
-                      if (raw.trim() === '') return;
-                      const q = Math.max(1, Math.floor(Number(raw)));
-                      if (!Number.isFinite(q)) return;
-                      updateItem(it.id, { quantity: q });
-                    }}
-                    onBlur={() => {
-                      const raw = String(it._ui_qty_text ?? '').trim();
-                      const q = Math.max(1, Math.floor(Number(raw === '' ? (it.quantity ?? 1) : raw)));
-                      updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
-                    }}
-                  />
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="1"
+                        value={it._ui_qty_text ?? String(it.quantity ?? 1)}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          updateItem(it.id, { _ui_qty_text: raw });
+                          if (raw.trim() === '') return;
+                          const q = Math.max(1, Math.floor(Number(raw)));
+                          if (!Number.isFinite(q)) return;
+                          updateItem(it.id, { quantity: q });
+                        }}
+                        onBlur={() => {
+                          const raw = String(it._ui_qty_text ?? '').trim();
+                          const q = Math.max(1, Math.floor(Number(raw === '' ? (it.quantity ?? 1) : raw)));
+                          updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
+                        }}
+                      />
                     </div>
 
                     <div className="stack" style={{ width: 200 }}>
