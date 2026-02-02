@@ -45,6 +45,10 @@ export interface CompanySettings {
 
   // Pricing params
   material_markup_tiers?: MarkupTier[];
+  /** Default material markup strategy used by the pricing engine. */
+  material_markup_mode?: 'tiered' | 'fixed';
+  /** Fixed material markup percent when material_markup_mode = 'fixed'. */
+  material_markup_fixed_percent?: number;
   material_purchase_tax_percent?: number;
   misc_material_percent?: number;
   discount_percent_default?: number;
@@ -92,6 +96,19 @@ export interface JobType {
   efficiency_percent?: number;
 
   allow_discounts?: boolean;
+
+  /**
+   * Hourly job types may override the company material markup strategy.
+   * - 'company': use Company Setup selection
+   * - 'tiered': force tiered markup
+   * - 'fixed': force fixed markup (percent stored in hourly_material_markup_fixed_percent)
+   */
+  hourly_material_markup_mode?: 'company' | 'tiered' | 'fixed';
+  /** Hourly-only fixed markup percent when hourly_material_markup_mode = 'fixed'. */
+  hourly_material_markup_fixed_percent?: number;
+
+  /** Optional description used by the UI (nullable in DB). */
+  description?: string | null;
 
   created_at?: string;
   updated_at?: string;
@@ -329,6 +346,7 @@ export interface BrandingSettings {
   logo_storage_path?: string | null;
   updated_at?: string;
 }
+
 
 
 
