@@ -44,16 +44,6 @@ export type PricingInput = {
   };
 };
 
-function resolveCustomerSuppliesMaterialsFlag(obj: any): boolean {
-  // Back-compat: tolerate both naming variants and common UI field.
-  // IMPORTANT: treat as true if *any* field name is true.
-  return Boolean(
-    (obj as any)?.customer_supplies_materials ||
-      (obj as any)?.customer_supplied_materials ||
-      (obj as any)?.customerSuppliedMaterials
-  );
-}
-
 export type PricingBreakdown = {
   labor: {
     actual_minutes: number;
@@ -107,9 +97,11 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
       : actualMinutes;
 
   // --- MATERIALS ---
-  // We always compute a raw material sell total so misc material can still be
-  // based on materials even when customer supplies materials (if allowed by Admin).
+  // Always compute raw material sell first.
+  // Customer-supplied materials zero only the customer-facing material sell,
+  // but misc material may still apply based on Admin setting.
   let rawMaterialSell = 0;
+
   for (const m of lineItems.materials) {
     const baseCost = m.custom_cost ?? m.cost;
     const taxedCost = m.taxable
@@ -120,17 +112,16 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
     rawMaterialSell += sell * m.quantity;
   }
 
-  // Customer-supplied materials zero only the customer-facing material sell,
-  // not necessarily the misc material base.
-  const materialSell = flags.customer_supplies_materials ? 0 : rawMaterialSell;
+  const customerSupplies = Boolean(flags.customer_supplies_materials);
+  const materialSell = customerSupplies ? 0 : rawMaterialSell;
 
-  const miscBase = flags.customer_supplies_materials
-    ? (company.allow_misc_with_customer_materials ? rawMaterialSell : 0)
-    : rawMaterialSell;
-
-  const miscMaterial = miscBase > 0
-    ? miscBase * (company.misc_material_percent / 100)
-    : 0;
+  // Misc material behavior:
+  // - If Admin disallows misc when customer supplies materials: misc = 0 when customerSupplies
+  // - If Admin allows it: misc always applies regardless of customerSupplies selection
+  const miscMaterial =
+    rawMaterialSell > 0 && (company.allow_misc_with_customer_materials || !customerSupplies)
+      ? rawMaterialSell * (company.misc_material_percent / 100)
+      : 0;
 
   // --- LABOR PRICING ---
   let laborCost = 0;
@@ -384,13 +375,17 @@ export function computeAssemblyPricing(params: {
     flags: {
       apply_discount: false,
       apply_processing_fee: false,
-      customer_supplies_materials: resolveCustomerSuppliesMaterialsFlag(assembly),
+      customer_supplies_materials:
+        Boolean(assembly?.customer_supplied_materials === true) ||
+        Boolean((assembly as any)?.customer_supplies_materials === true),
     },
   });
   const actualMinutes = breakdown.labor.actual_minutes;
   const expectedMinutes = (jt.mode === 'flat_rate') ? breakdown.labor.expected_minutes : actualMinutes;
 
-  const customerSupplies = resolveCustomerSuppliesMaterialsFlag(assembly);
+  const customerSupplies =
+    Boolean(assembly?.customer_supplied_materials === true) ||
+    Boolean((assembly as any)?.customer_supplies_materials === true);
   const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
   return {
@@ -455,7 +450,10 @@ export function computeEstimatePricing(params: {
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
-  const customerSupplies = resolveCustomerSuppliesMaterialsFlag(estimate);
+  const customerSupplies =
+    Boolean(estimate?.customer_supplied_materials === true) ||
+    Boolean((estimate as any)?.customer_supplies_materials === true) ||
+    Boolean((estimate as any)?.customerSuppliedMaterials === true);
   const applyProcessing = Boolean(estimate?.apply_processing_fee ?? estimate?.applyProcessingFees ?? false);
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
