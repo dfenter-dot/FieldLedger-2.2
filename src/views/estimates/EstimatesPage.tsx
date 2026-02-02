@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
 import { useData } from '../../providers/data/DataContext';
-import type { Estimate } from '../../providers/data/types';
+import type { Estimate, JobType } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
 
 export function EstimatesPage() {
@@ -12,6 +12,7 @@ export function EstimatesPage() {
   const { mode, setMode } = useSelection();
 
   const [rows, setRows] = useState<Estimate[]>([]);
+  const [jobTypes, setJobTypes] = useState<JobType[]>([]);
   const [filter, setFilter] = useState<'active' | 'approved' | 'declined' | 'archived'>('active');
   const [status, setStatus] = useState<string>('');
 
@@ -24,7 +25,13 @@ export function EstimatesPage() {
       });
   }, [data]);
 
-  return (
+  
+  const jobTypeName = (id?: string | null) => {
+    if (!id) return '—';
+    const jt = jobTypes.find((j) => j.id === id);
+    return jt?.name ?? '—';
+  };
+return (
     <div className="stack">
       <Card
         title="Estimates"
@@ -85,7 +92,7 @@ export function EstimatesPage() {
             >
               <div className="listMain">
                 <div className="listTitle">#{e.estimate_number} • {e.name}</div>
-                <div className="listSub">Job Type: {e.job_type_id ?? '—'}</div>
+                <div className="listSub">Job Type: {jobTypeName(e.job_type_id)}</div>
               </div>
               <div className="listRight">
                 <div className="pill">{new Date(e.created_at).toLocaleDateString()}</div>
@@ -104,4 +111,5 @@ export function EstimatesPage() {
     </div>
   );
 }
+
 
