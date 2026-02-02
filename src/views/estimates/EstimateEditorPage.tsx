@@ -64,6 +64,12 @@ export function EstimateEditorPage() {
     Record<string, { hours: string; minutes: string; description: string }>
   >({});
 
+  // Quantity inputs: keep a string buffer so users can clear the field
+  // (backspace past zero) and type a new quantity without needing to
+  // double-click/select the existing value. We commit a normalized integer
+  // on blur/Enter.
+  const [qtyEdits, setQtyEdits] = useState<Record<string, string>>({});
+
   // Load admin/config data used by dropdowns and calculations.
   useEffect(() => {
     let cancelled = false;
@@ -687,6 +693,19 @@ export function EstimateEditorPage() {
           </div>
 
           <div className="stack">
+            <label className="label">Apply Misc Material</label>
+            <select
+              className="input"
+              disabled={isLocked}
+              value={String(Boolean((e as any).apply_misc_material))}
+              onChange={(ev) => setE({ ...(e as any), apply_misc_material: ev.target.value === 'true' } as any)}
+            >
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+
+          <div className="stack">
             <label className="label">Apply Processing Fees</label>
             <select
               className="input"
@@ -1160,10 +1179,35 @@ export function EstimateEditorPage() {
                         style={{ width: 90 }}
                         type="text"
                         inputMode="numeric"
-                        value={String((r as any).quantity ?? 1)}
+                        value={qtyEdits[r.id] ?? String((r as any).quantity ?? 1)}
                         onChange={(ev) => {
-                          const q = Math.max(1, Math.floor(toNum(ev.target.value, 1)));
+                          const raw = ev.target.value;
+                          // Allow clearing while editing.
+                          setQtyEdits((prev) => ({ ...prev, [r.id]: raw }));
+
+                          // If the user has a valid integer (>=1), update live so totals stay responsive.
+                          // If blank/invalid, wait until blur to normalize.
+                          const trimmed = String(raw ?? '').trim();
+                          if (trimmed === '') return;
+                          const q = Math.floor(toNum(trimmed, NaN as any));
+                          if (!Number.isFinite(q)) return;
+                          updateQuantity(r.id, Math.max(1, q));
+                        }}
+                        onBlur={() => {
+                          const raw = qtyEdits[r.id];
+                          const trimmed = String(raw ?? '').trim();
+                          const q = Math.max(1, Math.floor(toNum(trimmed, 1)));
                           updateQuantity(r.id, q);
+                          setQtyEdits((prev) => {
+                            const next = { ...prev };
+                            delete next[r.id];
+                            return next;
+                          });
+                        }}
+                        onKeyDown={(ev) => {
+                          if (ev.key === 'Enter') {
+                            (ev.currentTarget as any)?.blur?.();
+                          }
                         }}
                       />
                     )}
