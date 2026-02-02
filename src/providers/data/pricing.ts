@@ -312,7 +312,13 @@ function toEngineCompany(s: any) {
     purchase_tax_percent: toNum(s?.material_purchase_tax_percent ?? s?.purchase_tax_percent, 0),
     material_markup_tiers: tiers,
     misc_material_percent: toNum(s?.misc_material_percent, 0),
-    allow_misc_with_customer_materials: Boolean(s?.allow_misc_with_customer_materials ?? s?.allow_misc_when_customer_supplies_materials ?? false),
+    allow_misc_with_customer_materials: Boolean(
+      s?.allow_misc_with_customer_materials ??
+        s?.allow_misc_when_customer_supplies_materials ??
+        s?.misc_applies_when_customer_supplies ??
+        s?.misc_applies_when_customer_supplies_materials ??
+        false,
+    ),
     discount_percent: toNum(s?.discount_percent_default ?? s?.discount_percent ?? 0),
     processing_fee_percent: toNum(s?.processing_fee_percent, 0),
   };
@@ -460,8 +466,18 @@ export function computeEstimatePricing(params: {
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
-  const customerSupplies = Boolean(estimate?.customer_supplied_materials ?? (estimate as any)?.customer_supplies_materials ?? estimate?.customerSuppliedMaterials ?? false);
-  const applyProcessing = Boolean(estimate?.apply_processing_fee ?? estimate?.applyProcessingFees ?? false);
+  const customerSupplies = Boolean(
+    (estimate as any)?.customer_supplies_materials ??
+      (estimate as any)?.customer_supplied_materials ??
+      (estimate as any)?.customerSuppliedMaterials ??
+      false,
+  );
+  const applyProcessing = Boolean(
+    (estimate as any)?.apply_processing_fees ??
+      (estimate as any)?.apply_processing_fee ??
+      (estimate as any)?.applyProcessingFees ??
+      false,
+  );
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
   const breakdown = computePricingBreakdown({
