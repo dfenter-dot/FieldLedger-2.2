@@ -32,7 +32,14 @@ export function Topbar() {
 
   return (
     <header className="topbar">
-      <div className="topbarTitle">{titleFromPath(loc.pathname)}</div>
+      <div className="topbarLeft">
+        <div className="topbarBrand" aria-label="FieldLedger">
+          <div className="topbarMark">FL</div>
+          <img className="topbarWordmark" src="/branding/fieldledger-logo.png" alt="FieldLedger" />
+        </div>
+        <div className="topbarDivider" />
+        <div className="topbarTitle">{titleFromPath(loc.pathname)}</div>
+      </div>
       <div className="topbarRight">
         <div className="chip">{user?.email}</div>
         <button className="topbarLogout" type="button" onClick={handleLogout}>
