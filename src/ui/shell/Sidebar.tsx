@@ -17,9 +17,9 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebarBrand">
-        <div className="brandMark"><img className="brandIcon" src="/icons/icon-192.png" alt="FieldLedger" /></div>
+        <div className="brandMark">FL</div>
         <div className="brandText">
-          <img className="brandLogo" src="/branding/fieldledger-logo.png" alt="FieldLedger" />
+          <img className="brandWordmark" src="/branding/fieldledger-logo.png" alt="FieldLedger" />
           <div className="brandSub">{user?.email ?? 'Not signed in'}</div>
         </div>
       </div>
