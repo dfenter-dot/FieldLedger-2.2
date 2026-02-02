@@ -120,7 +120,7 @@ export function EstimateEditorPage() {
           setE(saved);
           setStatus('');
           nav(`/estimates/${saved.id}`, { replace: true });
-        } catch (err: any) {
+    } catch (err: any) {
           console.error(err);
           setStatus(String(err?.message ?? err));
         }
@@ -406,7 +406,7 @@ export function EstimateEditorPage() {
 			setShowBlankMaterialCard(false);
 			setStatus('Saved.');
 			setTimeout(() => setStatus(''), 1200);
-		} catch (err: any) {
+    } catch (err: any) {
 			console.error(err);
 			setStatus(String(err?.message ?? err));
 		}
@@ -620,6 +620,7 @@ export function EstimateEditorPage() {
       console.error(err);
       setStatus(String(err?.message ?? err));
     }
+  }
 
   // Auto-apply Admin Rules whenever the estimate changes, when Use Admin Rules is enabled.
   // This replaces the manual "Apply Changes" action to reduce real-world points of failure.
@@ -640,7 +641,6 @@ export function EstimateEditorPage() {
     applyAdminRules({ silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [e, isLocked, companySettings, jobTypes]);
-  }
 
   return (
     <div className="stack">
