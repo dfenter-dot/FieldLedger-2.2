@@ -10,16 +10,17 @@
 }
 .sidebarBrand{
   display:flex;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid rgba(212,175,55,0.18);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(245,196,86,0.28);
   border-radius: 14px;
-  background: rgba(16,43,82,0.35);
+  background: rgba(8,20,40,0.55);
 }
 .brandMark{
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  font-size: 16px;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -29,7 +30,7 @@
   font-weight: 800;
 }
 .brandName{ font-weight: 800; letter-spacing: 0.2px; }
-.brandSub{ color: var(--muted); font-size: 12px; margin-top: 2px; }
+.brandSub{ color: var(--muted); font-size: 11px; margin-top: 2px; }
 
 .sidebarNav{
   margin-top: 16px;
@@ -39,7 +40,7 @@
 }
 .navItem{
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 14px;
   border: 1px solid transparent;
   color: var(--text);
 }
@@ -53,19 +54,19 @@
 }
 
 .navGroup{ margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(43,54,71,0.7); }
-.navGroupLabel{ color: var(--muted); font-size: 12px; padding: 6px 12px; }
+.navGroupLabel{ color: var(--muted); font-size: 11px; padding: 6px 12px; }
 
 .sidebarFooter{
   margin-top: auto;
   padding: 10px 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .logoutBtn{
   width: 100%;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 14px;
   border: 1px solid rgba(212,175,55,0.22);
   background: rgba(11,18,32,0.35);
   color: var(--text);
@@ -78,5 +79,11 @@
   background: rgba(17,24,39,0.45);
 }
 
-.brandIcon{ width: 28px; height: 28px; display:block; }
-.brandLogo{ height: 18px; width:auto; display:block; }
+
+.brandWordmark{
+  height: 22px;
+  width: auto;
+  display:block;
+}
+
+.brandText{ display:flex; flex-direction:column; justify-content:center; }
