@@ -687,19 +687,6 @@ export function EstimateEditorPage() {
           </div>
 
           <div className="stack">
-            <label className="label">Apply Misc Material</label>
-            <select
-              className="input"
-              disabled={isLocked}
-              value={String(Boolean((e as any).apply_misc_material))}
-              onChange={(ev) => setE({ ...(e as any), apply_misc_material: ev.target.value === 'true' } as any)}
-            >
-              <option value="false">No</option>
-              <option value="true">Yes</option>
-            </select>
-          </div>
-
-          <div className="stack">
             <label className="label">Apply Processing Fees</label>
             <select
               className="input"
@@ -1241,5 +1228,6 @@ export function EstimateEditorPage() {
     </div>
   );
 }
+
 
 
