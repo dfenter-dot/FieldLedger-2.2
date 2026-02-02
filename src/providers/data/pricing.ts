@@ -78,7 +78,18 @@ export type PricingBreakdown = {
 
 function resolveMarkup(cost: number, tiers: PricingInput['company']['material_markup_tiers']) {
   for (const t of tiers) {
-    if (cost >= t.min && cost <= t.max) return t.percent;
+    const min = Number((t as any).min ?? 0);
+    const max = Number((t as any).max ?? 0);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue;
+    if (cost >= min && cost <= max) {
+      const pctRaw =
+        (t as any).percent ??
+        (t as any).markup_percent ??
+        (t as any).markupPercent ??
+        0;
+      const pct = Number(pctRaw);
+      return Number.isFinite(pct) ? pct : 0;
+    }
   }
   return 0;
 }
@@ -124,7 +135,8 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
   }
 
   for (const m of lineItems.materials) {
-    const baseCost = m.custom_cost ?? m.cost;
+    const baseCost = Number(m.custom_cost != null ? m.custom_cost : m.cost);
+    if (!Number.isFinite(baseCost) || baseCost < 0) continue;
     const taxedCost = m.taxable
       ? baseCost * (1 + company.purchase_tax_percent / 100)
       : baseCost;
