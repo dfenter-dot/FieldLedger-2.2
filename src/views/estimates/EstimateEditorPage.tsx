@@ -593,25 +593,27 @@ export function EstimateEditorPage() {
         }
 
         // ---------- Schema C: legacy min_* fields ----------
-        const minLabor = r.min_expected_labor_minutes ?? r.minExpectedLaborMinutes;
-        const minMat = r.min_material_cost ?? r.minMaterialCost;
-        const minQty = r.min_quantity ?? r.minQuantity;
+        // Use distinct variable names here to avoid shadowing the earlier fast-path
+        // declarations inside this same predicate.
+        const minLaborC = r.min_expected_labor_minutes ?? r.minExpectedLaborMinutes;
+        const minMatC = r.min_material_cost ?? r.minMaterialCost;
+        const minQtyC = r.min_quantity ?? r.minQuantity;
         const minLineItems =
           r.min_line_item_count ??
           r.min_line_items ??
           r.minItemCount ??
           r.min_items;
 
-        if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
-        if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
-        if (minQty != null && maxQty < Number(minQty)) return false;
+        if (minLaborC != null && expectedLaborMinutes < Number(minLaborC)) return false;
+        if (minMatC != null && expectedMaterialCost < Number(minMatC)) return false;
+        if (minQtyC != null && maxQty < Number(minQtyC)) return false;
         if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
 
-        const hasAny =
-          minLabor != null || minMat != null || minQty != null || minLineItems != null;
+        const hasAnyC =
+          minLaborC != null || minMatC != null || minQtyC != null || minLineItems != null;
 
         // If it has no thresholds at all, do not auto-match it (prevents accidental always-on).
-        return hasAny;
+        return hasAnyC;
       });
 
       const nextJobTypeId =
