@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
@@ -58,17 +58,15 @@ export function EstimateEditorPage() {
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
-  const lastAutoRuleSig = useRef<string>('');
+  // Local edit buffer for quantities so users can backspace/replace without double-clicking.
+  // Normalized to >= 1 on blur.
+  const [qtyEdits, setQtyEdits] = useState<Record<string, string>>({});
 
   // Local edit buffer so numeric inputs can be blank while editing.
   // App-wide rule: backspacing should not require double-clicking.
   const [laborEdits, setLaborEdits] = useState<
     Record<string, { hours: string; minutes: string; description: string }>
   >({});
-
-  // Quantity edit buffer so users can backspace past "0" without double-clicking.
-  // We update the in-memory estimate immediately for live recalculation, and persist on blur.
-  const [qtyEdits, setQtyEdits] = useState<Record<string, string>>({});
 
   // Load admin/config data used by dropdowns and calculations.
   useEffect(() => {
@@ -124,7 +122,7 @@ export function EstimateEditorPage() {
           setE(saved);
           setStatus('');
           nav(`/estimates/${saved.id}`, { replace: true });
-    } catch (err: any) {
+        } catch (err: any) {
           console.error(err);
           setStatus(String(err?.message ?? err));
         }
@@ -287,44 +285,8 @@ export function EstimateEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, rows, assemblyCache]);
 
-  // Ensure discount preload is ALWAYS driven by the admin default (or per-estimate override)
-  // and updates totals live (no Save required).
-  //
-  // IMPORTANT: Even when Apply Discount is OFF, we still want the subtotal to be preloaded
-  // by the admin discount percent so the business doesn't lose money when a discount IS applied.
-  const effectiveCompanySettings = useMemo(() => {
-    if (!companySettings) return companySettings;
-
-    const candidates = [
-      (e as any)?.discount_percent,
-      (e as any)?.discountPercent,
-      (companySettings as any)?.discount_percent_default,
-      (companySettings as any)?.discount_percent,
-      (companySettings as any)?.discountPercent,
-    ];
-
-    let n = NaN;
-    for (const c of candidates) {
-      const v = toNum(c as any, NaN);
-      if (Number.isFinite(v)) {
-        n = v;
-        break;
-      }
-    }
-
-    // If no configured discount exists, return as-is.
-    if (!Number.isFinite(n)) return companySettings;
-
-    // For pricing calls ONLY: force the engine to see the effective admin discount percent.
-    return {
-      ...(companySettings as any),
-      discount_percent_default: n,
-      discount_percent: n,
-    };
-  }, [companySettings, (e as any)?.discount_percent, (e as any)?.discountPercent]);
-
   const totals = useMemo(() => {
-    if (!e || !effectiveCompanySettings) return null;
+    if (!e || !companySettings) return null;
     const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
     try {
       return computeEstimatePricing({
@@ -332,19 +294,38 @@ export function EstimateEditorPage() {
         materialsById: materialCache,
         assembliesById: assemblyCache,
         jobTypesById,
-        companySettings: effectiveCompanySettings,
+        companySettings,
       } as any);
     } catch (err) {
       console.error(err);
       return null;
     }
-  }, [e, effectiveCompanySettings, jobTypes, materialCache, assemblyCache]);
+  }, [e, companySettings, jobTypes, materialCache, assemblyCache]);
+
+  const maxDiscountPercent = useMemo(() => {
+    return toNum(companySettings?.default_discount_percent ?? companySettings?.discount_percent_default ?? 10, 10);
+  }, [companySettings]);
+
+  // Ensure estimate has a discount_percent value (prefilled from admin default) so
+  // pre-discount subtotal preloading works even when Apply Discount is OFF.
+  useEffect(() => {
+    if (!e || !companySettings) return;
+    const cur = (e as any).discount_percent;
+    if (cur == null || cur === '') {
+      // Only set if missing to avoid clobbering user edits.
+      setE((prev) => {
+        if (!prev) return prev;
+        const prevCur = (prev as any).discount_percent;
+        if (prevCur != null && prevCur !== '') return prev;
+        return { ...(prev as any), discount_percent: maxDiscountPercent } as any;
+      });
+    }
+  }, [e?.id, companySettings, maxDiscountPercent]);
 
   const selectedJobType = useMemo(() => {
     if (!e) return null;
     const byId = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
-    // e can be null during initial load; guard all property reads
-    const direct = (e as any)?.job_type_id ? byId[(e as any).job_type_id] : null;
+    const direct = (e as any).job_type_id ? byId[(e as any).job_type_id] : null;
     if (direct) return direct;
     const def = (jobTypes ?? []).find((j) => (j as any).is_default || (j as any).isDefault);
     return def ?? null;
@@ -447,7 +428,7 @@ export function EstimateEditorPage() {
 			setShowBlankMaterialCard(false);
 			setStatus('Saved.');
 			setTimeout(() => setStatus(''), 1200);
-    } catch (err: any) {
+		} catch (err: any) {
 			console.error(err);
 			setStatus(String(err?.message ?? err));
 		}
@@ -499,22 +480,23 @@ export function EstimateEditorPage() {
     await save({ ...(e as any), items: nextItems } as any);
   }
 
-  const isLocked = useMemo(() => String((e as any)?.status ?? 'draft') === 'approved', [e]);
+  if (!e) return <div className="muted">Loading…</div>;
+
+  const isLocked = String((e as any).status ?? 'draft') === 'approved';
 
   const jobTypeOptions = (jobTypes ?? []).filter((j: any) => j.enabled !== false);
   const defaultJobTypeId = (jobTypes ?? []).find((j: any) => j.is_default)?.id ?? null;
-  // e can be null before the estimate loads; avoid null property access
-  const effectiveJobTypeId = (e as any)?.job_type_id ?? defaultJobTypeId;
+  const effectiveJobTypeId = (e as any).job_type_id ?? defaultJobTypeId;
   const activeJobType = (jobTypes ?? []).find((j: any) => j.id === effectiveJobTypeId) ?? null;
 
   const allowDiscounts = activeJobType?.allow_discounts !== false;
 
-  const maxDiscountPercent = toNum(companySettings?.default_discount_percent ?? companySettings?.discount_percent_default ?? 10, 10);
+  // (maxDiscountPercent is memoized above)
 
-  async function applyAdminRules(opts?: { silent?: boolean }) {
+  async function applyAdminRules() {
     if (!e || isLocked || !(e as any).use_admin_rules) return;
     try {
-      if (!opts?.silent) setStatus('Applying rules...');
+      setStatus('Applying rules...');
 
       const rulesRaw = (await data.listAdminRules()) as any[];
       const rules = (rulesRaw ?? [])
@@ -537,13 +519,11 @@ export function EstimateEditorPage() {
         materialsById: materialCache,
         assembliesById: assemblyCache,
         jobTypesById,
-        companySettings: effectiveCompanySettings ?? companySettings,
+        companySettings,
       } as any) as any;
 
       const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
       const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
-
-      const lineItemCount = Number((((e as any).items ?? []) as any[]).length);
 
       // Quantity threshold uses "any single line item quantity ≥ X"
       const maxQty = Math.max(
@@ -552,26 +532,6 @@ export function EstimateEditorPage() {
       );
 
       const match = rules.find((r: any) => {
-        // Fast-path: current canonical rule fields (min_* thresholds + job_type_id)
-        const minLabor = Number((r as any).min_expected_labor_minutes ?? (r as any).minExpectedLaborMinutes);
-        const minMat = Number((r as any).min_material_cost ?? (r as any).minMaterialCost);
-        const minQty = Number((r as any).min_quantity ?? (r as any).minQuantity);
-
-        const hasAny =
-          (Number.isFinite(minLabor) && minLabor > 0) ||
-          (Number.isFinite(minMat) && minMat > 0) ||
-          (Number.isFinite(minQty) && minQty > 0);
-
-        if (hasAny) {
-          if (Number.isFinite(minLabor) && minLabor > 0 && expectedLaborMinutes < minLabor) return false;
-          if (Number.isFinite(minMat) && minMat > 0 && expectedMaterialCost < minMat) return false;
-
-          // NOTE: In the current app, min_quantity represents "line item count" threshold.
-          if (Number.isFinite(minQty) && minQty > 0 && lineItemCount < minQty) return false;
-
-          return true;
-        }
-
         // Support multiple rule schemas (legacy + current) to tolerate partially migrated DBs.
 
         // ---------- Schema A: condition_type/operator/threshold_value ----------
@@ -635,27 +595,25 @@ export function EstimateEditorPage() {
         }
 
         // ---------- Schema C: legacy min_* fields ----------
-        // Use distinct variable names here to avoid shadowing the earlier fast-path
-        // declarations inside this same predicate.
-        const minLaborC = r.min_expected_labor_minutes ?? r.minExpectedLaborMinutes;
-        const minMatC = r.min_material_cost ?? r.minMaterialCost;
-        const minQtyC = r.min_quantity ?? r.minQuantity;
+        const minLabor = r.min_expected_labor_minutes ?? r.minExpectedLaborMinutes;
+        const minMat = r.min_material_cost ?? r.minMaterialCost;
+        const minQty = r.min_quantity ?? r.minQuantity;
         const minLineItems =
           r.min_line_item_count ??
           r.min_line_items ??
           r.minItemCount ??
           r.min_items;
 
-        if (minLaborC != null && expectedLaborMinutes < Number(minLaborC)) return false;
-        if (minMatC != null && expectedMaterialCost < Number(minMatC)) return false;
-        if (minQtyC != null && maxQty < Number(minQtyC)) return false;
+        if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
+        if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
+        if (minQty != null && maxQty < Number(minQty)) return false;
         if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
 
-        const hasAnyC =
-          minLaborC != null || minMatC != null || minQtyC != null || minLineItems != null;
+        const hasAny =
+          minLabor != null || minMat != null || minQty != null || minLineItems != null;
 
         // If it has no thresholds at all, do not auto-match it (prevents accidental always-on).
-        return hasAnyC;
+        return hasAny;
       });
 
       const nextJobTypeId =
@@ -665,46 +623,20 @@ export function EstimateEditorPage() {
         (match as any)?.rule_value?.target_job_type_id ??
         (match as any)?.rule_value?.job_type_id;
       if (nextJobTypeId) {
-        if (String(nextJobTypeId) === String((e as any).job_type_id ?? '')) {
-          if (!opts?.silent) setStatus('');
-          return;
-        }
         const next = { ...(e as any), job_type_id: nextJobTypeId } as any;
         const saved = await data.upsertEstimate(next);
         setE(saved as any);
-        if (!opts?.silent) setStatus('Rules applied.');
+        setStatus('Rules applied.');
       } else {
-        if (!opts?.silent) setStatus('No matching rules.');
+        setStatus('No matching rules.');
       }
 
-      if (!opts?.silent) setTimeout(() => setStatus(''), 1200);
+      setTimeout(() => setStatus(''), 1200);
     } catch (err: any) {
       console.error(err);
       setStatus(String(err?.message ?? err));
     }
   }
-
-  // Auto-apply Admin Rules whenever the estimate changes, when Use Admin Rules is enabled.
-  // This replaces the manual "Apply Changes" action to reduce real-world points of failure.
-  useEffect(() => {
-    if (!e || isLocked || !(e as any).use_admin_rules) return;
-
-    // Only re-evaluate when rule-relevant inputs change.
-    const sig = JSON.stringify({
-      job_type_id: (e as any).job_type_id ?? null,
-      customer_supplies_materials: (e as any).customer_supplies_materials ?? false,
-      items: (e as any).items ?? [],
-    });
-
-    if (sig === lastAutoRuleSig.current) return;
-    lastAutoRuleSig.current = sig;
-
-    // Silent: no status chatter for automatic recalculation.
-    applyAdminRules({ silent: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [e, isLocked, companySettings, jobTypes]);
-
-  if (!e) return <div className="muted">Loading…</div>;
 
   return (
     <div className="stack">
@@ -719,7 +651,8 @@ export function EstimateEditorPage() {
             <Button variant="danger" onClick={removeEstimate}>
               Delete
             </Button>
-                        <Button variant="primary" onClick={saveAll}>
+            {(e as any).use_admin_rules && !isLocked ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
+            <Button variant="primary" onClick={saveAll}>
               Save
             </Button>
           </div>
@@ -777,7 +710,6 @@ export function EstimateEditorPage() {
             </select>
           </div>
 
-          {false && (
           <div className="stack">
             <label className="label">Apply Misc Material</label>
             <select
@@ -790,7 +722,6 @@ export function EstimateEditorPage() {
               <option value="true">Yes</option>
             </select>
           </div>
-          )}
 
           <div className="stack">
             <label className="label">Apply Processing Fees</label>
@@ -812,9 +743,9 @@ export function EstimateEditorPage() {
               checked={Boolean((e as any).apply_discount) && allowDiscounts}
               onChange={(v) => {
                 if (!allowDiscounts) return;
+                // Keep discount_percent even when toggling off so the admin discount preload
+                // still applies to the displayed subtotal (extra margin if no discount is used).
                 const next: any = { ...(e as any), apply_discount: v };
-                // If turning off, clear discount_percent so pricing doesn't accidentally use it.
-                if (!v) next.discount_percent = null;
                 setE(next);
               }}
               label={!allowDiscounts ? 'Disabled by job type' : (e as any).apply_discount ? 'Yes' : 'No'}
@@ -1268,41 +1199,18 @@ export function EstimateEditorPage() {
                         inputMode="numeric"
                         value={qtyEdits[r.id] ?? String((r as any).quantity ?? 1)}
                         onChange={(ev) => {
-                          const v = ev.target.value;
-                          // allow blank while editing
-                          if (v.trim() === '' || /^\d+$/.test(v)) {
-                            setQtyEdits((prev) => ({ ...prev, [r.id]: v }));
-                            // Live-update in-memory estimate so totals update immediately,
-                            // but do not persist on each keystroke.
-                            if (e) {
-                              const qNum = v.trim() === '' ? null : Math.max(1, Math.floor(toNum(v, 1)));
-                              const nextItems = ((e as any).items ?? []).map((it: any) =>
-                                it.id === r.id
-                                  ? { ...it, quantity: qNum == null ? (it.quantity ?? 1) : qNum }
-                                  : it,
-                              );
-                              setE({ ...(e as any), items: nextItems } as any);
-                            }
-                          }
+                          // Allow blank while editing so backspace works naturally.
+                          setQtyEdits((prev) => ({ ...prev, [r.id]: toIntText(ev.target.value) }));
                         }}
                         onBlur={async () => {
                           const raw = qtyEdits[r.id];
-                          // If user left it blank, revert to existing quantity
-                          if (raw == null || raw.trim() === '') {
-                            setQtyEdits((prev) => {
-                              const n = { ...prev };
-                              delete n[r.id];
-                              return n;
-                            });
-                            return;
-                          }
-                          const q = Math.max(1, Math.floor(toNum(raw, 1)));
-                          await updateQuantity(r.id, q);
+                          const q = Math.max(1, Math.floor(toNum(raw === '' || raw == null ? (r as any).quantity ?? 1 : raw, 1)));
                           setQtyEdits((prev) => {
-                            const n = { ...prev };
-                            delete n[r.id];
-                            return n;
+                            const next = { ...prev };
+                            delete next[r.id];
+                            return next;
                           });
+                          await updateQuantity(r.id, q);
                         }}
                       />
                     )}
@@ -1339,17 +1247,18 @@ export function EstimateEditorPage() {
 
               <div className="pill">Misc Material: ${safeFixed((totals as any).misc_material)}</div>
 
-              {/* Subtotal must always show the pre-discount subtotal (discount buffer) when configured, even if discount is not applied. */}
-              <div className="pill">
-                Subtotal: ${safeFixed((totals as any).pre_discount_total ?? (totals as any).subtotal_before_processing)}
-              </div>
 
-              {toNum((totals as any).discount_amount, 0) > 0 ? (
+              {/* Subtotal is ALWAYS the pre-discount (inflated) subtotal when an admin discount exists.
+                  If Apply Discount is ON, we show Discount + After Discount separately. */}
+              <div className="pill">Subtotal: ${safeFixed((totals as any).pre_discount_total)}</div>
+
+              {Boolean((e as any).apply_discount) && toNum((totals as any).discount_amount, 0) > 0 ? (
                 <>
                   <div className="pill">Discount: −${safeFixed((totals as any).discount_amount)}</div>
                   <div className="pill">After Discount: ${safeFixed((totals as any).subtotal_before_processing)}</div>
                 </>
               ) : null}
+
               <div className="pill">Processing: ${safeFixed((totals as any).processing_fee)}</div>
               <div className="pill">Total: ${safeFixed((totals as any).total)}</div>
 
