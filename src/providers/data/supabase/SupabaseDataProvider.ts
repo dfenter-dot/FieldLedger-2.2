@@ -158,6 +158,7 @@ export class SupabaseDataProvider implements IDataProvider {
       custom_cost: (row as any).custom_cost ?? null,
       use_custom_cost: Boolean((row as any).use_custom_cost ?? false),
       taxable: Boolean(row.taxable ?? false),
+      labor_only: Boolean((row as any).labor_only ?? false),
       job_type_id: row.job_type_id ?? null,
       labor_minutes: Number(row.labor_minutes ?? 0),
 
@@ -186,6 +187,7 @@ export class SupabaseDataProvider implements IDataProvider {
       custom_cost: (material as any).custom_cost ?? null,
       use_custom_cost: Boolean((material as any).use_custom_cost ?? false),
       taxable: (material as any).taxable ?? false,
+      labor_only: Boolean((material as any).labor_only ?? false),
       job_type_id: (material as any).job_type_id ?? null,
       labor_minutes: (material as any).labor_minutes ?? 0,
 
@@ -253,11 +255,21 @@ export class SupabaseDataProvider implements IDataProvider {
     if (data) return data as any;
 
     const seeded = seedCompanySettings(companyId);
-    const { data: created, error: createErr } = await this.supabase
-      .from('company_settings')
-      .insert(seeded as any)
-      .select()
-      .single();
+    const insert = async (payload: any) =>
+      this.supabase.from('company_settings').insert(payload).select().single();
+
+    let created: any = null;
+    let createErr: any = null;
+
+    ({ data: created, error: createErr } = await insert(seeded as any));
+
+    // Tolerate partially-migrated schemas (e.g., missing show_tech_view_breakdown).
+    if (createErr && String(createErr?.message ?? '').includes('show_tech_view_breakdown')) {
+      const fallback = { ...(seeded as any) };
+      delete fallback.show_tech_view_breakdown;
+      ({ data: created, error: createErr } = await insert(fallback));
+    }
+
     if (createErr) throw createErr;
     return created as any;
   }
@@ -377,7 +389,17 @@ export class SupabaseDataProvider implements IDataProvider {
     if (!payload.id) delete payload.id;
 
     const { data, error } = await this.supabase.from('materials').upsert(payload).select().single();
-    if (error) throw error;
+    if (error) {
+      // Tolerate partially-migrated schemas where new columns may not exist yet.
+      if (String((error as any)?.message ?? '').includes('labor_only')) {
+        const fallback = { ...(payload as any) };
+        delete fallback.labor_only;
+        const { data: data2, error: error2 } = await this.supabase.from('materials').upsert(fallback).select().single();
+        if (error2) throw error2;
+        return this.mapMaterialFromDb(data2);
+      }
+      throw error;
+    }
 
     return this.mapMaterialFromDb(data);
   }
@@ -742,7 +764,8 @@ export class SupabaseDataProvider implements IDataProvider {
 
       apply_discount: Boolean((estimate as any).apply_discount ?? false),
       apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
-      apply_misc_material: Boolean((estimate as any).apply_misc_material ?? false),
+      // Deprecated: misc material is governed solely by Admin configuration.
+      // Do NOT send apply_misc_material to Supabase (column may not exist in migrated schemas).
 
       status: (estimate as any).status ?? 'draft',
       sent_at: (estimate as any).sent_at ?? null,
@@ -976,6 +999,7 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 }
+
 
 
 
