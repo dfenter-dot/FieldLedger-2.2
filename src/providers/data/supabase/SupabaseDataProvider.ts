@@ -228,7 +228,17 @@ export class SupabaseDataProvider implements IDataProvider {
     const payload: any = { ...jobType };
     if (!payload.company_id) payload.company_id = companyId;
 
-    const { data, error } = await this.supabase.from('job_types').upsert(payload).select().single();
+    let { data, error } = await this.supabase.from('job_types').upsert(payload).select().single();
+    if (error) {
+      // Tolerate partially-migrated schemas (e.g., missing hourly markup override columns).
+      const msg = String((error as any)?.message ?? error);
+      if (msg.includes('hourly_material_markup_mode') || msg.includes('hourly_material_markup_fixed_percent')) {
+        const fallback = { ...payload } as any;
+        delete fallback.hourly_material_markup_mode;
+        delete fallback.hourly_material_markup_fixed_percent;
+        ({ data, error } = await this.supabase.from('job_types').upsert(fallback).select().single());
+      }
+    }
     if (error) throw error;
     return data as any;
   }
@@ -277,7 +287,17 @@ export class SupabaseDataProvider implements IDataProvider {
   async saveCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings> {
     const companyId = await this.currentCompanyId();
     const payload = { ...settings, company_id: companyId, updated_at: new Date().toISOString() };
-    const { data, error } = await this.supabase.from('company_settings').upsert(payload as any).select().single();
+    let { data, error } = await this.supabase.from('company_settings').upsert(payload as any).select().single();
+    if (error) {
+      // Tolerate partially-migrated schemas (e.g., missing material markup strategy columns).
+      const msg = String((error as any)?.message ?? error);
+      if (msg.includes('material_markup_mode') || msg.includes('material_markup_fixed_percent')) {
+        const fallback = { ...(payload as any) };
+        delete fallback.material_markup_mode;
+        delete fallback.material_markup_fixed_percent;
+        ({ data, error } = await this.supabase.from('company_settings').upsert(fallback).select().single());
+      }
+    }
     if (error) throw error;
     return data as any;
   }
@@ -999,6 +1019,7 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 }
+
 
 
 
