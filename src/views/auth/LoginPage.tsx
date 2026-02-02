@@ -29,7 +29,13 @@ export function LoginPage() {
 
   return (
     <div style={{ maxWidth: 440, margin: '0 auto', padding: 24 }}>
-      <h1 style={{ marginBottom: 12 }}>FieldLedger</h1>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
+        <img
+          src="/branding/fieldledger-logo.png"
+          alt="FieldLedger"
+          style={{ height: 56, width: 'auto', display: 'block' }}
+        />
+      </div>
       <p style={{ marginTop: 0, opacity: 0.8, marginBottom: 16 }}>
         {mode === 'signin' ? 'Sign in to continue.' : 'Create your account to continue.'}
       </p>
@@ -71,4 +77,5 @@ export function LoginPage() {
     </div>
   );
 }
+
 
