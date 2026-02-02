@@ -480,7 +480,7 @@ export function EstimateEditorPage() {
           // tolerate legacy schemas
           const enabled = r.enabled ?? true;
           const scope = (r.scope ?? r.applies_to ?? 'both') as string;
-          const scopeOk = scope === 'both' || scope === 'estimate';
+          const scopeOk = scope !== 'assembly';
           return !!enabled && scopeOk;
         })
         .sort((a, b) => (Number(a.priority ?? 0) - Number(b.priority ?? 0)));
@@ -489,17 +489,30 @@ export function EstimateEditorPage() {
       // Rules evaluate "expected" values (not sell totals):
       // - expected labor: efficiency-adjusted in flat-rate mode
       // - expected material cost: cost + purchase tax, no markup; customer-supplied = 0
-            const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
-      const pricing = computeEstimatePricing({
-        estimate: e as any,
-        materialsById: materialCache,
-        assembliesById: assemblyCache,
-        jobTypesById,
-        companySettings,
-      } as any) as any;
+      const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
 
-      const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
-      const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
+      // Compute rule metrics using current estimate state + current effective job type.
+      // If pricing computation fails due to partially-migrated schemas or missing context,
+      // we still want rules like "line item count" to work reliably.
+      let expectedLaborMinutes = 0;
+      let expectedMaterialCost = 0;
+      try {
+        const pricing = computeEstimatePricing({
+          estimate: e as any,
+          materialsById: materialCache,
+          assembliesById: assemblyCache,
+          jobTypesById,
+          companySettings,
+        } as any) as any;
+
+        expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
+        expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
+      } catch (err) {
+        // Fall back to zeroes; rule conditions that don't rely on pricing (e.g., line_item_count)
+        // will still evaluate correctly.
+        expectedLaborMinutes = 0;
+        expectedMaterialCost = 0;
+      }
 
       // Quantity threshold uses "any single line item quantity ≥ X"
       const maxQty = Math.max(
@@ -520,10 +533,56 @@ export function EstimateEditorPage() {
       }).length;
 
       const match = rules.find((r) => {
-        // Tolerate legacy / partially migrated schemas.
-        const minLabor = r.min_expected_labor_minutes ?? (r as any).minExpectedLaborMinutes;
-        const minMat = r.min_material_cost ?? (r as any).minMaterialCost;
-        const minQty = r.min_quantity ?? (r as any).minQuantity;
+        // --- New rule schema (condition + operator + threshold) ---
+        const conditionType = String((r as any).condition_type ?? (r as any).conditionType ?? '').trim();
+        const operator = String((r as any).operator ?? (r as any).op ?? '>=').trim();
+        const thresholdRaw = (r as any).threshold_value ?? (r as any).thresholdValue;
+
+        const cmp = (op: string, left: number, right: number) => {
+          switch (op) {
+            case '>': return left > right;
+            case '>=': return left >= right;
+            case '<': return left < right;
+            case '<=': return left <= right;
+            case '==': return left === right;
+            case '!=': return left !== right;
+            default: return left >= right;
+          }
+        };
+
+        if (conditionType && thresholdRaw != null) {
+          const thr = Number(thresholdRaw);
+          let value: number | null = null;
+
+          switch (conditionType) {
+            case 'expected_labor_hours':
+              value = expectedLaborMinutes / 60;
+              break;
+            case 'expected_labor_minutes':
+              value = expectedLaborMinutes;
+              break;
+            case 'material_cost':
+              value = expectedMaterialCost;
+              break;
+            case 'line_item_count':
+              value = lineItemCount;
+              break;
+            case 'any_line_item_qty':
+              value = maxQty;
+              break;
+            default:
+              value = null;
+              break;
+          }
+
+          if (value == null || !Number.isFinite(thr)) return false;
+          return cmp(operator, value, thr);
+        }
+
+        // --- Legacy schema (min_* fields) ---
+        const minLabor = (r as any).min_expected_labor_minutes ?? (r as any).minExpectedLaborMinutes;
+        const minMat = (r as any).min_material_cost ?? (r as any).minMaterialCost;
+        const minQty = (r as any).min_quantity ?? (r as any).minQuantity;
         const minLineItems =
           (r as any).min_line_item_count ??
           (r as any).min_line_items ??
@@ -535,14 +594,13 @@ export function EstimateEditorPage() {
         if (minQty != null && maxQty < Number(minQty)) return false;
         if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
 
-        // If a rule has no thresholds at all, do not auto-match it (prevents accidental always-on).
         const hasAny =
           minLabor != null || minMat != null || minQty != null || minLineItems != null;
 
         return hasAny;
       });
 
-      const nextJobTypeId = match?.job_type_id ?? match?.set_job_type_id;
+      const nextJobTypeId = (match as any)?.target_job_type_id ?? (match as any)?.job_type_id ?? (match as any)?.set_job_type_id;
       if (nextJobTypeId) {
         const next = { ...(e as any), job_type_id: nextJobTypeId } as any;
         const saved = await data.upsertEstimate(next);
@@ -1186,5 +1244,4 @@ export function EstimateEditorPage() {
     </div>
   );
 }
-
 
