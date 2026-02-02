@@ -116,7 +116,6 @@ export function MaterialEditorPage() {
         // Persist to the actual DB-backed field.
         base_cost: Number.isFinite(base_cost) ? base_cost : Number((m as any).base_cost ?? 0),
         custom_cost: Number.isFinite(custom_cost as any) ? (custom_cost as any) : null,
-        use_custom_cost: Boolean(m.use_custom_cost),
         labor_minutes: Number.isFinite(labor_minutes) ? labor_minutes : 0,
       };
 
@@ -274,7 +273,6 @@ export function MaterialEditorPage() {
     </div>
   );
 }
-
 
 
 
