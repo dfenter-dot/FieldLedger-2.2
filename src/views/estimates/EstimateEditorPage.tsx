@@ -16,6 +16,22 @@ type ItemRow =
   | { id: string; type: 'assembly'; assemblyId: string; quantity: number }
   | { id: string; type: 'labor'; name: string; minutes: number };
 
+function toIntText(raw: string) {
+  const s = (raw ?? '').trim();
+  if (s === '') return '';
+  const n = Math.floor(Number(s));
+  if (!Number.isFinite(n)) return '';
+  return String(Math.max(0, n));
+}
+
+function toMoneyText(raw: string) {
+  const s = (raw ?? '').trim();
+  if (s === '') return '';
+  const n = Number(s);
+  if (!Number.isFinite(n)) return '';
+  return String(Math.max(0, n));
+}
+
 function toNum(raw: unknown, fallback = 0) {
   const n = typeof raw === 'number' ? raw : Number(raw);
   return Number.isFinite(n) ? n : fallback;
@@ -194,6 +210,23 @@ export function EstimateEditorPage() {
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
   const [assemblyCache, setAssemblyCache] = useState<Record<string, Assembly | null>>({});
 
+  // Estimate-created materials always go into a dedicated User Materials folder.
+  const ESTIMATE_CREATED_FOLDER_NAME = 'Estimate Created Materials';
+  const [estimateCreatedFolderId, setEstimateCreatedFolderId] = useState<string | null>(null);
+  const [showBlankMaterialCard, setShowBlankMaterialCard] = useState(false);
+  const [blankMat, setBlankMat] = useState({
+    name: '',
+    sku: '',
+    description: '',
+    baseCostText: '',
+    customCostText: '',
+    useCustomCost: false,
+    taxable: true,
+    jobTypeId: '' as string | null,
+    laborHoursText: '',
+    laborMinutesText: '',
+  });
+
   useEffect(() => {
     const missingMats = rows
       .filter((r) => r.type === 'material')
@@ -292,6 +325,90 @@ export function EstimateEditorPage() {
     if (!e) return;
     await save(e);
   }
+
+	async function ensureEstimateCreatedFolder(): Promise<string | null> {
+		if (estimateCreatedFolderId) return estimateCreatedFolderId;
+		try {
+			const folders = await data.listFolders({ kind: 'materials', libraryType: 'company', parentId: null });
+			const found = (folders ?? []).find((f: any) => String(f?.name ?? '').trim() === ESTIMATE_CREATED_FOLDER_NAME);
+			if (found?.id) {
+				setEstimateCreatedFolderId(found.id);
+				return found.id;
+			}
+			const created = await data.createFolder({ kind: 'materials', libraryType: 'company', parentId: null, name: ESTIMATE_CREATED_FOLDER_NAME });
+			if (created?.id) {
+				setEstimateCreatedFolderId(created.id);
+				return created.id;
+			}
+			return null;
+		} catch (err) {
+			console.error(err);
+			return null;
+		}
+	}
+
+	async function saveBlankMaterialLine() {
+		if (isLocked) return;
+		const name = String(blankMat.name ?? '').trim();
+		if (!name) {
+			setStatus('Material name is required.');
+			setTimeout(() => setStatus(''), 1500);
+			return;
+		}
+
+		try {
+			setStatus('Saving material…');
+			const folderId = await ensureEstimateCreatedFolder();
+			if (!folderId) {
+				setStatus('Unable to create/find the folder for estimate materials.');
+				setTimeout(() => setStatus(''), 2000);
+				return;
+			}
+
+			const base_cost = blankMat.baseCostText.trim() === '' ? 0 : Number(blankMat.baseCostText);
+			const custom_cost = blankMat.customCostText.trim() === '' ? null : Number(blankMat.customCostText);
+			const laborHours = blankMat.laborHoursText.trim() === '' ? 0 : Number(blankMat.laborHoursText);
+			const laborMinutes = blankMat.laborMinutesText.trim() === '' ? 0 : Number(blankMat.laborMinutesText);
+			const labor_minutes =
+				(Math.max(0, Math.floor(Number.isFinite(laborHours) ? laborHours : 0)) * 60) +
+				Math.max(0, Math.floor(Number.isFinite(laborMinutes) ? laborMinutes : 0));
+
+			const payload: any = {
+				id: crypto.randomUUID?.() ?? `mat_${Date.now()}`,
+				library_type: 'company',
+				folder_id: folderId,
+				name,
+				sku: blankMat.sku.trim() === '' ? null : blankMat.sku.trim(),
+				description: blankMat.description.trim() === '' ? null : blankMat.description.trim(),
+				base_cost: Number.isFinite(base_cost) ? Math.max(0, base_cost) : 0,
+				custom_cost: Number.isFinite(custom_cost as any) ? custom_cost : null,
+				use_custom_cost: Boolean(blankMat.useCustomCost),
+				taxable: Boolean(blankMat.taxable),
+				job_type_id: blankMat.jobTypeId ? blankMat.jobTypeId : null,
+				labor_minutes,
+			};
+
+			const savedMat: Material = await (data as any).upsertMaterial(payload);
+			setMaterialCache((prev) => ({ ...prev, [savedMat.id]: savedMat }));
+
+			if (e) {
+				const nextItem: any = {
+					id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+					type: 'material',
+					material_id: savedMat.id,
+					quantity: 1,
+				};
+				setE({ ...(e as any), items: [...(((e as any).items ?? []) as any[]), nextItem] } as any);
+			}
+
+			setShowBlankMaterialCard(false);
+			setStatus('Saved.');
+			setTimeout(() => setStatus(''), 1200);
+		} catch (err: any) {
+			console.error(err);
+			setStatus(String(err?.message ?? err));
+		}
+	}
 
   async function removeEstimate() {
     if (!e) return;
@@ -609,15 +726,26 @@ export function EstimateEditorPage() {
           </Button>
 
           <Button
-            variant="secondary"
-            disabled={isLocked}
-            onClick={() => {
-              // Create a user material while staying in picker mode, so it can be added immediately after save.
-              setMode({ type: 'add-materials-to-estimate', estimateId: (e as any).id });
-              nav('/materials/user/new');
-            }}
+	            variant="secondary"
+	            disabled={isLocked}
+	            onClick={() => {
+	              // Add a local material line by creating a User Material inside a dedicated folder.
+	              setShowBlankMaterialCard(true);
+	              setBlankMat({
+	                name: '',
+	                sku: '',
+	                description: '',
+	                baseCostText: '',
+	                customCostText: '',
+	                useCustomCost: false,
+	                taxable: true,
+	                jobTypeId: (selectedJobType as any)?.id ?? null,
+	                laborHoursText: '',
+	                laborMinutesText: '',
+	              });
+	            }}
           >
-            Create Material
+	            Add Blank Material Line
           </Button>
 
           <Button
@@ -664,6 +792,114 @@ export function EstimateEditorPage() {
 
         <div className="mt">
           <div className="muted small">Line Items</div>
+				{showBlankMaterialCard ? (
+					<Card
+						title="Add Blank Material Line"
+						right={
+							<div className="row">
+								<Button
+									onClick={() => {
+										setShowBlankMaterialCard(false);
+									}}
+								>
+									Cancel
+								</Button>
+								<Button variant="primary" onClick={saveBlankMaterialLine}>
+									Save
+								</Button>
+							</div>
+						}
+					>
+						<div className="grid2">
+							<div className="stack">
+								<label className="label">Name</label>
+								<Input value={blankMat.name} onChange={(ev) => setBlankMat((p) => ({ ...p, name: ev.target.value }))} />
+							</div>
+
+							<div className="stack">
+								<label className="label">SKU / Part #</label>
+								<Input value={blankMat.sku} onChange={(ev) => setBlankMat((p) => ({ ...p, sku: ev.target.value }))} />
+							</div>
+
+							<div className="stack" style={{ gridColumn: '1 / -1' }}>
+								<label className="label">Description</label>
+								<Input value={blankMat.description} onChange={(ev) => setBlankMat((p) => ({ ...p, description: ev.target.value }))} />
+							</div>
+
+							<div className="stack">
+								<label className="label">Base Cost</label>
+								<Input
+									value={blankMat.baseCostText}
+									inputMode="decimal"
+									onChange={(ev) => setBlankMat((p) => ({ ...p, baseCostText: ev.target.value }))}
+									onBlur={() => setBlankMat((p) => ({ ...p, baseCostText: toMoneyText(p.baseCostText) }))}
+								/>
+							</div>
+
+							<div className="stack">
+								<label className="label">Custom Cost</label>
+								<Input
+									value={blankMat.customCostText}
+									inputMode="decimal"
+									onChange={(ev) => setBlankMat((p) => ({ ...p, customCostText: ev.target.value }))}
+									onBlur={() => setBlankMat((p) => ({ ...p, customCostText: toMoneyText(p.customCostText) }))}
+								/>
+							</div>
+
+							<div className="stack">
+								<label className="label">Use Custom Cost</label>
+								<Toggle checked={blankMat.useCustomCost} onChange={(val) => setBlankMat((p) => ({ ...p, useCustomCost: Boolean(val) }))} />
+							</div>
+
+							<div className="stack">
+								<label className="label">Taxable</label>
+								<Toggle checked={blankMat.taxable} onChange={(val) => setBlankMat((p) => ({ ...p, taxable: Boolean(val) }))} />
+							</div>
+
+							<div className="stack">
+								<label className="label">Labor Time</label>
+								<div style={{ display: 'flex', gap: 8 }}>
+									<Input
+										style={{ width: 90 }}
+										placeholder="Hours"
+										inputMode="numeric"
+										value={blankMat.laborHoursText}
+										onChange={(ev) => setBlankMat((p) => ({ ...p, laborHoursText: ev.target.value }))}
+										onBlur={() => setBlankMat((p) => ({ ...p, laborHoursText: toIntText(p.laborHoursText) }))}
+									/>
+									<Input
+										style={{ width: 90 }}
+										placeholder="Minutes"
+										inputMode="numeric"
+										value={blankMat.laborMinutesText}
+										onChange={(ev) => setBlankMat((p) => ({ ...p, laborMinutesText: ev.target.value }))}
+										onBlur={() => setBlankMat((p) => ({ ...p, laborMinutesText: toIntText(p.laborMinutesText) }))}
+									/>
+								</div>
+							</div>
+
+							<div className="stack">
+								<label className="label">Job Type</label>
+								<select
+									value={blankMat.jobTypeId ?? ''}
+									onChange={(ev) => setBlankMat((p) => ({ ...p, jobTypeId: ev.target.value || null }))}
+								>
+									<option value="">(Default)</option>
+									{(jobTypes ?? [])
+										.filter((j: any) => Boolean(j.enabled ?? j.is_enabled ?? true))
+										.map((j: any) => (
+											<option key={j.id} value={j.id}>
+												{j.name}
+											</option>
+										))}
+								</select>
+								<div className="muted small">
+									This will be saved under User Materials → “{ESTIMATE_CREATED_FOLDER_NAME}”.
+								</div>
+							</div>
+						</div>
+					</Card>
+				) : null}
           <div className="list">
             {rows.map((r) => {
               const title =
