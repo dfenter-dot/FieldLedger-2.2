@@ -84,7 +84,7 @@ export function EstimateEditorPage() {
             customer_supplies_materials: false,
             apply_discount: false,
             apply_processing_fees: false,
-            // Misc material is governed solely by Admin configuration.
+            apply_misc_material: true,
             // discount_percent is optional and may be null/undefined; provider can persist it if supported.
             items: [],
             status: 'draft',
@@ -407,11 +407,20 @@ export function EstimateEditorPage() {
               className="input"
               disabled={isLocked}
               value={String(Boolean((e as any).customer_supplies_materials))}
-              onChange={(ev) => {
-                const v = ev.target.value === 'true';
-                // Persist both legacy/canonical names to tolerate partially-migrated schemas.
-                setE({ ...(e as any), customer_supplies_materials: v, customer_supplied_materials: v } as any);
-              }}
+              onChange={(ev) => setE({ ...(e as any), customer_supplies_materials: ev.target.value === 'true' } as any)}
+            >
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+
+          <div className="stack">
+            <label className="label">Apply Misc Material</label>
+            <select
+              className="input"
+              disabled={isLocked}
+              value={String(Boolean((e as any).apply_misc_material))}
+              onChange={(ev) => setE({ ...(e as any), apply_misc_material: ev.target.value === 'true' } as any)}
             >
               <option value="false">No</option>
               <option value="true">Yes</option>
@@ -715,9 +724,7 @@ export function EstimateEditorPage() {
               <div className="pill">Labor Price: ${safeFixed((totals as any).labor_price)}</div>
               <div className="pill">Labor Rate Used: ${safeFixed((totals as any).labor_rate_used_per_hour)}/hr</div>
 
-              {toNum((totals as any).misc_material, 0) > 0 ? (
-                <div className="pill">Misc Material: ${safeFixed((totals as any).misc_material)}</div>
-              ) : null}
+              <div className="pill">Misc Material: ${safeFixed((totals as any).misc_material)}</div>
 
 
               {toNum((totals as any).discount_amount, 0) > 0 ? (
