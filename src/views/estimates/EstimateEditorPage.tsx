@@ -507,18 +507,37 @@ export function EstimateEditorPage() {
         ...(((e as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0))
       );
 
+      // Line item count threshold uses total line items in the estimate.
+      // Must include materials, assemblies, and labor/one-off lines.
+      const lineItemCount = (((e as any).items ?? []) as any[]).filter((it) => {
+        if (!it) return false;
+        if (it.material_id || it.assembly_id) return true;
+        const t = String(it.item_type ?? it.type ?? '').toLowerCase();
+        if (t === 'labor') return true;
+        if (it.labor_minutes != null || it.laborMinutes != null || it.minutes != null) return true;
+        // Fallback: count named one-off lines
+        return Boolean(it.name);
+      }).length;
+
       const match = rules.find((r) => {
-        const minLabor = r.min_expected_labor_minutes ?? r.min_expected_labor_minutes;
-        const minMat = r.min_material_cost ?? r.min_material_cost;
-        const minQty = r.min_quantity ?? r.min_quantity;
+        // Tolerate legacy / partially migrated schemas.
+        const minLabor = r.min_expected_labor_minutes ?? (r as any).minExpectedLaborMinutes;
+        const minMat = r.min_material_cost ?? (r as any).minMaterialCost;
+        const minQty = r.min_quantity ?? (r as any).minQuantity;
+        const minLineItems =
+          (r as any).min_line_item_count ??
+          (r as any).min_line_items ??
+          (r as any).minItemCount ??
+          (r as any).min_items;
 
         if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
         if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
         if (minQty != null && maxQty < Number(minQty)) return false;
+        if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
 
         // If a rule has no thresholds at all, do not auto-match it (prevents accidental always-on).
         const hasAny =
-          minLabor != null || minMat != null || minQty != null;
+          minLabor != null || minMat != null || minQty != null || minLineItems != null;
 
         return hasAny;
       });
