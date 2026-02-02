@@ -352,22 +352,47 @@ export function computeAssemblyPricing(params: {
 
   const tech = computeTechCostBreakdown(companySettings as any, jobType as any);
 
-  const mats: PricingInput['lineItems']['materials'] = (Array.isArray(items) ? items : [])
-    .filter((it) => it?.type === 'material')
-    .map((it: any) => {
-      const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+const rawItems: any[] = Array.isArray(items) ? (items as any[]) : [];
+
+const mats: PricingInput['lineItems']['materials'] = rawItems
+  .filter((it) => {
+    const t = String(it?.type ?? it?.item_type ?? '');
+    return t === 'material' || t === 'blank_material';
+  })
+  .map((it: any) => {
+    const t = String(it?.type ?? it?.item_type ?? '');
+    if (t === 'blank_material') {
+      // User-entered line that behaves like a material for pricing.
+      const unitCost = toNum(it?.unit_cost ?? it?.cost ?? 0, 0);
+      const minutes = toNum(it?.labor_minutes ?? it?.laborMinutes ?? 0, 0);
       return {
-        cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost ?? 0, 0),
-        custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
-        taxable: Boolean(mat?.taxable ?? false),
-        labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
+        cost: unitCost,
+        taxable: Boolean(it?.taxable ?? false),
+        labor_minutes: minutes,
         quantity: Math.max(0, toNum(it?.quantity, 1)),
       };
-    });
+    }
 
-  const laborLines: PricingInput['lineItems']['labor_lines'] = [
-    { minutes: toNum(assembly?.labor_minutes ?? 0, 0) },
-  ].filter((x) => x.minutes > 0);
+    const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+    return {
+      cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost ?? 0, 0),
+      custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
+      taxable: Boolean(mat?.taxable ?? false),
+      labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
+      quantity: Math.max(0, toNum(it?.quantity, 1)),
+    };
+  });
+
+const laborLines: PricingInput['lineItems']['labor_lines'] = [
+  { minutes: toNum(assembly?.labor_minutes ?? 0, 0) },
+  ...rawItems
+    .filter((it) => String(it?.type ?? it?.item_type ?? '') === 'labor')
+    .map((it) => ({
+      minutes:
+        Math.max(0, toNum(it?.labor_minutes ?? it?.minutes ?? 0, 0)) *
+        Math.max(0, toNum(it?.quantity, 1)),
+    })),
+].filter((x) => x.minutes > 0);
 
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
@@ -458,20 +483,7 @@ export function computeEstimatePricing(params: {
       minutes: toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0),
     }));
 
-  // Discount percent source of truth:
-  // - Company settings define the admin "default discount".
-  // - Estimates may store a discount_percent (often prefilled from admin default).
-  // For pricing preload behavior, prefer the estimate's stored percent when present;
-  // otherwise fall back to company settings.
-  const companyBase = toEngineCompany(companySettings);
-  const estDiscountPct = toNum(
-    (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent,
-    NaN,
-  );
-  const company = {
-    ...companyBase,
-    discount_percent: Number.isFinite(estDiscountPct) ? estDiscountPct : companyBase.discount_percent,
-  };
+  const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
