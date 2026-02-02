@@ -473,14 +473,59 @@ export function EstimateEditorPage() {
     if (!e || isLocked || !(e as any).use_admin_rules) return;
     try {
       setStatus('Applying rules...');
-      const rules = await data.listAdminRules();
-      const match = (rules as any[])
-        .filter((r) => r.enabled && r.applies_to === 'estimate' && (r.match_text ?? '').trim().length > 0)
-        .sort((a, b) => a.priority - b.priority)
-        .find((r) => String((e as any).name ?? '').toLowerCase().includes(String(r.match_text).toLowerCase()));
 
-      if (match?.set_job_type_id) {
-        const next = { ...(e as any), job_type_id: match.set_job_type_id } as any;
+      const rulesRaw = (await data.listAdminRules()) as any[];
+      const rules = (rulesRaw ?? [])
+        .filter((r) => {
+          // tolerate legacy schemas
+          const enabled = r.enabled ?? true;
+          const scope = (r.scope ?? r.applies_to ?? 'both') as string;
+          const scopeOk = scope === 'both' || scope === 'estimate';
+          return !!enabled && scopeOk;
+        })
+        .sort((a, b) => (Number(a.priority ?? 0) - Number(b.priority ?? 0)));
+
+      // Compute rule metrics using current estimate state + current effective job type.
+      // Rules evaluate "expected" values (not sell totals):
+      // - expected labor: efficiency-adjusted in flat-rate mode
+      // - expected material cost: cost + purchase tax, no markup; customer-supplied = 0
+            const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+      const pricing = computeEstimatePricing({
+        estimate: e as any,
+        materialsById: materialCache,
+        assembliesById: assemblyCache,
+        jobTypesById,
+        companySettings,
+      } as any) as any;
+
+      const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
+      const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
+
+      // Quantity threshold uses "any single line item quantity ≥ X"
+      const maxQty = Math.max(
+        0,
+        ...(((e as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0))
+      );
+
+      const match = rules.find((r) => {
+        const minLabor = r.min_expected_labor_minutes ?? r.min_expected_labor_minutes;
+        const minMat = r.min_material_cost ?? r.min_material_cost;
+        const minQty = r.min_quantity ?? r.min_quantity;
+
+        if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
+        if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
+        if (minQty != null && maxQty < Number(minQty)) return false;
+
+        // If a rule has no thresholds at all, do not auto-match it (prevents accidental always-on).
+        const hasAny =
+          minLabor != null || minMat != null || minQty != null;
+
+        return hasAny;
+      });
+
+      const nextJobTypeId = match?.job_type_id ?? match?.set_job_type_id;
+      if (nextJobTypeId) {
+        const next = { ...(e as any), job_type_id: nextJobTypeId } as any;
         const saved = await data.upsertEstimate(next);
         setE(saved as any);
         setStatus('Rules applied.');
