@@ -87,6 +87,15 @@ export function computeTechCostBreakdown(company: CompanySettings, jobType: JobT
 
   const loadedLaborRate = overheadPerHour + wageCostPerBillableHour;
 
+  // Tech View is the authoritative pricing source. Provide the *sell* labor rate here so the
+  // pricing engine never applies gross margin twice.
+  const grossMargin = clampPct(grossMarginTargetPercent) / 100;
+  const loadedLaborSellRate = (() => {
+    const denom = 1 - grossMargin;
+    if (denom <= 0) return 0;
+    return loadedLaborRate / denom;
+  })();
+
   // Net profit rules (Admin card behavior)
   const npMode = (company as any)?.net_profit_goal_mode ?? 'percent';
   const npPct = Math.max(0, toNum((company as any)?.net_profit_goal_percent_of_revenue, 0)) / 100;
@@ -97,10 +106,12 @@ export function computeTechCostBreakdown(company: CompanySettings, jobType: JobT
   const cogsLaborPerBillableHour = wageCostPerBillableHour;
   const cogsPerBillableHour = cogsLaborPerBillableHour;
 
-  const grossMargin = clampPct(grossMarginTargetPercent) / 100;
+  // Keep required revenue metrics for Admin/Tech-card display, but the pricing engine must not
+  // depend on these legacy values.
+  const grossMarginForMetrics = clampPct(grossMarginTargetPercent) / 100;
 
   const revenuePerBillableHourForGrossMargin = (() => {
-    const denom = 1 - grossMargin;
+    const denom = 1 - grossMarginForMetrics;
     if (denom <= 0) return 0;
     return cogsPerBillableHour / denom;
   })();
@@ -133,6 +144,7 @@ export function computeTechCostBreakdown(company: CompanySettings, jobType: JobT
     overheadPerHour,
     wageCostPerBillableHour,
     loadedLaborRate,
+    loadedLaborSellRate,
 
     cogsPerBillableHour,
     revenuePerBillableHourForGrossMargin,
@@ -140,4 +152,5 @@ export function computeTechCostBreakdown(company: CompanySettings, jobType: JobT
     requiredRevenuePerBillableHour,
   };
 }
+
 
