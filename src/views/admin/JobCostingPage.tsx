@@ -6,7 +6,7 @@ import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Estimate, Material } from '../../providers/data/types';
-import { computeEstimatePricing, computeEstimateTotalsNormalized, getAverageTechnicianWage } from '../../providers/data/pricing';
+import { computeEstimatePricing, getAverageTechnicianWage } from '../../providers/data/pricing';
 import { useSelection } from '../../providers/selection/SelectionContext';
 
 function n(v: any, fallback = 0) {
@@ -99,25 +99,30 @@ export function JobCostingPage() {
 
   const expected = useMemo(() => {
     if (!estimate || !companySettings) return null;
-    const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
-    const totals = computeEstimateTotalsNormalized({
-  estimate,
-  materialsById: materialCache,
-  assembliesById: assemblyCache,
-  jobTypesById,
-  companySettings,
-});
-const wage = getAverageTechnicianWage(companySettings);
-const laborCost = wage * (totals.labor_minutes_expected / 60);
-return {
-  total: totals.total,
-  labor_minutes_expected: totals.labor_minutes_expected,
-  material_cost: totals.material_cost,
-  labor_cost: laborCost,
-  gross_margin_expected_percent: totals.gross_margin_expected_percent,
-};
-  }, [assemblyCache, companySettings, estimate, jobTypes, materialCache]);
 
+    const jobTypesById = Object.fromEntries(jobTypes.map((j) => [j.id, j]));
+
+    // IMPORTANT: computeEstimatePricing is the unified pricing engine (object params).
+    // computeEstimateTotalsNormalized is a legacy helper with a different signature.
+    const totals = computeEstimatePricing({
+      estimate,
+      materialsById: materialCache,
+      assembliesById: assemblyCache,
+      jobTypesById,
+      companySettings,
+    });
+
+    const wage = getAverageTechnicianWage(companySettings);
+    const laborCost = wage * (totals.labor_minutes_expected / 60);
+
+    return {
+      total: totals.total,
+      labor_minutes_expected: totals.labor_minutes_expected,
+      material_cost: totals.material_cost,
+      labor_cost: laborCost,
+      gross_margin_expected_percent: totals.gross_margin_expected_percent,
+    };
+  }, [assemblyCache, companySettings, estimate, jobTypes, materialCache]);
   const actual = useMemo(() => {
     const revenue = n(actualRevenue, NaN);
     const matCost = n(actualMaterialCost, NaN);
@@ -240,6 +245,7 @@ return {
     </div>
   );
 }
+
 
 
 
