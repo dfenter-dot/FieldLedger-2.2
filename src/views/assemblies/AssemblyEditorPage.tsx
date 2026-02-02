@@ -55,6 +55,22 @@ function fmtLaborHM(totalMinutes: number) {
   return `${h}h ${m}m`;
 }
 
+function toIntText(raw: string) {
+  const s = (raw ?? '').trim();
+  if (s === '') return '';
+  const n = Math.floor(Number(s));
+  if (!Number.isFinite(n)) return '';
+  return String(Math.max(0, n));
+}
+
+function toMoneyText(raw: string) {
+  const s = (raw ?? '').trim();
+  if (s === '') return '';
+  const n = Number(s);
+  if (!Number.isFinite(n)) return '';
+  return String(Math.max(0, n));
+}
+
 function splitHM(totalMinutes: number) {
   const mins = Math.max(0, Math.floor(Number(totalMinutes || 0)));
   return { h: Math.floor(mins / 60), m: mins % 60 };
@@ -141,6 +157,124 @@ export function AssemblyEditorPage() {
   }, [a?.items]);
 
   const [materialCache, setMaterialCache] = useState<Record<string, Material | null>>({});
+  // Assembly-created materials always go into a dedicated User Materials folder.
+  const ASSEMBLY_CREATED_FOLDER_NAME = 'Assembly Created Materials';
+  const [assemblyCreatedFolderId, setAssemblyCreatedFolderId] = useState<string | null>(null);
+  const [showBlankMaterialCard, setShowBlankMaterialCard] = useState(false);
+  const [blankMat, setBlankMat] = useState({
+    name: '',
+    sku: '',
+    description: '',
+    baseCostText: '',
+    customCostText: '',
+    useCustomCost: false,
+    taxable: true,
+    jobTypeId: '' as string | null,
+    laborHoursText: '',
+    laborMinutesText: '',
+  });
+
+  async function ensureAssemblyCreatedFolder(): Promise<string | null> {
+    if (assemblyCreatedFolderId) return assemblyCreatedFolderId;
+    try {
+      const folders = await dataRef.current.listFolders({ kind: 'materials', libraryType: 'company', parentId: null });
+      const existing = (folders ?? []).find((f: any) => String(f.name ?? '').trim() === ASSEMBLY_CREATED_FOLDER_NAME);
+      if (existing?.id) {
+        setAssemblyCreatedFolderId(existing.id);
+        return existing.id;
+      }
+      const created = await dataRef.current.createFolder({
+        kind: 'materials',
+        libraryType: 'company',
+        parentId: null,
+        name: ASSEMBLY_CREATED_FOLDER_NAME,
+      });
+      if (created?.id) {
+        setAssemblyCreatedFolderId(created.id);
+        return created.id;
+      }
+      return null;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  }
+
+  async function saveBlankMaterialLine() {
+    if (!a) return;
+    const name = String(blankMat.name ?? '').trim();
+    if (!name) {
+      setStatus('Material name is required.');
+      setTimeout(() => setStatus(''), 1500);
+      return;
+    }
+
+    try {
+      setStatus('Saving material…');
+      const folderId = await ensureAssemblyCreatedFolder();
+      if (!folderId) {
+        setStatus('Unable to create/find the folder for assembly materials.');
+        setTimeout(() => setStatus(''), 2000);
+        return;
+      }
+
+      const base_cost = blankMat.baseCostText.trim() === '' ? 0 : Number(blankMat.baseCostText);
+      const custom_cost = blankMat.customCostText.trim() === '' ? null : Number(blankMat.customCostText);
+      const laborHours = blankMat.laborHoursText.trim() === '' ? 0 : Number(blankMat.laborHoursText);
+      const laborMinutes = blankMat.laborMinutesText.trim() === '' ? 0 : Number(blankMat.laborMinutesText);
+      const labor_minutes =
+        Math.max(0, Math.floor(Number.isFinite(laborHours) ? laborHours : 0)) * 60 +
+        Math.max(0, Math.floor(Number.isFinite(laborMinutes) ? laborMinutes : 0));
+
+      const payload: any = {
+        id: crypto.randomUUID?.() ?? `mat_${Date.now()}`,
+        library_type: 'company',
+        folder_id: folderId,
+        name,
+        sku: blankMat.sku.trim() === '' ? null : blankMat.sku.trim(),
+        description: blankMat.description.trim() === '' ? null : blankMat.description.trim(),
+        base_cost: Number.isFinite(base_cost) ? Math.max(0, base_cost) : 0,
+        custom_cost: Number.isFinite(custom_cost as any) ? custom_cost : null,
+        use_custom_cost: Boolean(blankMat.useCustomCost),
+        taxable: Boolean(blankMat.taxable),
+        job_type_id: blankMat.jobTypeId ? blankMat.jobTypeId : null,
+        labor_minutes,
+      };
+
+      const savedMat: Material = await (dataRef.current as any).upsertMaterial(payload);
+      setMaterialCache((prev) => ({ ...prev, [savedMat.id]: savedMat }));
+
+      const nextItems = [...((a.items ?? []) as any[])];
+      nextItems.push({
+        id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+        type: 'material',
+        material_id: savedMat.id,
+        quantity: 1,
+      });
+
+      setA({ ...a, items: nextItems } as any);
+
+      setShowBlankMaterialCard(false);
+      setBlankMat({
+        name: '',
+        sku: '',
+        description: '',
+        baseCostText: '',
+        customCostText: '',
+        useCustomCost: false,
+        taxable: true,
+        jobTypeId: '' as string | null,
+        laborHoursText: '',
+        laborMinutesText: '',
+      });
+      setStatus('Saved.');
+      setTimeout(() => setStatus(''), 1500);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
 
   useEffect(() => {
     // Fetch missing materials for display.
@@ -451,19 +585,11 @@ export function AssemblyEditorPage() {
           </Button>
 
           <Button
-            onClick={() => {
+            onClick={async () => {
               if (!a) return;
-              const items = [...((a.items ?? []) as any[])];
-              items.push({
-                id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
-                type: 'blank_material',
-                name: 'New Material',
-                quantity: 1,
-                unit_cost: 0,
-                taxable: true,
-                labor_minutes: 0,
-              });
-              setA({ ...a, items } as any);
+              // Ensure the destination folder exists, then open the card UI.
+              await ensureAssemblyCreatedFolder();
+              setShowBlankMaterialCard(true);
             }}
           >
             Add Blank Material Line
@@ -487,7 +613,112 @@ export function AssemblyEditorPage() {
           </Button>
         </div>
 
-        <div className="mt">
+        
+        {showBlankMaterialCard ? (
+          <Card
+            title="Add Blank Material Line"
+            right={
+              <div className="row">
+                <Button
+                  onClick={() => {
+                    setShowBlankMaterialCard(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={saveBlankMaterialLine}>
+                  Save
+                </Button>
+              </div>
+            }
+          >
+            <div className="grid2">
+              <div className="stack">
+                <label className="label">Name</label>
+                <Input value={blankMat.name} onChange={(ev) => setBlankMat((p) => ({ ...p, name: ev.target.value }))} />
+              </div>
+
+              <div className="stack">
+                <label className="label">SKU / Part #</label>
+                <Input value={blankMat.sku} onChange={(ev) => setBlankMat((p) => ({ ...p, sku: ev.target.value }))} />
+              </div>
+
+              <div className="stack" style={{ gridColumn: '1 / -1' }}>
+                <label className="label">Description</label>
+                <Input value={blankMat.description} onChange={(ev) => setBlankMat((p) => ({ ...p, description: ev.target.value }))} />
+              </div>
+
+              <div className="stack">
+                <label className="label">Base Cost</label>
+                <Input
+                  value={blankMat.baseCostText}
+                  inputMode="decimal"
+                  onChange={(ev) => setBlankMat((p) => ({ ...p, baseCostText: ev.target.value }))}
+                  onBlur={() => setBlankMat((p) => ({ ...p, baseCostText: toMoneyText(p.baseCostText) }))}
+                />
+              </div>
+
+              <div className="stack">
+                <label className="label">Custom Cost</label>
+                <Input
+                  value={blankMat.customCostText}
+                  inputMode="decimal"
+                  onChange={(ev) => setBlankMat((p) => ({ ...p, customCostText: ev.target.value }))}
+                  onBlur={() => setBlankMat((p) => ({ ...p, customCostText: toMoneyText(p.customCostText) }))}
+                />
+              </div>
+
+              <div className="stack">
+                <label className="label">Use Custom Cost</label>
+                <Toggle checked={blankMat.useCustomCost} onChange={(val) => setBlankMat((p) => ({ ...p, useCustomCost: Boolean(val) }))} />
+              </div>
+
+              <div className="stack">
+                <label className="label">Taxable</label>
+                <Toggle checked={blankMat.taxable} onChange={(val) => setBlankMat((p) => ({ ...p, taxable: Boolean(val) }))} />
+              </div>
+
+              <div className="stack">
+                <label className="label">Labor Time</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Input
+                    style={{ width: 90 }}
+                    placeholder="Hours"
+                    inputMode="numeric"
+                    value={blankMat.laborHoursText}
+                    onChange={(ev) => setBlankMat((p) => ({ ...p, laborHoursText: ev.target.value }))}
+                    onBlur={() => setBlankMat((p) => ({ ...p, laborHoursText: toIntText(p.laborHoursText) }))}
+                  />
+                  <Input
+                    style={{ width: 90 }}
+                    placeholder="Minutes"
+                    inputMode="numeric"
+                    value={blankMat.laborMinutesText}
+                    onChange={(ev) => setBlankMat((p) => ({ ...p, laborMinutesText: ev.target.value }))}
+                    onBlur={() => setBlankMat((p) => ({ ...p, laborMinutesText: toIntText(p.laborMinutesText) }))}
+                  />
+                </div>
+              </div>
+
+              <div className="stack">
+                <label className="label">Job Type</label>
+                <select value={blankMat.jobTypeId ?? ''} onChange={(ev) => setBlankMat((p) => ({ ...p, jobTypeId: ev.target.value || null }))}>
+                  <option value="">(Default)</option>
+                  {(jobTypes ?? [])
+                    .filter((j: any) => Boolean(j.enabled ?? j.is_enabled ?? true))
+                    .map((j: any) => (
+                      <option key={j.id} value={j.id}>
+                        {j.name}
+                      </option>
+                    ))}
+                </select>
+                <div className="muted small">This will be saved under User Materials → “{ASSEMBLY_CREATED_FOLDER_NAME}”.</div>
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
+<div className="mt">
           <div className="muted small">Materials</div>
           <div className="list">
             {materialRows.map((r) => {
@@ -635,6 +866,15 @@ export function AssemblyEditorPage() {
                           </div>
                         );
                       })()}
+                    <div className="stack" style={{ minWidth: 240, flex: 1 }}>
+                      <div className="muted small">Description</div>
+                      <Input
+                        placeholder="Description"
+                        value={it.description ?? ''}
+                        onChange={(e) => updateItem(it.id, { description: e.target.value })}
+                      />
+                    </div>
+
                     </div>
 
                     <Button variant="danger" onClick={() => removeItem(it.id)}>
