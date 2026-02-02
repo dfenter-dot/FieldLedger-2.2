@@ -77,3 +77,6 @@
   border-color: rgba(212,175,55,0.35);
   background: rgba(17,24,39,0.45);
 }
+
+.brandIcon{ width: 28px; height: 28px; display:block; }
+.brandLogo{ height: 18px; width:auto; display:block; }
