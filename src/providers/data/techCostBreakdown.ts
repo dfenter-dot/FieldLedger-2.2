@@ -48,7 +48,11 @@ function avgWage(wages: any[]): number {
  * Company Setup (Sheet 1) remains unchanged.
  */
 export function computeTechCostBreakdown(company: CompanySettings, jobType: JobType | null) {
-  const efficiencyPercent = clampPct(toNum(jobType?.efficiency_percent ?? 100, 100));
+  const billingMode = (jobType as any)?.billing_mode ?? 'flat';
+  // Efficiency is only meaningful for flat-rate job types.
+  const efficiencyPercent = clampPct(
+    toNum(billingMode === 'flat' ? (jobType as any)?.efficiency_percent ?? 100 : 100, 100)
+  );
   const grossMarginTargetPercent = clampPct(toNum(jobType?.profit_margin_percent ?? 70, 70));
 
   const overheadMonthly = (() => {
@@ -75,48 +79,32 @@ export function computeTechCostBreakdown(company: CompanySettings, jobType: JobT
   const hoursPerTechYear = workdaysPerYear * hoursPerDay;
   const totalHoursYear = hoursPerTechYear * technicians;
 
-  // Efficiency affects *expected time* (minutes) in estimates/assemblies, not the loaded labor rate.
-  // If we apply efficiency here (by dividing overhead by effective hours), and also inflate minutes
-  // elsewhere, we double-apply efficiency and pricing explodes.
+  // Apply efficiency (same as Admin card)
   const effectiveHoursYear = (totalHoursYear * Math.max(0, efficiencyPercent)) / 100;
 
-  // Loaded labor rate is based on paid hours capacity (totalHoursYear), not efficiency-adjusted hours.
-  const overheadPerHour = totalHoursYear > 0 ? overheadAnnual / totalHoursYear : 0;
+  const overheadPerHour = effectiveHoursYear > 0 ? overheadAnnual / effectiveHoursYear : 0;
 
   const wages = (company as any)?.technician_wages ?? [];
   const avgTechWage = avgWage(wages);
 
-  // Wage cost per labor hour is simply the average hourly wage.
-  const wageCostPerBillableHour = avgTechWage;
+  const wageCostPerBillableHour = effectiveHoursYear > 0 ? (avgTechWage * totalHoursYear) / effectiveHoursYear : 0;
 
   const loadedLaborRate = overheadPerHour + wageCostPerBillableHour;
-
-  // Tech View is the authoritative pricing source. Provide the *sell* labor rate here so the
-  // pricing engine never applies gross margin twice.
-  const grossMargin = clampPct(grossMarginTargetPercent) / 100;
-  const loadedLaborSellRate = (() => {
-    const denom = 1 - grossMargin;
-    if (denom <= 0) return 0;
-    return loadedLaborRate / denom;
-  })();
 
   // Net profit rules (Admin card behavior)
   const npMode = (company as any)?.net_profit_goal_mode ?? 'percent';
   const npPct = Math.max(0, toNum((company as any)?.net_profit_goal_percent_of_revenue, 0)) / 100;
   const npDollar = Math.max(0, toNum((company as any)?.net_profit_goal_amount_monthly, 0));
 
-  // Billable hours capacity (for fixed net-profit allocation) is based on paid hours.
-  const billableHoursPerMonth = totalHoursYear / 12;
+  const billableHoursPerMonth = effectiveHoursYear / 12;
 
   const cogsLaborPerBillableHour = wageCostPerBillableHour;
   const cogsPerBillableHour = cogsLaborPerBillableHour;
 
-  // Keep required revenue metrics for Admin/Tech-card display, but the pricing engine must not
-  // depend on these legacy values.
-  const grossMarginForMetrics = clampPct(grossMarginTargetPercent) / 100;
+  const grossMargin = clampPct(grossMarginTargetPercent) / 100;
 
   const revenuePerBillableHourForGrossMargin = (() => {
-    const denom = 1 - grossMarginForMetrics;
+    const denom = 1 - grossMargin;
     if (denom <= 0) return 0;
     return cogsPerBillableHour / denom;
   })();
@@ -149,7 +137,6 @@ export function computeTechCostBreakdown(company: CompanySettings, jobType: JobT
     overheadPerHour,
     wageCostPerBillableHour,
     loadedLaborRate,
-    loadedLaborSellRate,
 
     cogsPerBillableHour,
     revenuePerBillableHourForGrossMargin,
