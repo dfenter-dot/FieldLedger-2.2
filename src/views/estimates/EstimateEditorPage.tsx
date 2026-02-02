@@ -458,9 +458,7 @@ export function EstimateEditorPage() {
     await save({ ...(e as any), items: nextItems } as any);
   }
 
-  if (!e) return <div className="muted">Loading…</div>;
-
-  const isLocked = String((e as any).status ?? 'draft') === 'approved';
+  const isLocked = useMemo(() => String((e as any)?.status ?? 'draft') === 'approved', [e]);
 
   const jobTypeOptions = (jobTypes ?? []).filter((j: any) => j.enabled !== false);
   const defaultJobTypeId = (jobTypes ?? []).find((j: any) => j.is_default)?.id ?? null;
@@ -512,6 +510,26 @@ export function EstimateEditorPage() {
       );
 
       const match = rules.find((r: any) => {
+        // Fast-path: current canonical rule fields (min_* thresholds + job_type_id)
+        const minLabor = Number((r as any).min_expected_labor_minutes ?? (r as any).minExpectedLaborMinutes);
+        const minMat = Number((r as any).min_material_cost ?? (r as any).minMaterialCost);
+        const minQty = Number((r as any).min_quantity ?? (r as any).minQuantity);
+
+        const hasAny =
+          (Number.isFinite(minLabor) && minLabor > 0) ||
+          (Number.isFinite(minMat) && minMat > 0) ||
+          (Number.isFinite(minQty) && minQty > 0);
+
+        if (hasAny) {
+          if (Number.isFinite(minLabor) && minLabor > 0 && expectedLaborMinutes < minLabor) return false;
+          if (Number.isFinite(minMat) && minMat > 0 && expectedMaterialCost < minMat) return false;
+
+          // NOTE: In the current app, min_quantity represents "line item count" threshold.
+          if (Number.isFinite(minQty) && minQty > 0 && lineItemCount < minQty) return false;
+
+          return true;
+        }
+
         // Support multiple rule schemas (legacy + current) to tolerate partially migrated DBs.
 
         // ---------- Schema A: condition_type/operator/threshold_value ----------
@@ -642,6 +660,8 @@ export function EstimateEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [e, isLocked, companySettings, jobTypes]);
 
+  if (!e) return <div className="muted">Loading…</div>;
+
   return (
     <div className="stack">
       <Card
@@ -713,6 +733,7 @@ export function EstimateEditorPage() {
             </select>
           </div>
 
+          {false && (
           <div className="stack">
             <label className="label">Apply Misc Material</label>
             <select
@@ -725,6 +746,7 @@ export function EstimateEditorPage() {
               <option value="true">Yes</option>
             </select>
           </div>
+          )}
 
           <div className="stack">
             <label className="label">Apply Processing Fees</label>
