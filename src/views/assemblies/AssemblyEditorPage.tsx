@@ -95,7 +95,6 @@ export function AssemblyEditorPage() {
   const [a, setA] = useState<Assembly | null>(null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
-  const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
@@ -120,7 +119,6 @@ export function AssemblyEditorPage() {
   async function refreshAssembly(id: string) {
     const asm = await dataRef.current.getAssembly(id);
     setA(asm);
-    setLaborMinutesText(asm?.labor_minutes == null ? '' : String(asm.labor_minutes));
   }
 
   useEffect(() => {
@@ -360,11 +358,7 @@ export function AssemblyEditorPage() {
 
   async function saveAll() {
     if (!a) return;
-    const lm = laborMinutesText.trim() === '' ? 0 : Number(laborMinutesText);
-    await save({
-      ...a,
-      labor_minutes: Number.isFinite(lm) ? lm : 0,
-    } as any);
+    await save({ ...a } as any);
   }
 
   async function duplicate() {
@@ -416,66 +410,159 @@ export function AssemblyEditorPage() {
   }
 
   if (!a) return <div className="muted">Loading…</div>;
-  async function applyAdminRules() {
-    if (!a || !a.use_admin_rules) return;
-    try {
-      setStatus('Applying rules...');
+  async function applyAdminRules(nextAssembly?: Assembly | null) {
+  const asm = (nextAssembly ?? a) as any;
+  if (!asm || !asm.use_admin_rules) return;
 
-      const rulesRaw = (await data.listAdminRules()) as any[];
-      const rules = (rulesRaw ?? [])
-        .filter((r) => {
-          const enabled = r.enabled ?? true;
-          const scope = (r.scope ?? r.applies_to ?? 'both') as string;
-          const scopeOk = scope === 'both' || scope === 'assembly';
-          return !!enabled && scopeOk;
-        })
-        .sort((x, y) => Number(x.priority ?? 0) - Number(y.priority ?? 0));
+  try {
+    const rulesRaw = (await dataRef.current.listAdminRules()) as any[];
+    const rules = (rulesRaw ?? [])
+      .filter((r) => {
+        const enabled = r.enabled ?? true;
+        const scope = (r.scope ?? r.applies_to ?? 'both') as string;
+        const scopeOk = scope === 'both' || scope === 'assembly';
+        return !!enabled && scopeOk;
+      })
+      .sort((x, y) => Number(x.priority ?? 0) - Number(y.priority ?? 0));
 
-            const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
-      const pricing = computeAssemblyPricing({
-        assembly: a as any,
-        materialsById: materialCache,
-        jobTypesById,
-        companySettings,
-      } as any) as any;
+    if (rules.length === 0) return;
 
-      const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
-      const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
+    const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+    const pricing = computeAssemblyPricing({
+      assembly: asm,
+      items: (asm.items ?? []) as any[],
+      materialsById: materialCache,
+      jobTypesById,
+      companySettings,
+    } as any) as any;
 
-      const maxQty = Math.max(
+    const expectedLaborMinutes = Number(
+      pricing?.expected_labor_minutes ??
+        pricing?.expectedLaborMinutes ??
+        pricing?.labor_minutes_total ??
+        pricing?.laborMinutesTotal ??
         0,
-        ...(((a as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0))
-      );
+    );
+    const expectedMaterialCost = Number(
+      pricing?.material_cost ??
+        pricing?.materialCost ??
+        pricing?.material_cost_total ??
+        pricing?.materialCostTotal ??
+        0,
+    );
 
-      const match = rules.find((r) => {
-        const minLabor = r.min_expected_labor_minutes ?? r.min_expected_labor_minutes;
-        const minMat = r.min_material_cost ?? r.min_material_cost;
-        const minQty = r.min_quantity ?? r.min_quantity;
+    const relevantItems = (((asm.items ?? []) as any[]) ?? []).filter((it) =>
+      ['material', 'blank_material', 'labor'].includes(String(it?.type ?? it?.item_type)),
+    );
+    const lineItemCount = relevantItems.length;
 
-        if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
-        if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
-        if (minQty != null && maxQty < Number(minQty)) return false;
+    const maxQty = Math.max(0, ...relevantItems.map((it) => Number(it?.quantity ?? 0)));
 
-        const hasAny = minLabor != null || minMat != null || minQty != null;
-        return hasAny;
-      });
+    const cmp = (op: string, left: number, right: number) => {
+      switch (op) {
+        case '>':
+          return left > right;
+        case '>=':
+          return left >= right;
+        case '<':
+          return left < right;
+        case '<=':
+          return left <= right;
+        case '==':
+          return left === right;
+        case '!=':
+          return left !== right;
+        default:
+          return left >= right;
+      }
+    };
 
-      const nextJobTypeId = match?.job_type_id ?? match?.set_job_type_id;
-      if (nextJobTypeId) {
-        const saved = await data.upsertAssembly({ ...(a as any), job_type_id: nextJobTypeId } as any);
-        setA(saved);
-        setStatus('Rules applied.');
-      } else {
-        setStatus('No matching rules.');
+    const getMetric = (cond: string): number | null => {
+      switch (cond) {
+        case 'expected_labor_hours':
+          return expectedLaborMinutes / 60;
+        case 'expected_labor_minutes':
+          return expectedLaborMinutes;
+        case 'material_cost':
+          return expectedMaterialCost;
+        case 'line_item_count':
+          return lineItemCount;
+        case 'any_line_item_qty':
+          return maxQty;
+        default:
+          return null;
+      }
+    };
+
+    const match = rules.find((r: any) => {
+      const conditionTypeA = String(r.condition_type ?? r.conditionType ?? '').trim();
+      const operatorA = String(r.operator ?? r.op ?? '>=').trim();
+      const thresholdA = r.threshold_value ?? r.thresholdValue;
+
+      const conditionTypeB = String(r.rule_type ?? '').trim();
+      const ruleValue = r.rule_value ?? {};
+      const operatorB = String(ruleValue.operator ?? ruleValue.op ?? '>=').trim();
+      const thresholdB =
+        ruleValue.threshold_value ??
+        ruleValue.thresholdValue ??
+        ruleValue.threshold ??
+        ruleValue.value;
+
+      const minLabor = r.min_expected_labor_minutes ?? r.minExpectedLaborMinutes;
+      const minMat = r.min_material_cost ?? r.minMaterialCost;
+      const minQty = r.min_quantity ?? r.minQuantity;
+      const minLineItems = r.min_line_item_count ?? r.minLineItemCount;
+
+      if (conditionTypeA && thresholdA != null) {
+        const metric = getMetric(conditionTypeA);
+        if (metric == null) return false;
+        return cmp(operatorA, metric, Number(thresholdA));
       }
 
-      setTimeout(() => setStatus(''), 1200);
-    } catch (err: any) {
-      console.error(err);
-      setStatus(String(err?.message ?? err));
-    }
-  }
+      if (conditionTypeB && thresholdB != null) {
+        const metric = getMetric(conditionTypeB);
+        if (metric == null) return false;
+        return cmp(operatorB, metric, Number(thresholdB));
+      }
 
+      if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
+      if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
+      if (minQty != null && maxQty < Number(minQty)) return false;
+      if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
+
+      const hasAny =
+        minLabor != null || minMat != null || minQty != null || minLineItems != null;
+      return hasAny;
+    });
+
+    const nextJobTypeId = match?.job_type_id ?? match?.set_job_type_id ?? match?.setJobTypeId;
+    if (!nextJobTypeId) return;
+
+    if (String(asm.job_type_id ?? '') !== String(nextJobTypeId)) {
+      setA({ ...asm, job_type_id: nextJobTypeId } as any);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// Auto-apply Admin Rules whenever relevant assembly inputs change.
+useEffect(() => {
+  if (!a || !a.use_admin_rules) return;
+  const t = window.setTimeout(() => {
+    applyAdminRules().catch(() => {});
+  }, 0);
+  return () => window.clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [
+  a?.use_admin_rules,
+  a?.customer_supplied_materials,
+  a?.customer_supplies_materials,
+  a?.items,
+  companySettings,
+  jobTypes,
+  materialCache,
+]);
 
   return (
     <div className="stack">
@@ -504,7 +591,6 @@ export function AssemblyEditorPage() {
             <Button variant="danger" onClick={remove}>
               Delete
             </Button>
-            {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll} disabled={saving}>
               Save
             </Button>
@@ -559,11 +645,6 @@ export function AssemblyEditorPage() {
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
-          </div>
-
-          <div className="stack">
-            <label className="label">Assembly Labor Minutes</label>
-            <Input type="text" inputMode="decimal" value={laborMinutesText} onChange={(e) => setLaborMinutesText(e.target.value)} />
           </div>
 
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
@@ -742,15 +823,25 @@ export function AssemblyEditorPage() {
                   </div>
                   <div className="listRight" style={{ gap: 8 }}>
                     <Input
-                      style={{ width: 90 }}
-                      type="text"
-                      inputMode="numeric"
-                      value={String(r.quantity)}
-                      onChange={(e) => {
-                        const q = Math.max(1, Number(e.target.value || 1));
-                        if (Number.isFinite(q)) updateItemQuantity(r.itemId, q);
-                      }}
-                    />
+                  style={{ width: 90 }}
+                  type="text"
+                  inputMode="numeric"
+                  value={(((a?.items ?? []) as any[]).find((x: any) => x.id === r.itemId) as any)?._ui_qty_text ?? String(r.quantity)}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    updateItem(r.itemId, { _ui_qty_text: raw } as any);
+                    if (raw.trim() === '') return;
+                    const q = Math.max(1, Math.floor(Number(raw)));
+                    if (Number.isFinite(q)) updateItemQuantity(r.itemId, q);
+                  }}
+                  onBlur={() => {
+                    const it = (a?.items ?? []).find((x: any) => x.id === r.itemId) as any;
+                    const raw = String(it?._ui_qty_text ?? '').trim();
+                    const current = Number(r.quantity ?? 1);
+                    const q = Math.max(1, Math.floor(Number(raw === '' ? current : raw)));
+                    updateItem(r.itemId, { quantity: q, _ui_qty_text: undefined } as any);
+                  }}
+                />
                     <Button variant="danger" onClick={() => removeItem(r.itemId)}>
                       Remove
                     </Button>
@@ -812,18 +903,24 @@ export function AssemblyEditorPage() {
                     <div className="stack" style={{ width: 110 }}>
                       <div className="muted small">Quantity</div>
                       <Input
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="1"
-                        value={String(it.quantity ?? 1)}
-                        onChange={(e) => {
-                          const q = Math.max(1, Number(e.target.value || 1));
-                          const nextItems = (a.items ?? []).map((x: any) =>
-                            x.id === it.id ? { ...x, quantity: Number.isFinite(q) ? q : 1 } : x
-                          );
-                          setA({ ...a, items: nextItems } as any);
-                        }}
-                      />
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="1"
+                    value={it._ui_qty_text ?? String(it.quantity ?? 1)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      updateItem(it.id, { _ui_qty_text: raw });
+                      if (raw.trim() === '') return;
+                      const q = Math.max(1, Math.floor(Number(raw)));
+                      if (!Number.isFinite(q)) return;
+                      updateItem(it.id, { quantity: q });
+                    }}
+                    onBlur={() => {
+                      const raw = String(it._ui_qty_text ?? '').trim();
+                      const q = Math.max(1, Math.floor(Number(raw === '' ? (it.quantity ?? 1) : raw)));
+                      updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
+                    }}
+                  />
                     </div>
 
                     <div className="stack" style={{ width: 200 }}>
@@ -877,6 +974,15 @@ export function AssemblyEditorPage() {
 
                     </div>
 
+                  </div>
+                  <div className="mt">
+                    <div className="muted small">Description</div>
+                    <Input
+                      value={it.description ?? ''}
+                      onChange={(e) => updateItem(it.id, { description: e.target.value })}
+                    />
+                  </div>
+                  <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
                     <Button variant="danger" onClick={() => removeItem(it.id)}>
                       Remove
                     </Button>
@@ -908,15 +1014,20 @@ export function AssemblyEditorPage() {
                         type="text"
                         inputMode="numeric"
                         placeholder="1"
-                        value={String(it.quantity ?? 1)}
-                        onChange={(e) => {
-                          const q = Math.max(1, Number(e.target.value || 1));
-                          const nextItems = (a.items ?? []).map((x: any) =>
-                            x.id === it.id ? { ...x, quantity: Number.isFinite(q) ? q : 1 } : x
-                          );
-                          setA({ ...a, items: nextItems } as any);
-                        }}
-                      />
+                        value={it._ui_qty_text ?? String(it.quantity ?? 1)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      updateItem(it.id, { _ui_qty_text: raw });
+                      if (raw.trim() === '') return;
+                      const q = Math.max(1, Math.floor(Number(raw)));
+                      if (!Number.isFinite(q)) return;
+                      updateItem(it.id, { quantity: q });
+                    }}
+                    onBlur={() => {
+                      const raw = String(it._ui_qty_text ?? '').trim();
+                      const q = Math.max(1, Math.floor(Number(raw === '' ? (it.quantity ?? 1) : raw)));
+                      updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
+                    }}
                     </div>
 
                     <div className="stack" style={{ width: 220 }}>
@@ -961,6 +1072,8 @@ export function AssemblyEditorPage() {
                       })()}
                     </div>
 
+                  </div>
+                  <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
                     <Button variant="danger" onClick={() => removeItem(it.id)}>
                       Remove
                     </Button>
@@ -1019,6 +1132,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
