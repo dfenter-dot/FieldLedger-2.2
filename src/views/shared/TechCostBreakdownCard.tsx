@@ -30,7 +30,7 @@ export function TechCostBreakdownCard(props: {
 
   // Mirror Company Setup derived helpers
   const workdaysPerWeek = Number(company.workdays_per_week ?? 5) || 5;
-  const workhoursPerDay = Number(company.workhours_per_day ?? 8) || 8;
+  const workhoursPerDay = Number(company.work_hours_per_day ?? 8) || 8;
   const techCount = Number(company.tech_count ?? 1) || 1;
   const vacationDays = Number(company.vacation_days_per_year ?? 10) || 10;
   const sickDays = Number(company.sick_days_per_year ?? 5) || 5;
@@ -159,4 +159,5 @@ export function TechCostBreakdownCard(props: {
     </Card>
   );
 }
+
 
