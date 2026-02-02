@@ -480,7 +480,7 @@ export function EstimateEditorPage() {
           // tolerate legacy schemas
           const enabled = r.enabled ?? true;
           const scope = (r.scope ?? r.applies_to ?? 'both') as string;
-          const scopeOk = scope !== 'assembly';
+          const scopeOk = scope === 'both' || scope === 'estimate';
           return !!enabled && scopeOk;
         })
         .sort((a, b) => (Number(a.priority ?? 0) - Number(b.priority ?? 0)));
@@ -489,30 +489,17 @@ export function EstimateEditorPage() {
       // Rules evaluate "expected" values (not sell totals):
       // - expected labor: efficiency-adjusted in flat-rate mode
       // - expected material cost: cost + purchase tax, no markup; customer-supplied = 0
-      const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+            const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+      const pricing = computeEstimatePricing({
+        estimate: e as any,
+        materialsById: materialCache,
+        assembliesById: assemblyCache,
+        jobTypesById,
+        companySettings,
+      } as any) as any;
 
-      // Compute rule metrics using current estimate state + current effective job type.
-      // If pricing computation fails due to partially-migrated schemas or missing context,
-      // we still want rules like "line item count" to work reliably.
-      let expectedLaborMinutes = 0;
-      let expectedMaterialCost = 0;
-      try {
-        const pricing = computeEstimatePricing({
-          estimate: e as any,
-          materialsById: materialCache,
-          assembliesById: assemblyCache,
-          jobTypesById,
-          companySettings,
-        } as any) as any;
-
-        expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
-        expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
-      } catch (err) {
-        // Fall back to zeroes; rule conditions that don't rely on pricing (e.g., line_item_count)
-        // will still evaluate correctly.
-        expectedLaborMinutes = 0;
-        expectedMaterialCost = 0;
-      }
+      const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
+      const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
 
       // Quantity threshold uses "any single line item quantity ≥ X"
       const maxQty = Math.max(
@@ -520,23 +507,23 @@ export function EstimateEditorPage() {
         ...(((e as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0))
       );
 
-      // Line item count threshold uses total line items in the estimate.
-      // Must include materials, assemblies, and labor/one-off lines.
-      const lineItemCount = (((e as any).items ?? []) as any[]).filter((it) => {
-        if (!it) return false;
-        if (it.material_id || it.assembly_id) return true;
-        const t = String(it.item_type ?? it.type ?? '').toLowerCase();
-        if (t === 'labor') return true;
-        if (it.labor_minutes != null || it.laborMinutes != null || it.minutes != null) return true;
-        // Fallback: count named one-off lines
-        return Boolean(it.name);
-      }).length;
+      const match = rules.find((r: any) => {
+        // Support multiple rule schemas (legacy + current) to tolerate partially migrated DBs.
 
-      const match = rules.find((r) => {
-        // --- New rule schema (condition + operator + threshold) ---
-        const conditionType = String((r as any).condition_type ?? (r as any).conditionType ?? '').trim();
-        const operator = String((r as any).operator ?? (r as any).op ?? '>=').trim();
-        const thresholdRaw = (r as any).threshold_value ?? (r as any).thresholdValue;
+        // ---------- Schema A: condition_type/operator/threshold_value ----------
+        const conditionTypeA = String(r.condition_type ?? r.conditionType ?? '').trim();
+        const operatorA = String(r.operator ?? r.op ?? '>=').trim();
+        const thresholdA = r.threshold_value ?? r.thresholdValue;
+
+        // ---------- Schema B: rule_type + rule_value (older) ----------
+        const conditionTypeB = String(r.rule_type ?? '').trim();
+        const ruleValue = r.rule_value ?? {};
+        const operatorB = String(ruleValue.operator ?? ruleValue.op ?? '>=').trim();
+        const thresholdB =
+          ruleValue.threshold_value ??
+          ruleValue.thresholdValue ??
+          ruleValue.threshold ??
+          ruleValue.value;
 
         const cmp = (op: string, left: number, right: number) => {
           switch (op) {
@@ -550,44 +537,48 @@ export function EstimateEditorPage() {
           }
         };
 
-        if (conditionType && thresholdRaw != null) {
-          const thr = Number(thresholdRaw);
-          let value: number | null = null;
-
-          switch (conditionType) {
+        const getMetric = (cond: string): number | null => {
+          switch (cond) {
             case 'expected_labor_hours':
-              value = expectedLaborMinutes / 60;
-              break;
+              return expectedLaborMinutes / 60;
             case 'expected_labor_minutes':
-              value = expectedLaborMinutes;
-              break;
+              return expectedLaborMinutes;
             case 'material_cost':
-              value = expectedMaterialCost;
-              break;
+              return expectedMaterialCost;
             case 'line_item_count':
-              value = lineItemCount;
-              break;
+              return lineItemCount;
             case 'any_line_item_qty':
-              value = maxQty;
-              break;
+              return maxQty;
             default:
-              value = null;
-              break;
+              return null;
           }
+        };
 
-          if (value == null || !Number.isFinite(thr)) return false;
-          return cmp(operator, value, thr);
+        // Try schema A first
+        if (conditionTypeA && thresholdA != null) {
+          const metric = getMetric(conditionTypeA);
+          const thr = Number(thresholdA);
+          if (metric == null || !Number.isFinite(thr)) return false;
+          return cmp(operatorA, metric, thr);
         }
 
-        // --- Legacy schema (min_* fields) ---
-        const minLabor = (r as any).min_expected_labor_minutes ?? (r as any).minExpectedLaborMinutes;
-        const minMat = (r as any).min_material_cost ?? (r as any).minMaterialCost;
-        const minQty = (r as any).min_quantity ?? (r as any).minQuantity;
+        // Then schema B
+        if (conditionTypeB && thresholdB != null) {
+          const metric = getMetric(conditionTypeB);
+          const thr = Number(thresholdB);
+          if (metric == null || !Number.isFinite(thr)) return false;
+          return cmp(operatorB, metric, thr);
+        }
+
+        // ---------- Schema C: legacy min_* fields ----------
+        const minLabor = r.min_expected_labor_minutes ?? r.minExpectedLaborMinutes;
+        const minMat = r.min_material_cost ?? r.minMaterialCost;
+        const minQty = r.min_quantity ?? r.minQuantity;
         const minLineItems =
-          (r as any).min_line_item_count ??
-          (r as any).min_line_items ??
-          (r as any).minItemCount ??
-          (r as any).min_items;
+          r.min_line_item_count ??
+          r.min_line_items ??
+          r.minItemCount ??
+          r.min_items;
 
         if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
         if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
@@ -597,10 +588,16 @@ export function EstimateEditorPage() {
         const hasAny =
           minLabor != null || minMat != null || minQty != null || minLineItems != null;
 
+        // If it has no thresholds at all, do not auto-match it (prevents accidental always-on).
         return hasAny;
       });
 
-      const nextJobTypeId = (match as any)?.target_job_type_id ?? (match as any)?.job_type_id ?? (match as any)?.set_job_type_id;
+      const nextJobTypeId =
+        (match as any)?.target_job_type_id ??
+        (match as any)?.job_type_id ??
+        (match as any)?.set_job_type_id ??
+        (match as any)?.rule_value?.target_job_type_id ??
+        (match as any)?.rule_value?.job_type_id;
       if (nextJobTypeId) {
         const next = { ...(e as any), job_type_id: nextJobTypeId } as any;
         const saved = await data.upsertEstimate(next);
@@ -1244,4 +1241,5 @@ export function EstimateEditorPage() {
     </div>
   );
 }
+
 
