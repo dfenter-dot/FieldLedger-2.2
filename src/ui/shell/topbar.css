@@ -1,9 +1,9 @@
 .topbar{
-  display:flex;
-  align-items:center;
-  gap: 14px;
-  padding: 14px 18px;
   min-height: 78px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding: 10px 16px;
   border-bottom: 1px solid rgba(43,54,71,0.7);
   background: rgba(17,24,39,0.55);
   position: sticky;
@@ -12,7 +12,7 @@
   z-index: 5;
 }
 .topbarTitle{
-  font-weight: 900;
+  font-weight: 800;
   letter-spacing: 0.2px;
 }
 .topbarRight{ display:flex; gap: 10px; align-items:center; }
@@ -46,29 +46,19 @@
 }
 
 
-.topbarLeft{
-  flex: 1 1 0;
-  min-width: 0;
-}
 
-.topbarBrand{
-  flex: 0 0 auto;
+.topbarCenter{
+  flex: 1;
   display:flex;
-  align-items:center;
   justify-content:center;
-}
-
-.topbarLogo{
-  height: 44px;
-  width: auto;
-  display:block;
-  filter: drop-shadow(0 6px 18px rgba(0,0,0,0.35));
-}
-
-.topbarRight{
-  flex: 1 1 0;
-  display:flex;
-  justify-content:flex-end;
   align-items:center;
-  gap: 10px;
+  height: 58px; /* controls brand block size */
+  padding: 0 12px;
+}
+.topbarLogo{
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  display:block;
 }
