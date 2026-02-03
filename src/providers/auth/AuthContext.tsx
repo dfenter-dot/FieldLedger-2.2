@@ -106,8 +106,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { ok: true };
       },
       async signUpWithPassword(email, password) {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) return { ok: false, message: error.message };
+
+        // Best-effort: record an access request row if the table exists.
+        // This is safe to ignore if the project isn't configured yet.
+        try {
+          const uid = data?.user?.id;
+          if (uid) {
+            await supabase.from('access_requests').insert({ user_id: uid, email });
+          }
+        } catch {
+          // ignore
+        }
         return { ok: true };
       },
       async signOut() {
@@ -125,5 +136,6 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
+
 
 
