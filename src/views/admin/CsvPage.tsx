@@ -108,7 +108,13 @@ function buildPathMap(folders: Folder[]) {
   return { pathForFolderId, byId, rootIds };
 }
 
-async function ensureFolderPath(data: any, kind: 'materials' | 'assemblies', libraryType: 'company', path: string, existingFolders: Folder[]) {
+async function ensureFolderPath(
+  data: any,
+  kind: 'materials' | 'assemblies',
+  libraryType: 'company' | 'personal',
+  path: string,
+  existingFolders: Folder[],
+) {
   const { byId } = buildPathMap(existingFolders);
   // Find a root folder to attach to (first root for this kind/library).
   const roots = existingFolders.filter((f) => !f.parent_id);
@@ -127,6 +133,65 @@ async function ensureFolderPath(data: any, kind: 'materials' | 'assemblies', lib
     parentId = created.id;
   }
   return parentId;
+}
+
+function buildMaterialsTemplate() {
+  const header = [
+    'path',
+    'name',
+    'sku',
+    'description',
+    'base_cost',
+    'custom_cost',
+    'use_custom_cost',
+    'taxable',
+    'labor_decimal_hours',
+    'job_type_id',
+  ];
+  const example = [
+    'Devices/Outlets',
+    'TR Duplex Outlet',
+    'TR-15A-WHT',
+    'Tamper resistant duplex receptacle',
+    '3.25',
+    '',
+    'false',
+    'true',
+    '0.2500',
+    '',
+  ];
+  return [header.join(','), example.map(escapeCsv).join(',')].join('\n');
+}
+
+function buildAssembliesTemplate() {
+  const header = [
+    'path',
+    'name',
+    'description',
+    'use_admin_rules',
+    'job_type_id',
+    'customer_supplies_materials',
+    'labor_minutes',
+    'items_json',
+  ];
+
+  // Keep the example minimal and valid JSON.
+  const exampleItems = JSON.stringify([
+    { kind: 'material', material_id: 'PUT-MATERIAL-ID-HERE', quantity: 1 },
+    { kind: 'labor', description: 'Labor', quantity: 1, labor_hours: 0, labor_minutes: 30 },
+  ]);
+
+  const example = [
+    'Devices/Outlets',
+    'Replace TR Duplex Outlet',
+    'Replace one outlet with TR',
+    'true',
+    '',
+    'false',
+    '0',
+    exampleItems,
+  ];
+  return [header.join(','), example.map(escapeCsv).join(',')].join('\n');
 }
 
 export function CsvPage() {
@@ -255,15 +320,31 @@ export function CsvPage() {
       const libraryType: 'company' | 'personal' = isOwner ? 'personal' : 'company';
 
       const folders = await collectAllFolders(data, 'materials', libraryType);
+
+      // Build a fast lookup so imports update existing records (same folder + name) instead of duplicating.
+      const existingByKey = new Map<string, Material>();
+      const folderIds = [null, ...folders.map((f) => f.id)];
+      for (const folderId of folderIds) {
+        const mats = await data.listMaterials({ libraryType, folderId });
+        for (const m of mats as Material[]) {
+          const key = `${m.folder_id ?? ''}::${(m.name ?? '').trim().toLowerCase()}`;
+          if (!existingByKey.has(key)) existingByKey.set(key, m);
+        }
+      }
       for (const r of rows) {
         const folderPath = r.path ?? '';
         const folderId = await ensureFolderPath(data, 'materials', libraryType, folderPath, folders);
         const laborDecimal = Number(r.labor_decimal_hours ?? 0);
         const laborMinutes = Number.isFinite(laborDecimal) ? Math.round(laborDecimal * 60) : 0;
+        const name = (r.name ?? '').trim();
+        const key = `${folderId ?? ''}::${name.toLowerCase()}`;
+        const existing = existingByKey.get(key);
+
         const mat: Material = {
-          id: crypto.randomUUID?.() ?? `mat_${Date.now()}`,
-          company_id: libraryType === 'personal' ? null : (undefined as any), // provider fills
-          name: r.name ?? '',
+          ...(existing ?? ({} as any)),
+          id: existing?.id ?? (crypto.randomUUID?.() ?? `mat_${Date.now()}`),
+          company_id: existing?.company_id ?? (libraryType === 'personal' ? null : (undefined as any)), // provider fills
+          name,
           sku: r.sku ?? null,
           description: r.description ?? null,
           unit_cost: Number(r.base_cost ?? 0) || 0,
@@ -273,9 +354,12 @@ export function CsvPage() {
           labor_minutes: laborMinutes,
           job_type_id: r.job_type_id ? r.job_type_id : null,
           folder_id: folderId,
-          created_at: new Date().toISOString(),
+          created_at: existing?.created_at ?? new Date().toISOString(),
         };
         await data.upsertMaterial(mat);
+
+        // Keep lookup in sync so repeated rows update the same record.
+        existingByKey.set(key, mat);
       }
       setStatus(`Imported ${rows.length} materials.`);
       setTimeout(() => setStatus(''), 1500);
@@ -294,20 +378,39 @@ export function CsvPage() {
       setStatus('Importing assemblies...');
       const text = await file.text();
       const rows = parseCsv(text);
-      const folders = await collectAllFolders(data, 'assemblies', 'company');
+      const isOwner = await (data as any).isAppOwner?.().catch?.(() => false) ?? false;
+      const libraryType: 'company' | 'personal' = isOwner ? 'personal' : 'company';
+
+      const folders = await collectAllFolders(data, 'assemblies', libraryType);
+
+      // Build lookup for existing assemblies (same folder + name)
+      const existingByKey = new Map<string, Assembly>();
+      const folderIds = [null, ...folders.map((f) => f.id)];
+      for (const folderId of folderIds) {
+        const asms = await data.listAssemblies({ libraryType, folderId });
+        for (const a of asms as Assembly[]) {
+          const key = `${a.folder_id ?? ''}::${(a.name ?? '').trim().toLowerCase()}`;
+          if (!existingByKey.has(key)) existingByKey.set(key, a);
+        }
+      }
 
       for (const r of rows) {
-        const folderId = await ensureFolderPath(data, 'assemblies', 'company', r.path ?? '', folders);
+        const folderId = await ensureFolderPath(data, 'assemblies', libraryType, r.path ?? '', folders);
         let items: any[] = [];
         try {
           items = r.items_json ? JSON.parse(r.items_json) : [];
         } catch {
           items = [];
         }
+        const name = (r.name ?? '').trim();
+        const key = `${folderId ?? ''}::${name.toLowerCase()}`;
+        const existing = existingByKey.get(key);
+
         const asm: Assembly = {
-          id: crypto.randomUUID?.() ?? `asm_${Date.now()}`,
-          company_id: null as any,
-          name: r.name ?? '',
+          ...(existing ?? ({} as any)),
+          id: existing?.id ?? (crypto.randomUUID?.() ?? `asm_${Date.now()}`),
+          company_id: existing?.company_id ?? (libraryType === 'personal' ? null : (undefined as any)),
+          name,
           description: r.description ?? null,
           use_admin_rules: String(r.use_admin_rules).toLowerCase() === 'true',
           job_type_id: r.job_type_id ? r.job_type_id : null,
@@ -315,9 +418,11 @@ export function CsvPage() {
           labor_minutes: Number(r.labor_minutes ?? 0) || 0,
           items: Array.isArray(items) ? (items as any) : [],
           folder_id: folderId,
-          created_at: new Date().toISOString(),
+          created_at: existing?.created_at ?? new Date().toISOString(),
         };
         await data.upsertAssembly(asm);
+
+        existingByKey.set(key, asm);
       }
 
       setStatus(`Imported ${rows.length} assemblies.`);
@@ -341,6 +446,7 @@ export function CsvPage() {
       <Card title="Materials">
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           <Button onClick={exportMaterials}>Export Materials</Button>
+          <Button onClick={() => downloadText('materials_template.csv', buildMaterialsTemplate())}>Download Template</Button>
           <Button onClick={() => matInputRef.current?.click()} disabled={!allowMaterialImport}>Import Materials CSV</Button>
           <input
             ref={matInputRef}
@@ -355,13 +461,14 @@ export function CsvPage() {
           />
         </div>
         <div className="muted small mt">
-          Labor time is exported/imported as decimal hours. Folder hierarchy uses a path like <span className="pill">Devices/Outlets/TR Duplex</span>.
+          Labor time is exported/imported as decimal hours. Folder hierarchy uses a path like <span className="pill">Devices/Outlets/TR Duplex</span>. Import will create missing folders and update existing materials that match by folder + name.
         </div>
       </Card>
 
       <Card title="Assemblies">
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           <Button onClick={exportAssemblies}>Export Assemblies</Button>
+          <Button onClick={() => downloadText('assemblies_template.csv', buildAssembliesTemplate())}>Download Template</Button>
           <Button onClick={() => asmInputRef.current?.click()} disabled={!allowAssemblyImport}>Import Assemblies CSV</Button>
           <input
             ref={asmInputRef}
@@ -376,11 +483,12 @@ export function CsvPage() {
           />
         </div>
         <div className="muted small mt">
-          App-owned libraries are not exported item-by-item. This exports only your company-owned assemblies.
+          Import will create missing folders and update existing assemblies that match by folder + name. App-owned libraries are not exported item-by-item.
         </div>
       </Card>
     </div>
   );
 }
+
 
 
