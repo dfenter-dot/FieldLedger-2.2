@@ -28,17 +28,13 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ maxWidth: 520, margin: '0 auto', padding: 24 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 18 }}>
-        <img
-          src="/branding/fieldledger-logo.png"
-          alt="FieldLedger"
-          style={{ width: '100%', maxWidth: 360, height: 'auto', marginBottom: 10 }}
-        />
-        <p style={{ marginTop: 0, opacity: 0.85, marginBottom: 0, fontSize: 16, fontWeight: 600 }}>
-          {mode === 'signin' ? 'Sign in to continue.' : 'Create your account to continue.'}
-        </p>
-      </div>
+    <div style={{ maxWidth: 440, margin: '0 auto', padding: 24 }}>
+      <h1 style={{ marginBottom: 12 }}>FieldLedger</h1>
+      <p style={{ marginTop: 0, opacity: 0.8, marginBottom: 16 }}>
+        {mode === 'signin'
+          ? 'Sign in to continue.'
+          : 'Request access by creating a login (you will be able to use the app once approved).'}
+      </p>
 
       <Card>
         <div style={{ display: 'grid', gap: 12 }}>
@@ -60,7 +56,7 @@ export function LoginPage() {
           ) : null}
 
           <Button onClick={submit} disabled={busy || !email.trim() || password.length < 6}>
-            {busy ? 'Working…' : mode === 'signin' ? 'Sign In' : 'Create Account'}
+            {busy ? 'Working…' : mode === 'signin' ? 'Sign In' : 'Request Access'}
           </Button>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
@@ -69,7 +65,7 @@ export function LoginPage() {
               onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
               style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', opacity: 0.85 }}
             >
-              {mode === 'signin' ? 'Need an account?' : 'Already have an account?'}
+              {mode === 'signin' ? 'Request access' : 'Back to sign in'}
             </button>
           </div>
         </div>
