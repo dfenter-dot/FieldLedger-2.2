@@ -13,7 +13,8 @@ type MoveTarget =
   | null
   | { type: 'material'; id: string; currentFolderId: string | null }
   | { type: 'assembly'; id: string; currentFolderId: string | null }
-  | { type: 'folder'; id: string; currentParentId: string | null };
+  | { type: 'folder'; id: string; currentParentId: string | null }
+  | { type: 'bulk'; folderIds: string[]; itemIds: string[] };
 
 function clampQty(n: number) {
   if (!Number.isFinite(n)) return 1;
@@ -93,7 +94,6 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     return null;
   }, [mode]);
 
-  
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -114,7 +114,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     };
   }, [data, kind, mode]);
 
-const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
+  const inMaterialPickerMode =
+    kind === 'materials' && (mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate');
 
   async function refresh() {
     try {
@@ -243,6 +244,41 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
         const folder = folders.find((f) => f.id === moveTarget.id) ?? (await findFolderById(moveTarget.id));
         if (!folder) throw new Error('Folder not found');
         await data.saveFolder({ ...folder, parent_id: targetFolderId } as any);
+      } else if (moveTarget.type === 'bulk') {
+        const folderIds = moveTarget.folderIds ?? [];
+        const itemIds = moveTarget.itemIds ?? [];
+
+        if (targetFolderId) {
+          for (const fid of folderIds) {
+            const tree = await collectFolderTreeIds(fid);
+            if (tree.has(targetFolderId)) {
+              throw new Error('Cannot move a folder into itself (or its subtree).');
+            }
+          }
+        }
+
+        // Move folders
+        for (const fid of folderIds) {
+          const folder = folders.find((f) => f.id === fid) ?? (await findFolderById(fid));
+          if (!folder) continue;
+          await data.saveFolder({ ...folder, parent_id: targetFolderId } as any);
+        }
+
+        // Move items
+        for (const id of itemIds) {
+          if (kind === 'materials') {
+            const m = await data.getMaterial(id);
+            if (!m) continue;
+            await data.upsertMaterial({ ...m, folder_id: targetFolderId } as any);
+          } else {
+            const a = await data.getAssembly(id);
+            if (!a) continue;
+            await data.upsertAssembly({ ...a, folder_id: targetFolderId } as any);
+          }
+        }
+
+        clearBulkSelection();
+        setSelectMode(false);
       }
 
       setMoveTarget(null);
@@ -340,6 +376,28 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
   function clearBulkSelection() {
     setSelectedFolderIds({});
     setSelectedItemIds({});
+  }
+
+  async function bulkMoveSelected() {
+    try {
+      setStatus('');
+      if (!selectMode) return;
+
+      const folderIds = Object.entries(selectedFolderIds)
+        .filter(([, v]) => v)
+        .map(([id]) => id);
+
+      const itemIds = Object.entries(selectedItemIds)
+        .filter(([, v]) => v)
+        .map(([id]) => id);
+
+      if (folderIds.length === 0 && itemIds.length === 0) return;
+
+      await openMoveModal({ type: 'bulk', folderIds, itemIds });
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
   }
 
   async function bulkDeleteSelected() {
@@ -486,9 +544,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
   async function persistMaterialOrder(next: Material[]) {
     try {
       // Update order_index sequentially (best-effort)
-      await Promise.all(
-        next.map((m, idx) => data.upsertMaterial({ ...m, order_index: idx } as any))
-      );
+      await Promise.all(next.map((m, idx) => data.upsertMaterial({ ...m, order_index: idx } as any)));
     } catch (e) {
       console.error(e);
       setStatus('Could not persist ordering.');
@@ -522,7 +578,12 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
           // remove
           if (idx >= 0) items.splice(idx, 1);
         } else if (idx >= 0) {
-          items[idx] = { ...items[idx], type: items[idx]?.type ?? 'material', material_id: items[idx]?.material_id ?? materialId, quantity: qty };
+          items[idx] = {
+            ...items[idx],
+            type: items[idx]?.type ?? 'material',
+            material_id: items[idx]?.material_id ?? materialId,
+            quantity: qty,
+          };
         } else {
           items.push({
             id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
@@ -546,7 +607,12 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
         if (qty == null) {
           if (idx >= 0) items.splice(idx, 1);
         } else if (idx >= 0) {
-          items[idx] = { ...items[idx], type: items[idx]?.type ?? 'material', material_id: items[idx]?.material_id ?? materialId, quantity: qty };
+          items[idx] = {
+            ...items[idx],
+            type: items[idx]?.type ?? 'material',
+            material_id: items[idx]?.material_id ?? materialId,
+            quantity: qty,
+          };
         } else {
           items.push({
             id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
@@ -637,10 +703,11 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
         const lower = q.toLowerCase();
 
         const hits = all
-          .filter((m) =>
-            (m.name ?? '').toLowerCase().includes(lower) ||
-            (m.sku ?? '').toLowerCase().includes(lower) ||
-            (m.description ?? '').toLowerCase().includes(lower)
+          .filter(
+            (m) =>
+              (m.name ?? '').toLowerCase().includes(lower) ||
+              (m.sku ?? '').toLowerCase().includes(lower) ||
+              (m.description ?? '').toLowerCase().includes(lower)
           )
           .slice(0, 8);
 
@@ -704,9 +771,18 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                 >
                   {selectMode ? 'Cancel Select' : 'Select'}
                 </Button>
+
+                <Button
+                  variant="secondary"
+                  disabled={!selectMode || selectedFolderCount + selectedItemCount === 0}
+                  onClick={bulkMoveSelected}
+                >
+                  Move Selected
+                </Button>
+
                 <Button
                   variant="danger"
-                  disabled={!selectMode || (selectedFolderCount + selectedItemCount === 0)}
+                  disabled={!selectMode || selectedFolderCount + selectedItemCount === 0}
                   onClick={bulkDeleteSelected}
                 >
                   Delete Selected
@@ -730,10 +806,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
           {/* Breadcrumbs */}
           <div className="row wrap">
             {breadcrumbs.map((b, idx) => (
-              <Button
-                key={String(b.id ?? 'root')}
-                onClick={() => goToFolder(b.id, b.name)}
-              >
+              <Button key={String(b.id ?? 'root')} onClick={() => goToFolder(b.id, b.name)}>
                 {idx === 0 ? 'Root' : b.name}
               </Button>
             ))}
@@ -795,7 +868,9 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                 <div className="row">
                   <Button onClick={() => handleRenameFolder(f)}>Rename</Button>
                   <Button onClick={() => openMoveModal({ type: 'folder', id: f.id, currentParentId: f.parent_id })}>Move</Button>
-                  <Button variant="danger" onClick={() => handleDeleteFolder(f)}>Delete</Button>
+                  <Button variant="danger" onClick={() => handleDeleteFolder(f)}>
+                    Delete
+                  </Button>
                 </div>
               </div>
             ))}
@@ -858,12 +933,17 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                     </div>
 
                     <div className="row">
-                      <Button onClick={() => openMoveModal({ type: 'material', id: m.id, currentFolderId: m.folder_id ?? null })}>Move</Button>
+                      <Button onClick={() => openMoveModal({ type: 'material', id: m.id, currentFolderId: m.folder_id ?? null })}>
+                        Move
+                      </Button>
 
                       {inMaterialPickerMode ? (
                         isSelected ? (
                           <div className="row">
-                            <Button onClick={() => updatePickerQuantity(m.id, String(clampQty(Number(selectedText)) - 1))} disabled={clampQty(Number(selectedText)) <= 1}>
+                            <Button
+                              onClick={() => updatePickerQuantity(m.id, String(clampQty(Number(selectedText)) - 1))}
+                              disabled={clampQty(Number(selectedText)) <= 1}
+                            >
                               -
                             </Button>
                             <Input
@@ -874,7 +954,9 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                               onBlur={() => updatePickerQuantity(m.id, selectedQtyByMaterialId[m.id] ?? '')}
                             />
                             <Button onClick={() => updatePickerQuantity(m.id, String(clampQty(Number(selectedText)) + 1))}>+</Button>
-                            <Button variant="danger" onClick={() => updatePickerQuantity(m.id, '')}>Remove</Button>
+                            <Button variant="danger" onClick={() => updatePickerQuantity(m.id, '')}>
+                              Remove
+                            </Button>
                           </div>
                         ) : (
                           <div className="row">
@@ -955,9 +1037,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                       }}
                     >
                       <div style={{ fontWeight: 600 }}>{a.name}</div>
-                      <div className="muted small">
-                        {((a as any).item_count ?? (a.items ?? []).length) as any} items
-                      </div>
+                      <div className="muted small">{((a as any).item_count ?? (a.items ?? []).length) as any} items</div>
                     </div>
 
                     <div className="row" style={{ gap: 8 }}>
@@ -1014,9 +1094,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                           );
                         })()
                       ) : (
-                        <Button onClick={() => openMoveModal({ type: 'assembly', id: a.id, currentFolderId: a.folder_id ?? null })}>
-                          Move
-                        </Button>
+                        <Button onClick={() => openMoveModal({ type: 'assembly', id: a.id, currentFolderId: a.folder_id ?? null })}>Move</Button>
                       )}
                     </div>
                   </div>
@@ -1061,11 +1139,3 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     </div>
   );
 }
-
-
-
-
-
-
-
-
