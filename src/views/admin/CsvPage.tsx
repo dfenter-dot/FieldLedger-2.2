@@ -3,7 +3,7 @@ import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
-import type { Assembly, Folder, Material } from '../../providers/data/types';
+import type { Assembly, Folder, Material, LibraryType } from '../../providers/data/types';
 
 type CsvRow = Record<string, string>;
 
@@ -71,7 +71,7 @@ function parseCsv(text: string): CsvRow[] {
   });
 }
 
-async function collectAllFolders(data: any, kind: 'materials' | 'assemblies', libraryType: 'company' | 'personal'): Promise<Folder[]> {
+async function collectAllFolders(data: any, kind: 'materials' | 'assemblies', libraryType: LibraryType): Promise<Folder[]> {
   const out: Folder[] = [];
   async function walk(parentId: string | null) {
     const children = await data.listFolders({ kind, libraryType, parentId });
@@ -81,6 +81,27 @@ async function collectAllFolders(data: any, kind: 'materials' | 'assemblies', li
   await walk(null);
   return out;
 }
+
+async function collectAllMaterials(data: any, libraryType: LibraryType, folders: Folder[]): Promise<Material[]> {
+  const out: Material[] = [];
+  const folderIds: Array<string | null> = [null, ...folders.map((f) => f.id)];
+  for (const folderId of folderIds) {
+    const mats = await data.listMaterials({ libraryType, folderId });
+    out.push(...mats);
+  }
+  return out;
+}
+
+async function collectAllAssemblies(data: any, libraryType: LibraryType, folders: Folder[]): Promise<Assembly[]> {
+  const out: Assembly[] = [];
+  const folderIds: Array<string | null> = [null, ...folders.map((f) => f.id)];
+  for (const folderId of folderIds) {
+    const asms = await data.listAssemblies({ libraryType, folderId });
+    out.push(...asms);
+  }
+  return out;
+}
+
 
 function buildPathMap(folders: Folder[]) {
   const byId = new Map<string, Folder>();
@@ -100,24 +121,18 @@ function buildPathMap(folders: Folder[]) {
       if (!cur.parent_id) break;
       cur = byId.get(cur.parent_id) ?? null;
     }
-    // IMPORTANT: CSV paths are absolute from the library root.
-    // Do not drop the first segment; otherwise imports will anchor under an existing root folder.
+    // Drop the first segment (the root folder name) if this folder is under a root.
+    if (parts.length > 0) parts.shift();
     return parts.join('/');
   }
 
   return { pathForFolderId, byId, rootIds };
 }
 
-async function ensureFolderPath(
-  data: any,
-  kind: 'materials' | 'assemblies',
-  libraryType: 'company' | 'personal',
-  path: string,
-  existingFolders: Folder[],
-) {
+async function ensureFolderPath(data: any, kind: 'materials' | 'assemblies', libraryType: LibraryType, path: string, existingFolders: Folder[]) {
   const { byId } = buildPathMap(existingFolders);
-  // Always treat CSV folder paths as absolute from the library root.
-  // Start at null parent so the first segment becomes (or matches) a true root folder.
+  // Always start at the true root (parent_id = null). Do NOT attach to an arbitrary existing folder.
+  // This ensures CSV imports create the first path segment as a new top-level folder if needed.
   let parentId: string | null = null;
   const parts = (path ?? '').split('/').map((p) => p.trim()).filter(Boolean);
   for (const name of parts) {
@@ -132,15 +147,6 @@ async function ensureFolderPath(
     parentId = created.id;
   }
   return parentId;
-}
-
-function getCell(row: Record<string, any>, key: string): string {
-  // Be tolerant of header casing/spaces (e.g. "Name", "name", "Base Cost", "base_cost").
-  const target = key.trim().toLowerCase();
-  for (const k of Object.keys(row)) {
-    if (k.trim().toLowerCase() === target) return String(row[k] ?? '');
-  }
-  return '';
 }
 
 export function CsvPage() {
@@ -189,7 +195,7 @@ export function CsvPage() {
       const all: Material[] = [];
       const folderIds = [null, ...folders.map((f) => f.id)];
       for (const folderId of folderIds) {
-        const mats = await data.listMaterials({ libraryType: 'company', folderId });
+        const mats = await data.listMaterials({ libraryType: LibraryType, folderId });
         all.push(...mats);
       }
 
@@ -223,12 +229,18 @@ export function CsvPage() {
   async function exportAssemblies() {
     try {
       setStatus('Exporting assemblies...');
-      const folders = await collectAllFolders(data, 'assemblies', 'company');
+      const folders = await collectAllFolders(data, 'assemblies', libraryType);
+      const existingAssemblies = await collectAllAssemblies(data, libraryType, folders);
+      const assemblyIdByFolderAndName = new Map<string, string>();
+      for (const a of existingAssemblies) {
+        const key = `${a.folder_id ?? 'root'}::${(a.name ?? '').trim().toLowerCase()}`;
+        if (!assemblyIdByFolderAndName.has(key)) assemblyIdByFolderAndName.set(key, a.id);
+      }
       const { pathForFolderId } = buildPathMap(folders);
       const all: Assembly[] = [];
       const folderIds = [null, ...folders.map((f) => f.id)];
       for (const folderId of folderIds) {
-        const asms = await data.listAssemblies({ libraryType: 'company', folderId });
+        const asms = await data.listAssemblies({ libraryType: LibraryType, folderId });
         all.push(...asms);
       }
       const header = ['path', 'name', 'description', 'use_admin_rules', 'job_type_id', 'customer_supplies_materials', 'labor_minutes', 'items_json'];
@@ -266,42 +278,40 @@ export function CsvPage() {
       const rows = parseCsv(text);
 
       const isOwner = await (data as any).isAppOwner?.().catch?.(() => false) ?? false;
-      const libraryType: 'company' | 'personal' = isOwner ? 'personal' : 'company';
+      const libraryType: LibraryType = isOwner ? 'personal' : 'company';
 
       const folders = await collectAllFolders(data, 'materials', libraryType);
-      let imported = 0;
-      let skipped = 0;
+      const existingMaterials = await collectAllMaterials(data, libraryType, folders);
+      const materialIdByFolderAndName = new Map<string, string>();
+      for (const m of existingMaterials) {
+        const key = `${m.folder_id ?? 'root'}::${(m.name ?? '').trim().toLowerCase()}`;
+        if (!materialIdByFolderAndName.has(key)) materialIdByFolderAndName.set(key, m.id);
+      }
       for (const r of rows) {
-        const folderPath = getCell(r as any, 'path');
+        const folderPath = r.path ?? '';
         const folderId = await ensureFolderPath(data, 'materials', libraryType, folderPath, folders);
-        const laborDecimal = Number(getCell(r as any, 'labor_decimal_hours') || 0);
+        const laborDecimal = Number(r.labor_decimal_hours ?? 0);
         const laborMinutes = Number.isFinite(laborDecimal) ? Math.round(laborDecimal * 60) : 0;
-
-        const name = getCell(r as any, 'name').trim();
-        if (!name) {
-          skipped++;
-          continue;
-        }
-
-        const mat: Material = {
-          id: crypto.randomUUID?.() ?? `mat_${Date.now()}`,
-          company_id: libraryType === 'personal' ? null : (undefined as any), // provider fills
-          name,
-          sku: (getCell(r as any, 'sku') || '').trim() || null,
-          description: (getCell(r as any, 'description') || '').trim() || null,
-          unit_cost: Number(getCell(r as any, 'base_cost') || 0) || 0,
-          custom_cost: (getCell(r as any, 'custom_cost') || '').trim() === '' ? null : Number(getCell(r as any, 'custom_cost') || 0),
-          use_custom_cost: String(getCell(r as any, 'use_custom_cost')).toLowerCase() === 'true',
-          taxable: String(getCell(r as any, 'taxable')).toLowerCase() !== 'false',
+        const mat: Partial<Material> = {
+          // Let the DB generate UUIDs when inserting new rows. If a matching material already exists
+          // (same folder + name), we will set id below before upsert.
+          name: (r.name ?? '').trim(),
+          sku: (r.sku ?? '').trim() || null,
+          description: (r.description ?? '').trim() || null,
+          base_cost: Number(r.base_cost ?? r.unit_cost ?? r.cost ?? 0) || 0,
+          custom_cost: r.custom_cost === '' ? null : Number(r.custom_cost ?? 0),
+          use_custom_cost: String(r.use_custom_cost ?? '').toLowerCase() === 'true',
+          taxable: String(r.taxable ?? '').toLowerCase() === 'true',
           labor_minutes: laborMinutes,
-          job_type_id: (getCell(r as any, 'job_type_id') || '').trim() || null,
+          job_type_id: r.job_type_id ? r.job_type_id : null,
           folder_id: folderId,
-          created_at: new Date().toISOString(),
+          labor_only: String(r.labor_only ?? '').toLowerCase() === 'true',
+          order_index: Number(r.order_index ?? r.sort_order ?? 0) || 0,
+          library_type: libraryType,
         };
         await data.upsertMaterial(mat);
-        imported++;
       }
-      setStatus(`Imported ${imported} materials${skipped ? ` (skipped ${skipped} blank name rows)` : ''}.`);
+      setStatus(`Imported ${rows.length} materials.`);
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
       console.error(e);
@@ -318,47 +328,35 @@ export function CsvPage() {
       setStatus('Importing assemblies...');
       const text = await file.text();
       const rows = parseCsv(text);
-      const isOwner = await (data as any).isAppOwner?.().catch?.(() => false) ?? false;
-      const libraryType: 'company' | 'personal' = isOwner ? 'personal' : 'company';
-
-      const folders = await collectAllFolders(data, 'assemblies', libraryType);
-
-      let imported = 0;
-      let skipped = 0;
+      const folders = await collectAllFolders(data, 'assemblies', 'company');
 
       for (const r of rows) {
-        const folderId = await ensureFolderPath(data, 'assemblies', libraryType, getCell(r as any, 'path'), folders);
+        const folderId = await ensureFolderPath(data, 'assemblies', libraryType', r.path ?? '', folders);
         let items: any[] = [];
         try {
-          const raw = getCell(r as any, 'items_json');
-          items = raw ? JSON.parse(raw) : [];
+          items = r.items_json ? JSON.parse(r.items_json) : [];
         } catch {
           items = [];
         }
-
-        const name = getCell(r as any, 'name').trim();
-        if (!name) {
-          skipped++;
-          continue;
-        }
-        const asm: Assembly = {
-          id: crypto.randomUUID?.() ?? `asm_${Date.now()}`,
-          company_id: libraryType === 'personal' ? null : (undefined as any), // provider fills
-          name,
-          description: (getCell(r as any, 'description') || '').trim() || null,
-          use_admin_rules: String(getCell(r as any, 'use_admin_rules')).toLowerCase() === 'true',
-          job_type_id: (getCell(r as any, 'job_type_id') || '').trim() || null,
-          customer_supplies_materials: String(getCell(r as any, 'customer_supplies_materials')).toLowerCase() === 'true',
-          labor_minutes: Number(getCell(r as any, 'labor_minutes') || 0) || 0,
-          items: Array.isArray(items) ? (items as any) : [],
+        const asm: any = {
+          // Let DB generate UUID for new rows; if a matching assembly exists (same folder + name),
+          // we set id below to update it.
+          name: (r.name ?? '').trim(),
+          description: (r.description ?? '').trim() || null,
+          use_admin_rules: String(r.use_admin_rules ?? '').toLowerCase() === 'true',
+          job_type_id: r.job_type_id ? r.job_type_id : null,
+          customer_supplies_materials: String(r.customer_supplies_materials ?? '').toLowerCase() === 'true',
           folder_id: folderId,
-          created_at: new Date().toISOString(),
+          library_type: libraryType,
+          items: Array.isArray(items) ? (items as any) : [],
         };
+        const key = `${folderId ?? 'root'}::${(asm.name ?? '').trim().toLowerCase()}`;
+        const existingId = assemblyIdByFolderAndName.get(key);
+        if (existingId) asm.id = existingId;
         await data.upsertAssembly(asm);
-        imported++;
       }
 
-      setStatus(`Imported ${imported} assemblies${skipped ? ` (skipped ${skipped} blank name rows)` : ''}.`);
+      setStatus(`Imported ${rows.length} assemblies.`);
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
       console.error(e);
