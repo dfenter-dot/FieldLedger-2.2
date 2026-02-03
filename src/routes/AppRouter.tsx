@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { AppShell } from '../ui/shell/AppShell';
 import { DashboardPage } from '../views/dashboard/DashboardPage';
 import { MaterialsHomePage } from '../views/materials/MaterialsHomePage';
@@ -19,9 +20,55 @@ import { CsvPage } from '../views/admin/CsvPage';
 import { BrandingPage } from '../views/admin/BrandingPage';
 import { useAuth } from '../providers/auth/AuthContext';
 import { LoginPage } from '../views/auth/LoginPage';
+import { PendingAccessPage } from '../views/auth/PendingAccessPage';
+import { supabase } from '../supabase/client';
 
 export function AppRouter() {
   const { user, isLoading } = useAuth();
+  const [companyReady, setCompanyReady] = useState<boolean | null>(null);
+
+  // Guard: a user can authenticate before they are assigned to a company.
+  // Keep hooks unconditional; drive behavior off `user`.
+  useEffect(() => {
+    let cancelled = false;
+
+    // If logged out, reset.
+    if (!user?.id) {
+      setCompanyReady(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('company_id, access_status')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        // If the profile row isn't readable yet (RLS/migration), don't hard-block the app.
+        // But if we *can* read it and there's no company_id (or it's pending), show the pending screen.
+        if (error) {
+          setCompanyReady(true);
+          return;
+        }
+
+        const status = String((data as any)?.access_status ?? 'active').toLowerCase();
+        const companyId = (data as any)?.company_id ?? null;
+        setCompanyReady(Boolean(companyId) && status !== 'pending');
+      } catch {
+        if (!cancelled) setCompanyReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   if (isLoading) {
     return null;
@@ -29,6 +76,14 @@ export function AppRouter() {
 
   if (!user) {
     return <LoginPage />;
+  }
+
+  if (companyReady === false) {
+    return <PendingAccessPage />;
+  }
+
+  if (companyReady === null) {
+    return null;
   }
 
   return (
@@ -67,5 +122,6 @@ export function AppRouter() {
     </AppShell>
   );
 }
+
 
 
