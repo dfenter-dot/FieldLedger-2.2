@@ -407,7 +407,24 @@ export function AssemblyEditorPage() {
     if (!a) return;
     const nextItems = (a.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
     setA({ ...a, items: nextItems } as any);
+  
+  function updateItemQuantityText(itemId: string, text: string) {
+    updateItem(itemId, { _ui_qty_text: text });
   }
+
+  function commitItemQuantityFromText(itemId: string, fallback = 1) {
+    if (!a) return;
+    const it = (a.items ?? []).find((x: any) => x.id === itemId);
+    const raw = String(it?._ui_qty_text ?? '').trim();
+    if (raw === '') {
+      updateItem(itemId, { quantity: fallback, _ui_qty_text: undefined });
+      return;
+    }
+    const n = Number(raw);
+    const q = Number.isFinite(n) ? Math.max(fallback, Math.floor(n)) : fallback;
+    updateItem(itemId, { quantity: q, _ui_qty_text: undefined });
+  }
+}
 
   function removeItem(itemId: string) {
     if (!a) return;
@@ -560,6 +577,12 @@ export function AssemblyEditorPage() {
               <option value="true">Yes</option>
             </select>
           </div>
+
+          <div className="stack">
+            <label className="label">Assembly Labor Minutes</label>
+            <Input type="text" inputMode="decimal" value={laborMinutesText} onChange={(e) => setLaborMinutesText(e.target.value)} />
+          </div>
+
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Description</label>
             <Input value={a.description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
@@ -739,11 +762,17 @@ export function AssemblyEditorPage() {
                       style={{ width: 90 }}
                       type="text"
                       inputMode="numeric"
-                      value={String(r.quantity)}
+                      value={r._ui_qty_text ?? String(r.quantity ?? 1)}
                       onChange={(e) => {
-                        const q = Math.max(1, Number(e.target.value || 1));
-                        if (Number.isFinite(q)) updateItemQuantity(r.itemId, q);
+                        const raw = e.target.value;
+                        updateItemQuantityText(r.itemId, raw);
+                        const trimmed = raw.trim();
+                        if (trimmed === '') return; // allow clearing while editing
+                        const n = Number(trimmed);
+                        if (!Number.isFinite(n)) return;
+                        updateItemQuantity(r.itemId, Math.max(1, Math.floor(n)));
                       }}
+                      onBlur={() => commitItemQuantityFromText(r.itemId, 1)}
                     />
                     <Button variant="danger" onClick={() => removeItem(r.itemId)}>
                       Remove
@@ -795,7 +824,10 @@ export function AssemblyEditorPage() {
                       <div className="muted small">Taxable</div>
                       <Toggle
                         checked={Boolean(it.taxable)}
-                        onChange={(v) => updateItem(it.id, { taxable: v })}
+                        onChange={(v) => {
+                          const nextItems = (a.items ?? []).map((x: any) => (x.id === it.id ? { ...x, taxable: v } : x));
+                          setA({ ...a, items: nextItems } as any);
+                        }}
                         label={it.taxable ? 'Yes' : 'No'}
                       />
                     </div>
@@ -807,13 +839,22 @@ export function AssemblyEditorPage() {
                         inputMode="numeric"
                         placeholder="1"
                         value={it._ui_qty_text ?? String(it.quantity ?? 1)}
-                        onChange={(e) => updateItem(it.id, { _ui_qty_text: e.target.value })}
-                        onBlur={() => {
-                          const raw = String(it._ui_qty_text ?? '').trim();
-                          const v = raw === '' ? 1 : Number(raw);
-                          const q = Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
-                          updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          updateItem(it.id, { _ui_qty_text: raw });
+
+                          const trimmed = raw.trim();
+                          if (trimmed === '') return; // allow clearing while editing
+
+                          const n = Number(trimmed);
+                          if (!Number.isFinite(n)) return;
+                          const q = Math.max(1, Math.floor(n));
+                          const nextItems = (a.items ?? []).map((x: any) =>
+                            x.id === it.id ? { ...x, quantity: q } : x
+                          );
+                          setA({ ...a, items: nextItems } as any);
                         }}
+                        onBlur={() => commitItemQuantityFromText(it.id, 1)}
                       />
                     </div>
 
@@ -857,8 +898,6 @@ export function AssemblyEditorPage() {
                           </div>
                         );
                       })()}
-                    </div>
-
                     <div className="stack" style={{ minWidth: 240, flex: 1 }}>
                       <div className="muted small">Description</div>
                       <Input
@@ -868,7 +907,9 @@ export function AssemblyEditorPage() {
                       />
                     </div>
 
-                    <Button style={{ marginLeft: 'auto' }} variant="danger" onClick={() => removeItem(it.id)}>
+                    </div>
+
+                    <Button variant="danger" onClick={() => removeItem(it.id)}>
                       Remove
                     </Button>
                   </div>
@@ -900,17 +941,26 @@ export function AssemblyEditorPage() {
                         inputMode="numeric"
                         placeholder="1"
                         value={it._ui_qty_text ?? String(it.quantity ?? 1)}
-                        onChange={(e) => updateItem(it.id, { _ui_qty_text: e.target.value })}
-                        onBlur={() => {
-                          const raw = String(it._ui_qty_text ?? '').trim();
-                          const v = raw === '' ? 1 : Number(raw);
-                          const q = Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
-                          updateItem(it.id, { quantity: q, _ui_qty_text: undefined });
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          updateItem(it.id, { _ui_qty_text: raw });
+
+                          const trimmed = raw.trim();
+                          if (trimmed === '') return; // allow clearing while editing
+
+                          const n = Number(trimmed);
+                          if (!Number.isFinite(n)) return;
+                          const q = Math.max(1, Math.floor(n));
+                          const nextItems = (a.items ?? []).map((x: any) =>
+                            x.id === it.id ? { ...x, quantity: q } : x
+                          );
+                          setA({ ...a, items: nextItems } as any);
                         }}
+                        onBlur={() => commitItemQuantityFromText(it.id, 1)}
                       />
                     </div>
 
-                    <div className="stack" style={{ width: 200 }}>
+                    <div className="stack" style={{ width: 220 }}>
                       <div className="muted small">Labor</div>
                       {(() => {
                         const { h, m } = splitHM(it.labor_minutes ?? 0);
@@ -930,7 +980,7 @@ export function AssemblyEditorPage() {
                         return (
                           <div className="row" style={{ gap: 8 }}>
                             <Input
-                              style={{ width: 90 }}
+                              style={{ width: 100 }}
                               type="text"
                               inputMode="numeric"
                               placeholder="Hours"
@@ -939,7 +989,7 @@ export function AssemblyEditorPage() {
                               onBlur={commit}
                             />
                             <Input
-                              style={{ width: 90 }}
+                              style={{ width: 100 }}
                               type="text"
                               inputMode="numeric"
                               placeholder="Minutes"
@@ -952,16 +1002,7 @@ export function AssemblyEditorPage() {
                       })()}
                     </div>
 
-                    <div className="stack" style={{ minWidth: 240, flex: 1 }}>
-                      <div className="muted small">Description</div>
-                      <Input
-                        placeholder="Description"
-                        value={it.description ?? ''}
-                        onChange={(e) => updateItem(it.id, { description: e.target.value })}
-                      />
-                    </div>
-
-                    <Button style={{ marginLeft: 'auto' }} variant="danger" onClick={() => removeItem(it.id)}>
+                    <Button variant="danger" onClick={() => removeItem(it.id)}>
                       Remove
                     </Button>
                   </div>
