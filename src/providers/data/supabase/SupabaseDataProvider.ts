@@ -368,19 +368,25 @@ export class SupabaseDataProvider implements IDataProvider {
   const library: 'materials' | 'assemblies' = folder.library;
   const owner: DbOwner = folder.owner;
   const companyId = await this.currentCompanyId();
-  const scopedCompanyId = owner === 'company' ? companyId : null;
+
+  // DB stores company_id as NULL for app-owned rows. PostgREST will throw
+  // "invalid input syntax for type uuid: \"null\"" if we use eq('company_id', null).
+  // Use `.is('company_id', null)` for app-owned scope instead.
+  const applyCompanyScope = <T extends { eq: any; is: any }>(q: T) =>
+    owner === 'company' ? (q as any).eq('company_id', companyId) : (q as any).is('company_id', null);
 
   // 1) Collect folder subtree ids (including root)
   const folderIds: string[] = [id];
   let frontier: string[] = [id];
   while (frontier.length) {
-    const { data: kids, error: kErr } = await this.supabase
+    let kidsQ = this.supabase
       .from('folders')
       .select('id')
       .eq('library', library)
       .eq('owner', owner)
-      .in('parent_id', frontier)
-      .eq('company_id', scopedCompanyId);
+      .in('parent_id', frontier);
+    kidsQ = applyCompanyScope(kidsQ as any) as any;
+    const { data: kids, error: kErr } = await kidsQ;
     if (kErr) throw kErr;
 
     const next = (kids ?? []).map((r: any) => r.id).filter(Boolean);
@@ -391,12 +397,13 @@ export class SupabaseDataProvider implements IDataProvider {
 
   if (library === 'materials') {
     // 2) Delete materials inside subtree
-    const { data: mats, error: mErr } = await this.supabase
+    let matsQ = this.supabase
       .from('materials')
       .select('id')
       .eq('owner', owner)
-      .eq('company_id', scopedCompanyId)
       .in('folder_id', folderIds);
+    matsQ = applyCompanyScope(matsQ as any) as any;
+    const { data: mats, error: mErr } = await matsQ;
     if (mErr) throw mErr;
 
     const materialIds = (mats ?? []).map((r: any) => r.id).filter(Boolean);
@@ -412,12 +419,13 @@ export class SupabaseDataProvider implements IDataProvider {
     }
   } else {
     // assemblies library
-    const { data: asms, error: aErr } = await this.supabase
+    let asmsQ = this.supabase
       .from('assemblies')
       .select('id')
       .eq('owner', owner)
-      .eq('company_id', scopedCompanyId)
       .in('folder_id', folderIds);
+    asmsQ = applyCompanyScope(asmsQ as any) as any;
+    const { data: asms, error: aErr } = await asmsQ;
     if (aErr) throw aErr;
 
     const assemblyIds = (asms ?? []).map((r: any) => r.id).filter(Boolean);
