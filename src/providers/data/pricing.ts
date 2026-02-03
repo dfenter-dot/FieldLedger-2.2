@@ -353,35 +353,45 @@ export function computeAssemblyPricing(params: {
   const tech = computeTechCostBreakdown(companySettings as any, jobType as any);
 
   const mats: PricingInput['lineItems']['materials'] = (Array.isArray(items) ? items : [])
-    .filter((it) => it?.type === 'material')
+    .filter((it) => {
+      const t = it?.type ?? it?.item_type;
+      return t === 'material' || t === 'blank_material';
+    })
     .map((it: any) => {
-      
-  const isBlank = it?.type === 'blank_material';
-  const mat = isBlank ? {} : (materialsById?.[it.materialId ?? it.material_id] ?? {});
-  const cost = isBlank
-    ? toNum(it?.unit_cost ?? it?.base_cost ?? it?.material_cost ?? 0, 0)
-    : toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost ?? 0, 0);
+      const t = it?.type ?? it?.item_type;
+      if (t === 'blank_material') {
+        return {
+          cost: toNum(it?.unit_cost ?? it?.cost ?? it?.material_cost ?? 0, 0),
+          taxable: Boolean(it?.taxable ?? false),
+          labor_minutes: toNum(it?.labor_minutes ?? 0, 0),
+          quantity: Math.max(0, toNum(it?.quantity, 1)),
+        };
+      }
+      const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+      return {
+        cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost ?? 0, 0),
+        custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
+        taxable: Boolean(mat?.taxable ?? false),
+        labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
+        quantity: Math.max(0, toNum(it?.quantity, 1)),
+      };
+    });
 
-  return {
-    cost,
-    custom_cost: isBlank ? undefined : (mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined),
-    taxable: Boolean((isBlank ? it?.taxable : mat?.taxable) ?? false),
-    labor_minutes: toNum((isBlank ? it?.labor_minutes : mat?.labor_minutes) ?? 0, 0),
-    quantity: Math.max(0, toNum(it?.quantity, 1)),
-  };
-});
-
-  
-const laborLines: PricingInput['lineItems']['labor_lines'] = ([
-  { minutes: toNum(assembly?.labor_minutes ?? 0, 0) },
-  ...(Array.isArray(items) ? items : [])
-    .filter((it: any) => it?.type === 'labor')
-    .map((it: any) => {
-      const qty = Math.max(1, toNum(it?.quantity ?? 1, 1));
-      const per = toNum(it?.labor_minutes ?? it?.minutes ?? 0, 0);
-      return { minutes: per * qty };
-    }),
-] as any[]).filter((x) => x.minutes > 0);
+  const laborLines: PricingInput['lineItems']['labor_lines'] = [
+    // legacy header minutes
+    { minutes: toNum(assembly?.labor_minutes ?? 0, 0) },
+    // explicit labor line items
+    ...(Array.isArray(items) ? items : [])
+      .filter((it) => {
+        const t = it?.type ?? it?.item_type;
+        return t === 'labor';
+      })
+      .map((it: any) => {
+        const q = Math.max(0, toNum(it?.quantity, 1));
+        const minutes = toNum(it?.labor_minutes ?? it?.minutes ?? 0, 0);
+        return { minutes: minutes * (q || 1) };
+      }),
+  ].filter((x) => x.minutes > 0);
 
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
