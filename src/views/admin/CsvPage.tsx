@@ -331,7 +331,7 @@ export function CsvPage() {
       const folders = await collectAllFolders(data, 'assemblies', 'company');
 
       for (const r of rows) {
-        const folderId = await ensureFolderPath(data, 'assemblies', libraryType', r.path ?? '', folders);
+          const folderId = await ensureFolderPath(data, 'assemblies', libraryType, r.path ?? '', folders);
         let items: any[] = [];
         try {
           items = r.items_json ? JSON.parse(r.items_json) : [];
