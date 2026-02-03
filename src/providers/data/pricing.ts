@@ -352,21 +352,17 @@ export function computeAssemblyPricing(params: {
 
   const tech = computeTechCostBreakdown(companySettings as any, jobType as any);
 
-  const mats: PricingInput['lineItems']['materials'] = (Array.isArray(items) ? items : [])
-    .filter((it) => {
-      const t = it?.type ?? it?.item_type;
-      return t === 'material' || t === 'blank_material';
-    })
+  const rows = Array.isArray(items) ? items : [];
+
+  // Assembly line items can include:
+  // - material rows (reference to pricebook material)
+  // - labor rows (user-entered labor)
+  // - blank material rows (user-entered material)
+  // Pricing engine needs labor rows to contribute minutes (and therefore labor sell) in the breakdown.
+
+  const mats: PricingInput['lineItems']['materials'] = rows
+    .filter((it) => it?.type === 'material')
     .map((it: any) => {
-      const t = it?.type ?? it?.item_type;
-      if (t === 'blank_material') {
-        return {
-          cost: toNum(it?.unit_cost ?? it?.cost ?? it?.material_cost ?? 0, 0),
-          taxable: Boolean(it?.taxable ?? false),
-          labor_minutes: toNum(it?.labor_minutes ?? 0, 0),
-          quantity: Math.max(0, toNum(it?.quantity, 1)),
-        };
-      }
       const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
       return {
         cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost ?? 0, 0),
@@ -377,21 +373,23 @@ export function computeAssemblyPricing(params: {
       };
     });
 
-  const laborLines: PricingInput['lineItems']['labor_lines'] = [
-    // legacy header minutes
+  // Labor lines can be stored either as dedicated assembly.labor_minutes (legacy)
+  // OR as item rows with type === 'labor'.
+  // Include both to be safe.
+  const laborFromItems: PricingInput['lineItems']['labor_lines'] = rows
+    .filter((it) => it?.type === 'labor')
+    .map((it: any) => {
+      const qty = Math.max(0, toNum(it?.quantity, 1));
+      const per = toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes ?? 0, 0);
+      return { minutes: per * qty };
+    })
+    .filter((x) => x.minutes > 0);
+
+  const laborFromLegacy: PricingInput['lineItems']['labor_lines'] = [
     { minutes: toNum(assembly?.labor_minutes ?? 0, 0) },
-    // explicit labor line items
-    ...(Array.isArray(items) ? items : [])
-      .filter((it) => {
-        const t = it?.type ?? it?.item_type;
-        return t === 'labor';
-      })
-      .map((it: any) => {
-        const q = Math.max(0, toNum(it?.quantity, 1));
-        const minutes = toNum(it?.labor_minutes ?? it?.minutes ?? 0, 0);
-        return { minutes: minutes * (q || 1) };
-      }),
   ].filter((x) => x.minutes > 0);
+
+  const laborLines: PricingInput['lineItems']['labor_lines'] = [...laborFromItems, ...laborFromLegacy];
 
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
@@ -428,12 +426,16 @@ export function computeAssemblyPricing(params: {
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
     misc_material_price: breakdown.materials.misc_material,
     total_price: breakdown.totals.final_total,
-    lines: (Array.isArray(items) ? items : []).map((it: any) => {
+    lines: rows.map((it: any) => {
       if (it?.type === 'material') {
         const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
         return { ...it, labor_minutes: toNum(mat?.labor_minutes ?? 0, 0) * Math.max(0, toNum(it?.quantity, 1)) };
       }
-      if (it?.type === 'labor') return { ...it, labor_minutes: toNum(it?.minutes, 0) };
+      if (it?.type === 'labor') {
+        const qty = Math.max(0, toNum(it?.quantity, 1));
+        const per = toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0);
+        return { ...it, labor_minutes: per * qty };
+      }
       return { ...it, labor_minutes: 0 };
     }),
   };
