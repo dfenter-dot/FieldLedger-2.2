@@ -63,7 +63,16 @@ export function LoginPage() {
             <button
               type="button"
               onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-              style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', opacity: 0.85 }}
+              style={{
+                background: 'rgba(212,175,55,0.10)',
+                border: '1px solid rgba(212,175,55,0.35)',
+                color: 'var(--text)',
+                padding: '8px 12px',
+                borderRadius: 10,
+                cursor: 'pointer',
+                fontWeight: 600,
+                lineHeight: 1,
+              }}
             >
               {mode === 'signin' ? 'Request access' : 'Back to sign in'}
             </button>
