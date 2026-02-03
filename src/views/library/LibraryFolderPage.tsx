@@ -313,20 +313,16 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     try {
       setStatus('');
 
-      // Only delete if empty: no child folders and no items.
-      const kids = await data.listFolders({ kind, libraryType: lib, parentId: folder.id });
-      if (kids.length > 0) {
-        setStatus('Folder is not empty (it has subfolders). Move contents first.');
-        return;
-      }
-
-      if (kind === 'materials') {
-        const mats = await data.listMaterials({ libraryType: lib, folderId: folder.id });
-        if (mats.length > 0) {
-          setStatus('Folder is not empty (it has materials). Move contents first.');
+      // Materials: allow deleting folders regardless of contents (cascade delete).
+      // Assemblies: keep the safer behavior (must be empty) unless changed later.
+      if (kind !== 'materials') {
+        // Only delete if empty: no child folders and no items.
+        const kids = await data.listFolders({ kind, libraryType: lib, parentId: folder.id });
+        if (kids.length > 0) {
+          setStatus('Folder is not empty (it has subfolders). Move contents first.');
           return;
         }
-      } else {
+
         const asms = await data.listAssemblies({ libraryType: lib, folderId: folder.id });
         if (asms.length > 0) {
           setStatus('Folder is not empty (it has assemblies). Move contents first.');
@@ -336,7 +332,10 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
 
       const ok = await dialogs.confirm({
         title: 'Delete Folder',
-        message: `Delete “${folder.name}”?`,
+        message:
+          kind === 'materials'
+            ? `Delete “${folder.name}” and everything inside it (subfolders + materials)?`
+            : `Delete “${folder.name}”?`,
         confirmText: 'Delete',
         danger: true,
       });
@@ -952,6 +951,7 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     </div>
   );
 }
+
 
 
 
