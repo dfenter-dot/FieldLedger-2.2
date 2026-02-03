@@ -64,6 +64,11 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   const [searchResults, setSearchResults] = useState<Material[]>([]);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
 
+  // Bulk select/delete (folders + items)
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedFolderIds, setSelectedFolderIds] = useState<Record<string, boolean>>({});
+  const [selectedItemIds, setSelectedItemIds] = useState<Record<string, boolean>>({});
+
   // Move modal
   const [moveTarget, setMoveTarget] = useState<MoveTarget>(null);
   const [moveFolders, setMoveFolders] = useState<Array<{ id: string | null; name: string; depth: number }>>([]);
@@ -313,35 +318,72 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
     try {
       setStatus('');
 
-      // Materials: allow deleting folders regardless of contents (cascade delete).
-      // Assemblies: keep the safer behavior (must be empty) unless changed later.
-      if (kind !== 'materials') {
-        // Only delete if empty: no child folders and no items.
-        const kids = await data.listFolders({ kind, libraryType: lib, parentId: folder.id });
-        if (kids.length > 0) {
-          setStatus('Folder is not empty (it has subfolders). Move contents first.');
-          return;
-        }
-
-        const asms = await data.listAssemblies({ libraryType: lib, folderId: folder.id });
-        if (asms.length > 0) {
-          setStatus('Folder is not empty (it has assemblies). Move contents first.');
-          return;
-        }
-      }
-
       const ok = await dialogs.confirm({
         title: 'Delete Folder',
-        message:
-          kind === 'materials'
-            ? `Delete “${folder.name}” and everything inside it (subfolders + materials)?`
-            : `Delete “${folder.name}”?`,
+        message: `Delete “${folder.name}”?`,
         confirmText: 'Delete',
         danger: true,
       });
       if (!ok) return;
 
       await data.deleteFolder(folder.id);
+      await refresh();
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
+  const selectedFolderCount = useMemo(() => Object.values(selectedFolderIds).filter(Boolean).length, [selectedFolderIds]);
+  const selectedItemCount = useMemo(() => Object.values(selectedItemIds).filter(Boolean).length, [selectedItemIds]);
+
+  function clearBulkSelection() {
+    setSelectedFolderIds({});
+    setSelectedItemIds({});
+  }
+
+  async function bulkDeleteSelected() {
+    try {
+      setStatus('');
+      const total = selectedFolderCount + selectedItemCount;
+      if (total === 0) return;
+
+      const ok = await dialogs.confirm({
+        title: 'Delete Selected',
+        message: `Delete ${selectedItemCount} item(s) and ${selectedFolderCount} folder(s)? This cannot be undone.`,
+        confirmText: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+
+      const itemIds = Object.entries(selectedItemIds)
+        .filter(([, v]) => v)
+        .map(([id]) => id);
+      const folderIds = Object.entries(selectedFolderIds)
+        .filter(([, v]) => v)
+        .map(([id]) => id);
+
+      // Delete items first (safer if any FK relationships exist)
+      for (const id of itemIds) {
+        try {
+          if (kind === 'materials') await data.deleteMaterial(id);
+          else await data.deleteAssembly(id);
+        } catch (e) {
+          // ignore individual failures so the rest continue
+          console.warn('Bulk delete item failed', id, e);
+        }
+      }
+
+      for (const id of folderIds) {
+        try {
+          await data.deleteFolder(id);
+        } catch (e) {
+          console.warn('Bulk delete folder failed', id, e);
+        }
+      }
+
+      clearBulkSelection();
+      setSelectMode(false);
       await refresh();
     } catch (e: any) {
       console.error(e);
@@ -647,6 +689,30 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                 ) : null}
               </>
             ) : null}
+            {selectionBanner ? null : (
+              <>
+                <Button
+                  variant={selectMode ? 'secondary' : 'primary'}
+                  onClick={() => {
+                    if (selectMode) {
+                      clearBulkSelection();
+                      setSelectMode(false);
+                    } else {
+                      setSelectMode(true);
+                    }
+                  }}
+                >
+                  {selectMode ? 'Cancel Select' : 'Select'}
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={!selectMode || (selectedFolderCount + selectedItemCount === 0)}
+                  onClick={bulkDeleteSelected}
+                >
+                  Delete Selected
+                </Button>
+              </>
+            )}
             <Button onClick={handleCreateFolder}>Create Folder</Button>
             {kind === 'materials' ? (
               <Button variant="primary" onClick={handleCreateMaterial}>
@@ -705,7 +771,25 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
           <div className="list">
             {folders.map((f) => (
               <div key={f.id} className="listRow">
-                <div className="clickable" style={{ flex: 1 }} onClick={() => goToFolder(f.id, f.name)}>
+                <div
+                  className={selectMode ? '' : 'clickable'}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}
+                  onClick={() => {
+                    if (selectMode) {
+                      setSelectedFolderIds((p) => ({ ...p, [f.id]: !p[f.id] }));
+                      return;
+                    }
+                    goToFolder(f.id, f.name);
+                  }}
+                >
+                  {selectMode ? (
+                    <input
+                      type="checkbox"
+                      checked={!!selectedFolderIds[f.id]}
+                      onChange={() => setSelectedFolderIds((p) => ({ ...p, [f.id]: !p[f.id] }))}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : null}
                   <span className="folderIcon">📁</span> {f.name}
                 </div>
                 <div className="row">
@@ -750,13 +834,25 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
                     }}
                   >
                     <div
-                      className="clickable"
-                      style={{ flex: 1 }}
+                      className={selectMode && !inMaterialPickerMode ? '' : 'clickable'}
+                      style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}
                       onClick={() => {
                         if (inMaterialPickerMode) return;
+                        if (selectMode) {
+                          setSelectedItemIds((p) => ({ ...p, [m.id]: !p[m.id] }));
+                          return;
+                        }
                         nav(`/materials/${libraryType === 'app' ? 'app' : 'user'}/${m.id}`);
                       }}
                     >
+                      {selectMode && !inMaterialPickerMode ? (
+                        <input
+                          type="checkbox"
+                          checked={!!selectedItemIds[m.id]}
+                          onChange={() => setSelectedItemIds((p) => ({ ...p, [m.id]: !p[m.id] }))}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : null}
                       <div style={{ fontWeight: 600 }}>{m.name}</div>
                       <div className="muted small">{m.sku ?? ''}</div>
                     </div>
@@ -834,11 +930,25 @@ const inMaterialPickerMode = kind === 'materials' && (mode.type === 'add-materia
 
                 return (
                   <div key={a.id} className="listRow">
+                    {selectMode && !inAssemblyPicker ? (
+                      <input
+                        type="checkbox"
+                        checked={!!selectedItemIds[a.id]}
+                        onChange={() => setSelectedItemIds((p) => ({ ...p, [a.id]: !p[a.id] }))}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ marginRight: 10, width: 18, height: 18 }}
+                        aria-label={`Select ${a.name}`}
+                      />
+                    ) : null}
                     <div
                       className={inAssemblyPicker ? '' : 'clickable'}
                       style={{ flex: 1 }}
                       onClick={() => {
                         if (inAssemblyPicker) return;
+                        if (selectMode) {
+                          setSelectedItemIds((p) => ({ ...p, [a.id]: !p[a.id] }));
+                          return;
+                        }
                         nav(`/assemblies/${libraryType === 'app' ? 'app' : 'user'}/${a.id}`, {
                           state: { returnTo: location.pathname },
                         });
