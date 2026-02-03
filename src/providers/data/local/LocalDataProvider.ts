@@ -162,7 +162,48 @@ export class LocalDataProvider implements IDataProvider {
   }
 
   async deleteFolder(id: string): Promise<void> {
-    this.folders = this.folders.filter(f => f.id !== id);
+    const root = this.folders.find(f => f.id === id);
+    if (!root) {
+      this.folders = this.folders.filter(f => f.id !== id);
+      return;
+    }
+
+    // Collect folder subtree (same kind/library/company)
+    const sameScope = (f: Folder) =>
+      f.kind === root.kind &&
+      f.library_type === root.library_type &&
+      (root.library_type === 'app' ? f.company_id == null : f.company_id === this.companyId);
+
+    const byParent = new Map<string, string[]>();
+    for (const f of this.folders.filter(sameScope)) {
+      if (f.parent_id) {
+        const arr = byParent.get(f.parent_id) ?? [];
+        arr.push(f.id);
+        byParent.set(f.parent_id, arr);
+      }
+    }
+
+    const folderIds: string[] = [];
+    const stack = [id];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      folderIds.push(cur);
+      for (const kid of byParent.get(cur) ?? []) stack.push(kid);
+    }
+
+    // Delete items inside the subtree
+    if (root.kind === 'materials') {
+      this.materials = this.materials.filter(m => !folderIds.includes(m.folder_id ?? ''));
+    } else {
+      this.assemblies = this.assemblies.filter(a => !folderIds.includes(a.folder_id ?? ''));
+      // Note: local provider stores assembly items inline on assembly objects.
+    }
+
+    // Delete the folders
+    this.folders = this.folders.filter(f => !folderIds.includes(f.id));
   }
 
   /* ============================
@@ -329,4 +370,5 @@ export class LocalDataProvider implements IDataProvider {
     return settings as BrandingSettings;
   }
 }
+
 
