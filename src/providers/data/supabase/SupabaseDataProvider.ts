@@ -228,7 +228,17 @@ export class SupabaseDataProvider implements IDataProvider {
     const payload: any = { ...jobType };
     if (!payload.company_id) payload.company_id = companyId;
 
-    const { data, error } = await this.supabase.from('job_types').upsert(payload).select().single();
+    let { data, error } = await this.supabase.from('job_types').upsert(payload).select().single();
+    if (error) {
+      // Tolerate partially-migrated schemas (e.g., missing hourly markup override columns).
+      const msg = String((error as any)?.message ?? error);
+      if (msg.includes('hourly_material_markup_mode') || msg.includes('hourly_material_markup_fixed_percent')) {
+        const fallback = { ...payload } as any;
+        delete fallback.hourly_material_markup_mode;
+        delete fallback.hourly_material_markup_fixed_percent;
+        ({ data, error } = await this.supabase.from('job_types').upsert(fallback).select().single());
+      }
+    }
     if (error) throw error;
     return data as any;
   }
@@ -277,7 +287,17 @@ export class SupabaseDataProvider implements IDataProvider {
   async saveCompanySettings(settings: Partial<CompanySettings>): Promise<CompanySettings> {
     const companyId = await this.currentCompanyId();
     const payload = { ...settings, company_id: companyId, updated_at: new Date().toISOString() };
-    const { data, error } = await this.supabase.from('company_settings').upsert(payload as any).select().single();
+    let { data, error } = await this.supabase.from('company_settings').upsert(payload as any).select().single();
+    if (error) {
+      // Tolerate partially-migrated schemas (e.g., missing material markup strategy columns).
+      const msg = String((error as any)?.message ?? error);
+      if (msg.includes('material_markup_mode') || msg.includes('material_markup_fixed_percent')) {
+        const fallback = { ...(payload as any) };
+        delete fallback.material_markup_mode;
+        delete fallback.material_markup_fixed_percent;
+        ({ data, error } = await this.supabase.from('company_settings').upsert(fallback).select().single());
+      }
+    }
     if (error) throw error;
     return data as any;
   }
@@ -339,92 +359,83 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   async deleteFolder(id: string): Promise<void> {
-    // Allow deleting folders even when they contain child folders and/or items.
-    // We do an app-level cascade delete so Materials and Assemblies can remove folders
-    // regardless of contents.
+  // Cascade delete:
+  // - materials folder: delete descendant folders, materials in them, and any assembly_items referencing those materials
+  // - assemblies folder: delete descendant folders, assemblies in them, and their assembly_items
+  const { data: folder, error: fErr } = await this.supabase.from('folders').select('*').eq('id', id).single();
+  if (fErr) throw fErr;
 
-    // 1) Load the folder so we know which library scope it belongs to.
-    const { data: fRow, error: fErr } = await this.supabase.from('folders').select('*').eq('id', id).single();
-    if (fErr) throw fErr;
+  const library: 'materials' | 'assemblies' = folder.library;
+  const owner: DbOwner = folder.owner;
+  const companyId = await this.currentCompanyId();
+  const scopedCompanyId = owner === 'company' ? companyId : null;
 
-    const owner: 'app' | 'company' = (fRow as any).owner;
-    const library: 'materials' | 'assemblies' = (fRow as any).library;
-    const companyId: string | null = (fRow as any).company_id ?? null;
+  // 1) Collect folder subtree ids (including root)
+  const folderIds: string[] = [id];
+  let frontier: string[] = [id];
+  while (frontier.length) {
+    const { data: kids, error: kErr } = await this.supabase
+      .from('folders')
+      .select('id')
+      .eq('library', library)
+      .eq('owner', owner)
+      .in('parent_id', frontier)
+      .eq('company_id', scopedCompanyId);
+    if (kErr) throw kErr;
 
-    // 2) Fetch all folders in the same scope so we can compute descendants.
-    let q = this.supabase.from('folders').select('id,parent_id');
-    q = q.eq('owner', owner).eq('library', library);
-    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
+    const next = (kids ?? []).map((r: any) => r.id).filter(Boolean);
+    if (!next.length) break;
+    folderIds.push(...next);
+    frontier = next;
+  }
 
-    const { data: allRows, error: allErr } = await q;
-    if (allErr) throw allErr;
+  if (library === 'materials') {
+    // 2) Delete materials inside subtree
+    const { data: mats, error: mErr } = await this.supabase
+      .from('materials')
+      .select('id')
+      .eq('owner', owner)
+      .eq('company_id', scopedCompanyId)
+      .in('folder_id', folderIds);
+    if (mErr) throw mErr;
 
-    const rows = (allRows ?? []) as Array<{ id: string; parent_id: string | null }>;
-    const childrenByParent = new Map<string, string[]>();
-    const parentById = new Map<string, string | null>();
-    for (const r of rows) {
-      parentById.set(r.id, r.parent_id ?? null);
-      if (r.parent_id) {
-        const arr = childrenByParent.get(r.parent_id) ?? [];
-        arr.push(r.id);
-        childrenByParent.set(r.parent_id, arr);
-      }
+    const materialIds = (mats ?? []).map((r: any) => r.id).filter(Boolean);
+
+    if (materialIds.length) {
+      // 2a) Remove any assembly line items referencing these materials to satisfy FK constraints
+      const { error: aiErr } = await this.supabase.from('assembly_items').delete().in('material_id', materialIds);
+      if (aiErr) throw aiErr;
+
+      // 2b) Delete the materials
+      const { error: delMatErr } = await this.supabase.from('materials').delete().in('id', materialIds);
+      if (delMatErr) throw delMatErr;
     }
+  } else {
+    // assemblies library
+    const { data: asms, error: aErr } = await this.supabase
+      .from('assemblies')
+      .select('id')
+      .eq('owner', owner)
+      .eq('company_id', scopedCompanyId)
+      .in('folder_id', folderIds);
+    if (aErr) throw aErr;
 
-    // Collect all descendant folder ids (including the root).
-    const folderIds: string[] = [];
-    const stack = [id];
-    const seen = new Set<string>();
-    while (stack.length) {
-      const cur = stack.pop()!;
-      if (seen.has(cur)) continue;
-      seen.add(cur);
-      folderIds.push(cur);
-      const kids = childrenByParent.get(cur) ?? [];
-      for (const k of kids) stack.push(k);
-    }
+    const assemblyIds = (asms ?? []).map((r: any) => r.id).filter(Boolean);
 
-    // 3) Delete items contained in this folder subtree.
-    if (library === 'materials') {
-      let mq = this.supabase.from('materials').delete().in('folder_id', folderIds).eq('owner', owner);
-      mq = owner === 'company' ? mq.eq('company_id', companyId) : mq.is('company_id', null);
-      const { error: mErr } = await mq;
-      if (mErr) throw mErr;
-    } else {
-      // Assemblies: delete items then assemblies.
-      let aq = this.supabase.from('assemblies').select('id').in('folder_id', folderIds).eq('owner', owner);
-      aq = owner === 'company' ? aq.eq('company_id', companyId) : aq.is('company_id', null);
-      const { data: aRows, error: aErr } = await aq;
-      if (aErr) throw aErr;
-      const assemblyIds = (aRows ?? []).map((r: any) => r.id).filter(Boolean);
+    if (assemblyIds.length) {
+      const { error: aiErr } = await this.supabase.from('assembly_items').delete().in('assembly_id', assemblyIds);
+      if (aiErr) throw aiErr;
 
-      if (assemblyIds.length) {
-        const { error: aiErr } = await this.supabase.from('assembly_items').delete().in('assembly_id', assemblyIds);
-        if (aiErr) throw aiErr;
-      }
-
-      let ad = this.supabase.from('assemblies').delete().in('id', assemblyIds).eq('owner', owner);
-      ad = owner === 'company' ? ad.eq('company_id', companyId) : ad.is('company_id', null);
-      const { error: delAErr } = await ad;
-      if (delAErr) throw delAErr;
-    }
-
-    // 4) Delete folders from leaves upward to satisfy parent FK constraints.
-    // Compute depth for sorting (unknown parents treated as depth 0).
-    const depthCache = new Map<string, number>();
-    const depthOf = (fid: string): number => {
-      if (depthCache.has(fid)) return depthCache.get(fid)!;
-      const p = parentById.get(fid) ?? null;
-      const d = p ? depthOf(p) + 1 : 0;
-      depthCache.set(fid, d);
-      return d;
-    };
-    const sorted = [...folderIds].sort((a, b) => depthOf(b) - depthOf(a));
-    for (const fid of sorted) {
-      const { error: dfErr } = await this.supabase.from('folders').delete().eq('id', fid);
-      if (dfErr) throw dfErr;
+      const { error: delAsmErr } = await this.supabase.from('assemblies').delete().in('id', assemblyIds);
+      if (delAsmErr) throw delAsmErr;
     }
   }
+
+  // 3) Delete folders (children first)
+  const foldersToDelete = [...folderIds].reverse();
+  const { error: delFolderErr } = await this.supabase.from('folders').delete().in('id', foldersToDelete);
+  if (delFolderErr) throw delFolderErr;
+}
 
   /* ============================
      Materials
@@ -1082,6 +1093,7 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 }
+
 
 
 
