@@ -352,15 +352,7 @@ export function computeAssemblyPricing(params: {
 
   const tech = computeTechCostBreakdown(companySettings as any, jobType as any);
 
-  const rows = Array.isArray(items) ? items : [];
-
-  // Assembly line items can include:
-  // - material rows (reference to pricebook material)
-  // - labor rows (user-entered labor)
-  // - blank material rows (user-entered material)
-  // Pricing engine needs labor rows to contribute minutes (and therefore labor sell) in the breakdown.
-
-  const mats: PricingInput['lineItems']['materials'] = rows
+  const mats: PricingInput['lineItems']['materials'] = (Array.isArray(items) ? items : [])
     .filter((it) => it?.type === 'material')
     .map((it: any) => {
       const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
@@ -373,23 +365,9 @@ export function computeAssemblyPricing(params: {
       };
     });
 
-  // Labor lines can be stored either as dedicated assembly.labor_minutes (legacy)
-  // OR as item rows with type === 'labor'.
-  // Include both to be safe.
-  const laborFromItems: PricingInput['lineItems']['labor_lines'] = rows
-    .filter((it) => it?.type === 'labor')
-    .map((it: any) => {
-      const qty = Math.max(0, toNum(it?.quantity, 1));
-      const per = toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes ?? 0, 0);
-      return { minutes: per * qty };
-    })
-    .filter((x) => x.minutes > 0);
-
-  const laborFromLegacy: PricingInput['lineItems']['labor_lines'] = [
+  const laborLines: PricingInput['lineItems']['labor_lines'] = [
     { minutes: toNum(assembly?.labor_minutes ?? 0, 0) },
   ].filter((x) => x.minutes > 0);
-
-  const laborLines: PricingInput['lineItems']['labor_lines'] = [...laborFromItems, ...laborFromLegacy];
 
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
@@ -426,16 +404,12 @@ export function computeAssemblyPricing(params: {
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
     misc_material_price: breakdown.materials.misc_material,
     total_price: breakdown.totals.final_total,
-    lines: rows.map((it: any) => {
+    lines: (Array.isArray(items) ? items : []).map((it: any) => {
       if (it?.type === 'material') {
         const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
         return { ...it, labor_minutes: toNum(mat?.labor_minutes ?? 0, 0) * Math.max(0, toNum(it?.quantity, 1)) };
       }
-      if (it?.type === 'labor') {
-        const qty = Math.max(0, toNum(it?.quantity, 1));
-        const per = toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0);
-        return { ...it, labor_minutes: per * qty };
-      }
+      if (it?.type === 'labor') return { ...it, labor_minutes: toNum(it?.minutes, 0) };
       return { ...it, labor_minutes: 0 };
     }),
   };
@@ -484,7 +458,20 @@ export function computeEstimatePricing(params: {
       minutes: toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0),
     }));
 
-  const company = toEngineCompany(companySettings);
+  // Discount percent source of truth:
+  // - Company settings define the admin "default discount".
+  // - Estimates may store a discount_percent (often prefilled from admin default).
+  // For pricing preload behavior, prefer the estimate's stored percent when present;
+  // otherwise fall back to company settings.
+  const companyBase = toEngineCompany(companySettings);
+  const estDiscountPct = toNum(
+    (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent,
+    NaN,
+  );
+  const company = {
+    ...companyBase,
+    discount_percent: Number.isFinite(estDiscountPct) ? estDiscountPct : companyBase.discount_percent,
+  };
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -603,5 +590,6 @@ export function computeEstimateTotalsNormalized(
     total: round2(pricing.total),
   };
 }
+
 
 
