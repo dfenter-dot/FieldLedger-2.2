@@ -526,8 +526,6 @@ export function EstimateEditorPage() {
       const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
       const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
 
-      const lineItemCount = (((e as any).items ?? []) as any[]).length;
-
       const lineItemCount = Number((((e as any).items ?? []) as any[]).length);
 
       // Quantity threshold uses "any single line item quantity ≥ X"
