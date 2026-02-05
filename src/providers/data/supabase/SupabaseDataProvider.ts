@@ -685,22 +685,66 @@ export class SupabaseDataProvider implements IDataProvider {
       }
 
       const rows = (Array.isArray(items) ? items : []).map((it, idx) => {
-        const hours = Number((it.labor_hours ?? it.laborHours) ?? 0);
-        const mins = Number((it.labor_minutes ?? it.laborMinutes) ?? 0);
-        const laborMinutes = Number.isFinite(hours) && hours > 0 ? Math.floor(hours * 60 + mins) : mins;
+        const type = it.type ?? it.item_type ?? 'material';
 
-        const unitCost = it.material_cost_override ?? it.material_cost ?? it.unit_cost ?? it.cost ?? null;
+        const group_id = it.group_id ?? it.groupId ?? null;
+        const parent_group_id = it.parent_group_id ?? it.parentGroupId ?? null;
+        const quantity_factor =
+          it.quantity_factor != null || it.quantityFactor != null ? Number(it.quantity_factor ?? it.quantityFactor) : null;
+
+        if (type === 'labor') {
+          const laborMinutes = Number.isFinite(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes))
+            ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
+            : 0;
+          return {
+            estimate_option_id: activeOptionId,
+            item_type: 'labor',
+            name: it.name ?? 'Labor',
+            description: it.description ?? null,
+            quantity: 1,
+            labor_minutes: laborMinutes,
+            sort_order: idx,
+
+            group_id,
+            parent_group_id,
+            quantity_factor,
+          };
+        }
+
+        if (type === 'assembly') {
+          return {
+            estimate_option_id: activeOptionId,
+            item_type: 'assembly',
+            assembly_id: it.assembly_id ?? it.assemblyId ?? it.assembly_id,
+            quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+            labor_minutes: 0,
+            sort_order: idx,
+
+            // Snapshot for UI
+            name: it.name ?? null,
+            description: it.description ?? null,
+
+            group_id,
+            parent_group_id,
+            quantity_factor,
+          };
+        }
 
         return {
-          // Let DB generate the UUID
-          assembly_id: data.id,
-          item_type: it.item_type ?? it.type ?? 'material',
-          material_id: it.material_id ?? it.materialId ?? null,
-          name: it.name ?? null,
+          estimate_option_id: activeOptionId,
+          item_type: 'material',
+          material_id: it.material_id ?? it.materialId ?? it.material_id,
           quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
-          material_cost_override: unitCost == null ? null : Number(unitCost),
-          labor_minutes: Number.isFinite(laborMinutes) ? Math.max(0, Math.floor(laborMinutes)) : 0,
-          sort_order: Number.isFinite(Number(it.sort_order)) ? Number(it.sort_order) : idx,
+          labor_minutes: 0,
+          sort_order: idx,
+
+          // Optional snapshot for UI
+          name: it.name ?? null,
+          description: it.description ?? null,
+
+          group_id,
+          parent_group_id,
+          quantity_factor,
         };
       });
 
@@ -799,6 +843,11 @@ export class SupabaseDataProvider implements IDataProvider {
 
     const mappedItems = (items ?? []).map((it: any) => {
       const t = (it.item_type ?? it.type ?? 'material') as string;
+      const group_id = it.group_id ?? it.groupId ?? null;
+      const parent_group_id = it.parent_group_id ?? it.parentGroupId ?? null;
+      const quantity_factor =
+        it.quantity_factor != null || it.quantityFactor != null ? Number(it.quantity_factor ?? it.quantityFactor) : null;
+
       if (t === 'labor') {
         return {
           id: it.id,
@@ -807,6 +856,10 @@ export class SupabaseDataProvider implements IDataProvider {
           description: it.description ?? null,
           labor_minutes: Number(it.labor_minutes ?? 0),
           quantity: 1,
+
+          group_id,
+          parent_group_id,
+          quantity_factor,
         };
       }
       if (t === 'assembly') {
@@ -815,6 +868,14 @@ export class SupabaseDataProvider implements IDataProvider {
           type: 'assembly',
           assembly_id: it.assembly_id ?? null,
           quantity: Number(it.quantity ?? 1),
+
+          // Snapshot for UI
+          name: it.name ?? null,
+          description: it.description ?? null,
+
+          group_id,
+          parent_group_id,
+          quantity_factor,
         };
       }
       return {
@@ -822,6 +883,14 @@ export class SupabaseDataProvider implements IDataProvider {
         type: 'material',
         material_id: it.material_id ?? null,
         quantity: Number(it.quantity ?? 1),
+
+        // Optional snapshot fields (safe to ignore)
+        name: it.name ?? null,
+        description: it.description ?? null,
+
+        group_id,
+        parent_group_id,
+        quantity_factor,
       };
     });
 
@@ -936,6 +1005,11 @@ export class SupabaseDataProvider implements IDataProvider {
       const rows = (Array.isArray(items) ? items : []).map((it, idx) => {
         const type = it.type ?? it.item_type ?? 'material';
 
+        const group_id = it.group_id ?? it.groupId ?? null;
+        const parent_group_id = it.parent_group_id ?? it.parentGroupId ?? null;
+        const quantity_factor =
+          it.quantity_factor != null || it.quantityFactor != null ? Number(it.quantity_factor ?? it.quantityFactor) : null;
+
         if (type === 'labor') {
           const laborMinutes = Number.isFinite(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes))
             ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
@@ -948,6 +1022,10 @@ export class SupabaseDataProvider implements IDataProvider {
             quantity: 1,
             labor_minutes: laborMinutes,
             sort_order: idx,
+
+            group_id,
+            parent_group_id,
+            quantity_factor,
           };
         }
 
@@ -959,6 +1037,14 @@ export class SupabaseDataProvider implements IDataProvider {
             quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
             labor_minutes: 0,
             sort_order: idx,
+
+            // Snapshot for UI
+            name: it.name ?? null,
+            description: it.description ?? null,
+
+            group_id,
+            parent_group_id,
+            quantity_factor,
           };
         }
 
@@ -969,6 +1055,14 @@ export class SupabaseDataProvider implements IDataProvider {
           quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
           labor_minutes: 0,
           sort_order: idx,
+
+          // Optional snapshot for UI
+          name: it.name ?? null,
+          description: it.description ?? null,
+
+          group_id,
+          parent_group_id,
+          quantity_factor,
         };
       });
 
@@ -1101,6 +1195,7 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 }
+
 
 
 
