@@ -323,7 +323,23 @@ export function EstimateEditorPage() {
   }, [e?.id, companySettings, maxDiscountPercent]);
 
   const selectedJobType = useMemo(() => {
-    if (!e) return null;
+    useEffect(() => {
+    if (!e) return;
+    if (isLocked) return;
+    if (!(e as any).use_admin_rules) return;
+    // Defer slightly so rapid edits don't spam writes.
+    const t = window.setTimeout(() => {
+      applyAdminRules({ silent: true }).catch(console.error);
+    }, 250);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    (e as any).use_admin_rules,
+    (e as any).customer_supplies_materials,
+    (e as any).items,
+  ]);
+
+if (!e) return null;
     const byId = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
     const direct = (e as any).job_type_id ? byId[(e as any).job_type_id] : null;
     if (direct) return direct;
@@ -642,21 +658,7 @@ export function EstimateEditorPage() {
   }
 
   // Auto-apply admin rules whenever the estimate inputs change (no "Apply Changes" button).
-  useEffect(() => {
-    if (!e) return;
-    if (isLocked) return;
-    if (!(e as any).use_admin_rules) return;
-    // Defer slightly so rapid edits don't spam writes.
-    const t = window.setTimeout(() => {
-      applyAdminRules({ silent: true }).catch(console.error);
-    }, 250);
-    return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    (e as any).use_admin_rules,
-    (e as any).customer_supplies_materials,
-    (e as any).items,
-  ]);
+  
 
   return (
     <div className="stack">
