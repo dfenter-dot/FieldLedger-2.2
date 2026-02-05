@@ -646,24 +646,97 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
       const est = await data.getEstimate(mode.estimateId);
       if (!est) throw new Error('Estimate not found');
 
-      const items = [...((est.items ?? []) as any[])];
-      const idx = items.findIndex((it) => it.assembly_id === assemblyId);
+      // NEW BEHAVIOR (authoritative): Assemblies act as placeholders that expand into
+      // real estimate line items. The estimate stores the expanded items so pricing and
+      // breakdown behave exactly like direct material/labor lines.
+      //
+      // We store a group header row (type: 'assembly_group') that holds the assembly
+      // description/name and a group quantity. Child rows carry a `group_id` and
+      // per-assembly baselines (`base_quantity`, `base_labor_minutes`). When group
+      // quantity changes in the estimate editor, children are recalculated.
 
+      const items = [...((est.items ?? []) as any[])];
+
+      // Find existing group for this assembly source (if any)
+      const existingGroupIdx = items.findIndex((it) => it.type === 'assembly_group' && it.source_assembly_id === assemblyId);
+      const existingGroupId = existingGroupIdx >= 0 ? items[existingGroupIdx]?.id : null;
+
+      // Remove: delete group + its children
       if (qty == null) {
-        if (idx >= 0) items.splice(idx, 1);
-      } else if (idx >= 0) {
-        items[idx] = { ...items[idx], type: 'assembly', assembly_id: assemblyId, quantity: qty };
-      } else {
-        items.push({
-          id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
-          type: 'assembly',
-          assembly_id: assemblyId,
-          quantity: qty,
-        });
+        if (existingGroupIdx >= 0) {
+          const gid = existingGroupId;
+          const next = items.filter((it) => it.id !== gid && it.group_id !== gid);
+          const saved = await data.upsertEstimate({ ...est, items: next } as any);
+          setSelectedEstimateItems((saved?.items ?? next) as any[]);
+        }
+        return;
       }
 
-      const saved = await data.upsertEstimate({ ...est, items } as any);
-      setSelectedEstimateItems((saved?.items ?? items) as any[]);
+      // Add/update: build expanded lines from the assembly definition
+      const asm = await data.getAssembly(assemblyId);
+      if (!asm) throw new Error('Assembly not found');
+      const asmItems: any[] = (asm as any).items ?? [];
+
+      const groupId = existingGroupId || (crypto.randomUUID?.() ?? `grp_${Date.now()}`);
+
+      // Rebuild group header
+      const groupHeader: any = {
+        id: groupId,
+        type: 'assembly_group',
+        source_assembly_id: assemblyId,
+        name: (asm as any).name ?? 'Assembly',
+        description: (asm as any).description ?? null,
+        quantity: qty,
+      };
+
+      // Remove old group + children (if any)
+      const stripped = items.filter((it) => it.id !== groupId && it.group_id !== groupId);
+
+      // Expand children
+      const children: any[] = [];
+      for (const it of asmItems) {
+        const baseQty = Math.max(1, Math.floor(Number(it?.quantity ?? 1) || 1));
+        const childId = crypto.randomUUID?.() ?? `it_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+        if (it?.type === 'material' && it?.material_id) {
+          children.push({
+            id: childId,
+            type: 'material',
+            material_id: it.material_id,
+            quantity: qty * baseQty,
+            group_id: groupId,
+            base_quantity: baseQty,
+          });
+        } else if (it?.type === 'labor') {
+          const baseMins = Math.max(0, Math.floor(Number(it?.labor_minutes ?? 0) || 0));
+          children.push({
+            id: childId,
+            type: 'labor',
+            name: String(it?.name ?? 'Labor'),
+            labor_minutes: baseMins * qty,
+            quantity: 1,
+            group_id: groupId,
+            base_labor_minutes: baseMins,
+          });
+        } else if (it?.type === 'blank_material') {
+          // Best-effort support: a local, non-catalog material line.
+          // Pricing engine treats this as a material cost override.
+          const cost = it?.material_cost_override != null ? Number(it.material_cost_override) : 0;
+          children.push({
+            id: childId,
+            type: 'blank_material',
+            name: String(it?.name ?? 'Material'),
+            material_cost_override: Number.isFinite(cost) ? cost : 0,
+            quantity: qty * baseQty,
+            group_id: groupId,
+            base_quantity: baseQty,
+          });
+        }
+      }
+
+      const nextItems = [...stripped, groupHeader, ...children];
+      const saved = await data.upsertEstimate({ ...est, items: nextItems } as any);
+      setSelectedEstimateItems((saved?.items ?? nextItems) as any[]);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
@@ -1139,3 +1212,4 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
