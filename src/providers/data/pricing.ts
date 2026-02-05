@@ -352,22 +352,56 @@ export function computeAssemblyPricing(params: {
 
   const tech = computeTechCostBreakdown(companySettings as any, jobType as any);
 
-  const mats: PricingInput['lineItems']['materials'] = (Array.isArray(items) ? items : [])
-    .filter((it) => it?.type === 'material')
+  const rows = Array.isArray(items) ? items : [];
+
+  // Assembly line items can include:
+  // - material rows (reference to pricebook material)
+  // - labor rows (user-entered labor)
+  // - blank material rows (user-entered material)
+  // Pricing engine needs labor rows to contribute minutes (and therefore labor sell) in the breakdown.
+
+  const mats: PricingInput['lineItems']['materials'] = rows
+    .filter((it) => it?.type === 'material' || it?.type === 'blank_material')
     .map((it: any) => {
+      if (it?.type === 'blank_material') {
+        // User-entered material row local to the assembly.
+        return {
+          cost: toNum(it?.material_cost_override ?? it?.materialCostOverride ?? 0, 0),
+          taxable: true,
+          labor_minutes: 0,
+          quantity: Math.max(0, toNum(it?.quantity, 1)),
+        };
+      }
+
       const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+      const overrideCost = it?.material_cost_override ?? it?.materialCostOverride;
       return {
         cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost ?? 0, 0),
-        custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
+        // If the assembly row overrides cost, treat it like a custom cost for pricing.
+        custom_cost: overrideCost != null ? toNum(overrideCost, 0) : (mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined),
         taxable: Boolean(mat?.taxable ?? false),
         labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
         quantity: Math.max(0, toNum(it?.quantity, 1)),
       };
     });
 
-  const laborLines: PricingInput['lineItems']['labor_lines'] = [
+  // Labor lines can be stored either as dedicated assembly.labor_minutes (legacy)
+  // OR as item rows with type === 'labor'.
+  // Include both to be safe.
+  const laborFromItems: PricingInput['lineItems']['labor_lines'] = rows
+    .filter((it) => it?.type === 'labor')
+    .map((it: any) => {
+      const qty = Math.max(0, toNum(it?.quantity, 1));
+      const per = toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes ?? 0, 0);
+      return { minutes: per * qty };
+    })
+    .filter((x) => x.minutes > 0);
+
+  const laborFromLegacy: PricingInput['lineItems']['labor_lines'] = [
     { minutes: toNum(assembly?.labor_minutes ?? 0, 0) },
   ].filter((x) => x.minutes > 0);
+
+  const laborLines: PricingInput['lineItems']['labor_lines'] = [...laborFromItems, ...laborFromLegacy];
 
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
@@ -404,12 +438,19 @@ export function computeAssemblyPricing(params: {
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
     misc_material_price: breakdown.materials.misc_material,
     total_price: breakdown.totals.final_total,
-    lines: (Array.isArray(items) ? items : []).map((it: any) => {
+    lines: rows.map((it: any) => {
       if (it?.type === 'material') {
         const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
         return { ...it, labor_minutes: toNum(mat?.labor_minutes ?? 0, 0) * Math.max(0, toNum(it?.quantity, 1)) };
       }
-      if (it?.type === 'labor') return { ...it, labor_minutes: toNum(it?.minutes, 0) };
+      if (it?.type === 'labor') {
+        const qty = Math.max(0, toNum(it?.quantity, 1));
+        const per = toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0);
+        return { ...it, labor_minutes: per * qty };
+      }
+      if (it?.type === 'blank_material') {
+        return { ...it, labor_minutes: 0 };
+      }
       return { ...it, labor_minutes: 0 };
     }),
   };
@@ -435,43 +476,90 @@ export function computeEstimatePricing(params: {
   // Build material + labor minutes from estimate rows
   const rows = Array.isArray(estimate?.items) ? estimate.items : [];
 
-  const mats: PricingInput['lineItems']['materials'] = rows
-    .filter((it: any) => it?.type === 'material')
-    .map((it: any) => {
-      const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
-      const qty = Math.max(0, toNum(it?.quantity, 1));
-      return {
-        cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost, 0),
-        custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
-        taxable: Boolean(mat?.taxable ?? false),
-        labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
-        quantity: qty,
-      };
+  const mats: PricingInput['lineItems']['materials'] = [];
+  const laborLines: PricingInput['lineItems']['labor_lines'] = [];
+
+  // 1) Direct material rows
+  for (const it of rows) {
+    if (it?.type !== 'material') continue;
+    const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+    const qty = Math.max(0, toNum(it?.quantity, 1));
+    mats.push({
+      cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost, 0),
+      custom_cost: mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined,
+      taxable: Boolean(mat?.taxable ?? false),
+      labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
+      quantity: qty,
     });
+  }
 
-  // Treat assembly rows as additive snapshots (best-effort): if assembly has precomputed totals, include as "labor lines" and "materials" is not decomposed here.
-  // For now, we only include estimate labor rows + material labor. Assembly internals will be finalized later in Phase 3+.
-  const laborLines: PricingInput['lineItems']['labor_lines'] = rows
-    .filter((it: any) => it?.type === 'labor')
-    .map((it: any) => ({
-      // Back-compat: labor line minutes may be stored as `minutes` (UI) or `labor_minutes` (DB/provider)
-      minutes: toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0),
-    }));
+  // 2) Direct labor rows
+  for (const it of rows) {
+    if (it?.type !== 'labor') continue;
+    const qty = Math.max(0, toNum(it?.quantity, 1));
+    const per = toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0);
+    const minutes = per * qty;
+    if (minutes > 0) laborLines.push({ minutes });
+  }
 
-  // Discount percent source of truth:
-  // - Company settings define the admin "default discount".
-  // - Estimates may store a discount_percent (often prefilled from admin default).
-  // For pricing preload behavior, prefer the estimate's stored percent when present;
-  // otherwise fall back to company settings.
-  const companyBase = toEngineCompany(companySettings);
-  const estDiscountPct = toNum(
-    (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent,
-    NaN,
-  );
-  const company = {
-    ...companyBase,
-    discount_percent: Number.isFinite(estDiscountPct) ? estDiscountPct : companyBase.discount_percent,
-  };
+  // 3) Assembly rows (decomposed so assemblies follow identical pricing rules)
+  for (const estRow of rows) {
+    if (estRow?.type !== 'assembly' || !(estRow?.assemblyId ?? estRow?.assembly_id)) continue;
+    const assemblyId = String(estRow.assemblyId ?? estRow.assembly_id);
+    // If this assembly row is being used as a grouping header (children exist), pricing should use the child rows.
+    if (Boolean((estRow as any)?.group_only)) continue;
+    const hasChildren = rows.some((x: any) => String(x?.parent_assembly_id ?? x?.parentAssemblyId ?? '') === assemblyId);
+    if (hasChildren) continue;
+    const asm = assembliesById?.[assemblyId] as any;
+    if (!asm) continue;
+
+    const estQty = Math.max(0, toNum(estRow?.quantity, 1));
+    const asmItems: any[] = Array.isArray(asm?.items) ? asm.items : Array.isArray(asm?.assembly_items) ? asm.assembly_items : [];
+
+    for (const it of asmItems) {
+      const rowQty = Math.max(0, toNum(it?.quantity, 1)) * estQty;
+
+      if (it?.type === 'labor') {
+        const per = toNum(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes, 0);
+        const minutes = per * rowQty;
+        if (minutes > 0) laborLines.push({ minutes });
+        continue;
+      }
+
+      if (it?.type === 'blank_material') {
+        const cost = toNum(it?.material_cost_override ?? it?.materialCostOverride ?? 0, 0);
+        mats.push({
+          cost,
+          taxable: true,
+          labor_minutes: 0,
+          quantity: rowQty,
+        });
+        continue;
+      }
+
+      if (it?.type === 'material') {
+        const mat = materialsById?.[it.materialId ?? it.material_id] ?? {};
+        const overrideCost = it?.material_cost_override ?? it?.materialCostOverride;
+        mats.push({
+          cost: toNum(mat?.base_cost ?? mat?.unit_cost ?? mat?.material_cost, 0),
+          // If the assembly row overrides cost, treat it like a custom cost for pricing.
+          custom_cost:
+            overrideCost != null
+              ? toNum(overrideCost, 0)
+              : (mat?.use_custom_cost ? toNum(mat?.custom_cost, 0) : undefined),
+          taxable: Boolean(mat?.taxable ?? false),
+          labor_minutes: toNum(mat?.labor_minutes ?? 0, 0),
+          quantity: rowQty,
+        });
+      }
+    }
+
+    // Legacy assembly-level labor minutes (include and multiply by estimate qty)
+    const legacyMinutes = toNum(asm?.labor_minutes ?? 0, 0);
+    if (legacyMinutes > 0) laborLines.push({ minutes: legacyMinutes * estQty });
+  }
+
+  const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -562,34 +650,33 @@ function round2(n: any): number {
  * - keeps legacy field names used across Estimate editor/preview/job costing
  */
 export function computeEstimateTotalsNormalized(
-  estimate: Estimate,
-  lineItems: LineItem[],
-  companySettings: CompanySettings,
-  jobType: JobType | null,
+  estimate: any,
+  materialsById: Record<string, any>,
+  assembliesById: Record<string, any>,
+  jobTypesById: Record<string, any>,
+  companySettings: any,
 ): EstimateTotalsNormalized {
-  // Legacy helper used by EstimatePreviewPage — delegate to the unified pricing engine.
-  const pricing = computeEstimatePricing(estimate, lineItems, companySettings, jobType);
+  // UI-safe totals helper — delegate to computeEstimatePricing.
+  const pricing = computeEstimatePricing({ estimate, materialsById, assembliesById, jobTypesById, companySettings });
 
   return {
-    material_cost: round2(pricing.materials.material_cost),
-    material_price: round2(pricing.materials.material_sell),
-
-    labor_minutes: pricing.labor.expected_minutes,
-    labor_price: round2(pricing.labor.labor_sell),
-
-    misc_material_cost: round2(pricing.materials.misc_cost),
-    misc_material_price: round2(pricing.materials.misc_sell),
-
-    discount_percent: pricing.discount_applied_percent,
+    labor_minutes_actual: round2(pricing.labor_minutes_actual),
+    labor_minutes_expected: round2(pricing.labor_minutes_expected),
+    material_cost: round2(pricing.material_cost),
+    material_price: round2(pricing.material_price),
+    labor_price: round2(pricing.labor_price),
+    misc_material: round2(pricing.misc_material),
+    pre_discount_total: round2(pricing.pre_discount_total),
+    discount_percent: round2(pricing.discount_percent),
     discount_amount: round2(pricing.discount_amount),
-
-    subtotal_pre_discount: round2(pricing.subtotal_pre_discount),
-    subtotal_after_discount: round2(pricing.subtotal_after_discount),
-
+    subtotal_before_processing: round2(pricing.subtotal_before_processing),
     processing_fee: round2(pricing.processing_fee),
     total: round2(pricing.total),
+    gross_margin_target_percent: pricing.gross_margin_target_percent ?? null,
+    gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
