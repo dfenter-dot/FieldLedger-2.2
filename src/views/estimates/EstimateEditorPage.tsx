@@ -510,18 +510,134 @@ export function EstimateEditorPage() {
   }
 
   async function updateQuantity(itemId: string, quantity: number) {
-    if (!e) return;
-    const nextItems = ((e as any).items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
+  if (!e) return;
+
+  const items: any[] = [...(((e as any).items ?? []) as any[])];
+  const target = items.find((it) => String(it.id) === String(itemId));
+  if (!target) return;
+
+  const targetType = String(target?.type ?? target?.item_type ?? '').toLowerCase();
+  const isAssembly = Boolean(target?.assembly_id ?? target?.assemblyId) || targetType === 'assembly';
+  const groupId = target?.group_id ?? target?.groupId ?? null;
+  const parentGroupId = target?.parent_group_id ?? target?.parentGroupId ?? null;
+
+  // If changing the assembly container quantity, scale all child items in that group.
+  if (isAssembly && groupId) {
+    const prevQty = Math.max(1, Math.floor(toNum(target?.quantity ?? 1, 1)));
+    const nextQty = Math.max(1, Math.floor(toNum(quantity, 1)));
+
+    const nextItems = items.map((it) => {
+      if (String(it.id) === String(itemId)) return { ...it, quantity: nextQty };
+
+      const pg = it?.parent_group_id ?? it?.parentGroupId ?? null;
+      if (String(pg ?? '') !== String(groupId)) return it;
+
+      const childType = String(it?.type ?? it?.item_type ?? '').toLowerCase();
+      const isLabor =
+        childType === 'labor' || (it?.labor_minutes != null || it?.laborMinutes != null || it?.minutes != null);
+
+      // Labor child: scale minutes using factor (minutes per 1 assembly)
+      if (isLabor) {
+        const factor = toNum(it?.quantity_factor ?? it?.quantityFactor, NaN);
+        const currentMin = toNum(it?.labor_minutes ?? it?.laborMinutes ?? it?.minutes ?? 0, 0);
+        const derived = Number.isFinite(factor) ? factor : currentMin / prevQty;
+        const nextMin = Math.max(0, Math.floor(derived * nextQty));
+
+        return {
+          ...it,
+          quantity_factor: derived,
+          quantityFactor: derived,
+          labor_minutes: nextMin,
+          laborMinutes: nextMin,
+          minutes: nextMin,
+        };
+      }
+
+      // Material child: scale quantity using factor (qty per 1 assembly)
+      const factor = toNum(it?.quantity_factor ?? it?.quantityFactor, NaN);
+      const currentQty = toNum(it?.quantity ?? 0, 0);
+      const derived = Number.isFinite(factor) ? factor : currentQty / prevQty;
+      const childQty = derived * nextQty;
+
+      return {
+        ...it,
+        quantity_factor: derived,
+        quantityFactor: derived,
+        quantity: childQty,
+      };
+    });
+
     await save({ ...(e as any), items: nextItems } as any);
+    return;
   }
 
-  async function updateLaborMinutes(itemId: string, minutes: number) {
-    if (!e) return;
-    const nextItems = ((e as any).items ?? []).map((it: any) =>
-      it.id === itemId ? { ...it, labor_minutes: minutes, laborMinutes: minutes, minutes } : it,
+  // If changing an item that is inside an assembly group, persist its per-assembly factor
+  // so future assembly quantity changes scale this row proportionally.
+  if (parentGroupId) {
+    const parent = items.find((it) => String(it?.group_id ?? it?.groupId ?? '') === String(parentGroupId));
+    const parentQty = Math.max(1, Math.floor(toNum(parent?.quantity ?? 1, 1)));
+    const nextQty = toNum(quantity, 0);
+
+    const nextItems = items.map((it) =>
+      String(it.id) === String(itemId)
+        ? {
+            ...it,
+            quantity: nextQty,
+            quantity_factor: nextQty / parentQty,
+            quantityFactor: nextQty / parentQty,
+          }
+        : it,
     );
+
     await save({ ...(e as any), items: nextItems } as any);
+    return;
   }
+
+  // Standard (non-grouped) item quantity update.
+  const nextItems = items.map((it) => (String(it.id) === String(itemId) ? { ...it, quantity } : it));
+  await save({ ...(e as any), items: nextItems } as any);
+}
+
+
+  async function updateLaborMinutes(itemId: string, minutes: number) {
+  if (!e) return;
+
+  const items: any[] = [...(((e as any).items ?? []) as any[])];
+  const target = items.find((it) => String(it.id) === String(itemId));
+  if (!target) return;
+
+  const parentGroupId = target?.parent_group_id ?? target?.parentGroupId ?? null;
+
+  // If this labor row lives inside an assembly, store a per-assembly factor (minutes per 1 assembly)
+  // so changing the assembly quantity scales labor correctly.
+  if (parentGroupId) {
+    const parent = items.find((it) => String(it?.group_id ?? it?.groupId ?? '') === String(parentGroupId));
+    const parentQty = Math.max(1, Math.floor(toNum(parent?.quantity ?? 1, 1)));
+    const nextMin = Math.max(0, Math.floor(toNum(minutes, 0)));
+
+    const nextItems = items.map((it) =>
+      String(it.id) === String(itemId)
+        ? {
+            ...it,
+            labor_minutes: nextMin,
+            laborMinutes: nextMin,
+            minutes: nextMin,
+            quantity_factor: nextMin / parentQty,
+            quantityFactor: nextMin / parentQty,
+          }
+        : it,
+    );
+
+    await save({ ...(e as any), items: nextItems } as any);
+    return;
+  }
+
+  const nextItems = items.map((it) =>
+    String(it.id) === String(itemId) ? { ...it, labor_minutes: minutes, laborMinutes: minutes, minutes } : it,
+  );
+  await save({ ...(e as any), items: nextItems } as any);
+}
+
 
   async function updateLaborDescription(itemId: string, description: string) {
     if (!e) return;
@@ -1376,6 +1492,7 @@ export function EstimateEditorPage() {
     </div>
   );
 }
+
 
 
 
