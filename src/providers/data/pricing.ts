@@ -505,11 +505,13 @@ export function computeEstimatePricing(params: {
   // 3) Assembly rows (decomposed so assemblies follow identical pricing rules)
   for (const estRow of rows) {
     if (estRow?.type !== 'assembly' || !(estRow?.assemblyId ?? estRow?.assembly_id)) continue;
-    const assemblyId = String(estRow.assemblyId ?? estRow.assembly_id);
-    // If this assembly row is being used as a grouping header (children exist), pricing should use the child rows.
-    if (Boolean((estRow as any)?.group_only)) continue;
-    const hasChildren = rows.some((x: any) => String(x?.parent_assembly_id ?? x?.parentAssemblyId ?? '') === assemblyId);
+
+    // If this estimate stores the assembly's children directly (grouped rows),
+    // pricing should come from the child rows, not by decomposing again.
+    const hasChildren = rows.some((r: any) => String(r?.parent_assembly_id) === String(estRow?.id));
     if (hasChildren) continue;
+
+    const assemblyId = String(estRow.assemblyId ?? estRow.assembly_id);
     const asm = assembliesById?.[assemblyId] as any;
     if (!asm) continue;
 
