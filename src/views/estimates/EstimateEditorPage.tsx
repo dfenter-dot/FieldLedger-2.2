@@ -594,8 +594,7 @@ export function EstimateEditorPage() {
 
     const nextItems = items.filter((x) => String(x?.id) !== String(itemId));
     await save({ ...(e as any), items: nextItems } as any);
-  }}
-
+  }
   if (!e) return <div className="muted">Loading…</div>;
 
   const isLocked = String((e as any).status ?? 'draft') === 'approved';
