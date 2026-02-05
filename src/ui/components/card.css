@@ -1,8 +1,10 @@
 .card{
   border:1px solid rgba(43,54,71,0.85);
-  background: rgba(31,41,55,0.55);
+  /* Cards match the sidebar navy */
+  background: rgba(11,31,58,0.92);
   border-radius: var(--radius);
   overflow:hidden;
+  color: var(--text);
 }
 .cardHeader{
   display:flex;
@@ -10,7 +12,7 @@
   align-items:center;
   padding: 14px 14px 10px 14px;
   border-bottom: 1px solid rgba(43,54,71,0.7);
-  background: rgba(17,24,39,0.35);
+  background: rgba(11,31,58,0.92);
 }
 .cardTitle{
   margin:0;
