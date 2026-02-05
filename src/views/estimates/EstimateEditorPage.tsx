@@ -323,23 +323,7 @@ export function EstimateEditorPage() {
   }, [e?.id, companySettings, maxDiscountPercent]);
 
   const selectedJobType = useMemo(() => {
-    useEffect(() => {
-    if (!e) return;
-    if (isLocked) return;
-    if (!(e as any).use_admin_rules) return;
-    // Defer slightly so rapid edits don't spam writes.
-    const t = window.setTimeout(() => {
-      applyAdminRules({ silent: true }).catch(console.error);
-    }, 250);
-    return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    (e as any).use_admin_rules,
-    (e as any).customer_supplies_materials,
-    (e as any).items,
-  ]);
-
-if (!e) return null;
+    if (!e) return null;
     const byId = Object.fromEntries((jobTypes ?? []).map((j) => [j.id, j]));
     const direct = (e as any).job_type_id ? byId[(e as any).job_type_id] : null;
     if (direct) return direct;
@@ -509,11 +493,10 @@ if (!e) return null;
 
   // (maxDiscountPercent is memoized above)
 
-  async function applyAdminRules(opts?: { silent?: boolean }) {
+  async function applyAdminRules() {
     if (!e || isLocked || !(e as any).use_admin_rules) return;
     try {
-      const silent = !!opts?.silent;
-      if (!silent) setStatus('Applying rules...');
+      setStatus('Applying rules...');
 
       const rulesRaw = (await data.listAdminRules()) as any[];
       const rules = (rulesRaw ?? [])
@@ -530,7 +513,7 @@ if (!e) return null;
       // Rules evaluate "expected" values (not sell totals):
       // - expected labor: efficiency-adjusted in flat-rate mode
       // - expected material cost: cost + purchase tax, no markup; customer-supplied = 0
-      const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+            const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
       const pricing = computeEstimatePricing({
         estimate: e as any,
         materialsById: materialCache,
@@ -541,8 +524,6 @@ if (!e) return null;
 
       const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
       const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
-
-      const lineItemCount = Number((((e as any).items ?? []) as any[]).length);
 
       // Quantity threshold uses "any single line item quantity ≥ X"
       const maxQty = Math.max(
@@ -641,24 +622,33 @@ if (!e) return null;
         (match as any)?.set_job_type_id ??
         (match as any)?.rule_value?.target_job_type_id ??
         (match as any)?.rule_value?.job_type_id;
-      if (nextJobTypeId && nextJobTypeId !== (e as any).job_type_id) {
+      if (nextJobTypeId) {
         const next = { ...(e as any), job_type_id: nextJobTypeId } as any;
         const saved = await data.upsertEstimate(next);
         setE(saved as any);
-        if (!silent) setStatus('Rules applied.');
-      } else if (!silent) {
-        setStatus(nextJobTypeId ? 'Rules applied.' : 'No matching rules.');
+        setStatus('Rules applied.');
+      } else {
+        setStatus('No matching rules.');
       }
 
-      if (!silent) setTimeout(() => setStatus(''), 1200);
+      setTimeout(() => setStatus(''), 1200);
     } catch (err: any) {
       console.error(err);
       setStatus(String(err?.message ?? err));
     }
   }
 
-  // Auto-apply admin rules whenever the estimate inputs change (no "Apply Changes" button).
-  
+  // During initial load (or after delete), the estimate can be null.
+  // Guard the render so we don't crash on any `(e as any).…` access.
+  if (!e) {
+    return (
+      <div className="stack">
+        <Card title="Estimate" right={<Button onClick={() => nav('/estimates')}>Back</Button>}>
+          <div className="muted">Loading...</div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="stack">
@@ -673,6 +663,7 @@ if (!e) return null;
             <Button variant="danger" onClick={removeEstimate}>
               Delete
             </Button>
+            {(e as any).use_admin_rules && !isLocked ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll}>
               Save
             </Button>
