@@ -646,93 +646,139 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
       const est = await data.getEstimate(mode.estimateId);
       if (!est) throw new Error('Estimate not found');
 
-      // Assemblies are treated as grouped placeholders inside an estimate.
-      // When added, we insert a parent "assembly" row PLUS child rows for each
-      // assembly item (materials + labor). Pricing is then computed from the child
-      // rows exactly as if they were added individually.
-      const asm = await data.getAssembly(assemblyId);
-      if (!asm) throw new Error('Assembly not found');
-
       const items = [...((est.items ?? []) as any[])];
 
-      // Find existing parent row for this assembly (by assembly_id).
-      const existingParentIdx = items.findIndex((it) => it?.type === 'assembly' && it?.assembly_id === assemblyId);
-      const existingParent = existingParentIdx >= 0 ? items[existingParentIdx] : null;
-      const parentId = existingParent?.id ?? (crypto.randomUUID?.() ?? `it_${Date.now()}`);
+      // Find the parent assembly row (top-level)
+      const parentIdx = items.findIndex(
+        (it) =>
+          (it.type === 'assembly' || it.item_type === 'assembly') &&
+          String(it.assembly_id ?? it.assemblyId ?? '') === String(assemblyId) &&
+          !(it.parent_group_id ?? it.parentGroupId),
+      );
+      const parent = parentIdx >= 0 ? items[parentIdx] : null;
 
-      // Remove flow: remove parent + all children.
+      const parentGroupId = parent?.group_id ?? parent?.groupId ?? null;
+
+      const removeChildren = (groupId: any) => {
+        if (!groupId) return;
+        for (let i = items.length - 1; i >= 0; i--) {
+          const pg = items[i]?.parent_group_id ?? items[i]?.parentGroupId ?? null;
+          if (String(pg ?? '') === String(groupId)) items.splice(i, 1);
+        }
+      };
+
       if (qty == null) {
-        const nextItems = items.filter((it) => String(it?.id) !== String(parentId) && (String(it?.parent_assembly_id ?? (it as any)?.parentAssemblyId) !== String(parentId)));
-        const saved = await data.upsertEstimate({ ...est, items: nextItems } as any);
-        setSelectedEstimateItems((saved?.items ?? nextItems) as any[]);
+        // Remove parent and all children
+        if (parentIdx >= 0) items.splice(parentIdx, 1);
+        removeChildren(parentGroupId);
+
+        const saved = await data.upsertEstimate({ ...est, items } as any);
+        setSelectedEstimateItems((saved?.items ?? items) as any[]);
         return;
       }
 
-      // Build/refresh parent row.
-      const parentRow = {
-        id: parentId,
-        type: 'assembly',
-        item_type: 'assembly',
-        assembly_id: assemblyId,
-        assemblyId: assemblyId,
-        quantity: qty,
-        name: asm.name,
-        description: (asm as any).description ?? null,
-      };
+      // Ensure we have a full assembly (with items) so we can expand into estimate children.
+      const asm: any = await (data as any).getAssembly?.(assemblyId);
+      const asmItems: any[] = Array.isArray(asm?.items)
+        ? asm.items
+        : Array.isArray(asm?.assembly_items)
+          ? asm.assembly_items
+          : [];
 
-      // Build children from assembly items.
-      const asmItems: any[] = ((asm as any).items ?? (asm as any).assembly_items ?? []) as any[];
-      const children: any[] = [];
+      // If no existing parent, create parent + children
+      if (!parent) {
+        const groupId = crypto.randomUUID?.() ?? `grp_${Date.now()}`;
 
-      for (const it of asmItems) {
-        // Material item
-        const mid = it?.material_id ?? it?.materialId;
-        if (mid) {
-          const perAsm = Math.max(0, Number(it?.quantity ?? 1) || 0);
-          children.push({
-            id: crypto.randomUUID?.() ?? `it_${Date.now()}_${Math.random()}`,
-            type: 'material',
-            material_id: mid,
-            quantity: Math.max(1, Math.round(perAsm * qty)),
-            parent_assembly_id: parentId,
-            parentAssemblyId: parentId,
-            per_assembly_qty: perAsm,
-            perAssemblyQty: perAsm,
-          });
-          continue;
+        // Parent assembly row (UI container only; pricing will use children)
+        items.push({
+          id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+          type: 'assembly',
+          assembly_id: assemblyId,
+          quantity: qty,
+          group_id: groupId,
+          name: asm?.name ?? null,
+          description: asm?.description ?? null,
+        });
+
+        // Children rows (material + labor) that live inside the estimate
+        for (const it of asmItems) {
+          const t = it?.type ?? it?.item_type;
+          const baseQty = Math.max(0, Number(it?.quantity ?? 1) || 1);
+
+          if (t === 'material') {
+            const materialId = it?.material_id ?? it?.materialId;
+            if (!materialId) continue;
+
+            items.push({
+              id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+              type: 'material',
+              material_id: materialId,
+              quantity: baseQty * qty,
+              parent_group_id: groupId,
+              quantity_factor: baseQty, // qty per 1 assembly
+            });
+            continue;
+          }
+
+          if (t === 'labor') {
+            const perMinutes = Math.max(
+              0,
+              Math.floor(Number(it?.labor_minutes ?? it?.laborMinutes ?? it?.minutes ?? 0) || 0),
+            );
+
+            if (perMinutes <= 0) continue;
+
+            items.push({
+              id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+              type: 'labor',
+              name: it?.name ?? 'Labor',
+              description: it?.description ?? null,
+              labor_minutes: perMinutes * qty,
+              parent_group_id: groupId,
+              quantity_factor: perMinutes, // minutes per 1 assembly
+            });
+            continue;
+          }
+
+          // NOTE: blank_material is not yet represented in EstimateItem schema (cost overrides).
+          // We intentionally skip here to avoid creating broken rows.
         }
 
-        // Labor item
-        const itemType = String(it?.item_type ?? it?.type ?? '').toLowerCase();
-        const isLabor = itemType === 'labor' || it?.labor_minutes != null || it?.laborMinutes != null || it?.minutes != null;
-        if (isLabor) {
-          const baseMin = Math.max(0, Math.floor(Number(it?.labor_minutes ?? it?.laborMinutes ?? it?.minutes ?? 0) || 0));
-          children.push({
-            id: crypto.randomUUID?.() ?? `it_${Date.now()}_${Math.random()}`,
-            type: 'labor',
-            item_type: 'labor',
-            name: String(it?.name ?? 'Labor'),
-            labor_minutes: Math.max(0, Math.round(baseMin * qty)),
-            parent_assembly_id: parentId,
-            parentAssemblyId: parentId,
-            per_assembly_minutes: baseMin,
-            perAssemblyMinutes: baseMin,
-          });
-          continue;
+        const saved = await data.upsertEstimate({ ...est, items } as any);
+        setSelectedEstimateItems((saved?.items ?? items) as any[]);
+        return;
+      }
+
+      // Existing parent: update qty and scale children by stored factors
+      const nextParent = { ...parent, type: 'assembly', assembly_id: assemblyId, quantity: qty };
+      items[parentIdx] = nextParent;
+
+      const groupId = parentGroupId ?? (nextParent.group_id ?? nextParent.groupId);
+      if (groupId) {
+        for (let i = 0; i < items.length; i++) {
+          const r = items[i] as any;
+          const pg = r?.parent_group_id ?? r?.parentGroupId ?? null;
+          if (String(pg ?? '') !== String(groupId)) continue;
+
+          const factor = Number(r?.quantity_factor ?? r?.quantityFactor);
+          if (!Number.isFinite(factor) || factor < 0) continue;
+
+          if (r.type === 'material') {
+            items[i] = { ...r, quantity: factor * qty };
+          } else if (r.type === 'labor') {
+            items[i] = { ...r, labor_minutes: Math.floor(factor * qty) };
+          }
         }
       }
 
-      // Replace existing parent/children for this assembly.
-      const without = items.filter((it) => String(it?.id) !== String(parentId) && (String(it?.parent_assembly_id ?? (it as any)?.parentAssemblyId) !== String(parentId)));
-      const nextItems = [...without, parentRow, ...children];
-
-      const saved = await data.upsertEstimate({ ...est, items: nextItems } as any);
-      setSelectedEstimateItems((saved?.items ?? nextItems) as any[]);
+      const saved = await data.upsertEstimate({ ...est, items } as any);
+      setSelectedEstimateItems((saved?.items ?? items) as any[]);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
     }
   }
+
 
   // Global search dropdown (materials only)
   useEffect(() => {
@@ -1203,4 +1249,3 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
-
