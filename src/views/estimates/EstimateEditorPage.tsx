@@ -1172,34 +1172,6 @@ export function EstimateEditorPage() {
 				) : null}
           <div className="list">
             {rows.map((r) => {
-              const title =
-                r.type === 'labor'
-                  ? (r as any).name ?? 'Labor'
-                  : r.type === 'material'
-                    ? materialCache[(r as any).materialId]?.name ?? `Material ${(r as any).materialId}`
-                    : assemblyCache[(r as any).assemblyId]?.name ?? `Assembly ${(r as any).assemblyId}`;
-
-              const sub =
-                r.type === 'labor'
-                  ? (() => {
-                      const total = Math.max(0, Math.floor(toNum((r as any).minutes ?? (r as any).labor_minutes ?? 0, 0)));
-                      const h = Math.floor(total / 60);
-                      const m = total % 60;
-                      const parts: string[] = [];
-                      parts.push(`${h}h ${m}m`);
-                      const desc = String((r as any).description ?? '').trim();
-                      if (desc) parts.push(desc);
-                      return parts.join(' • ');
-                    })()
-                  : r.type === 'material'
-                    ? (() => {
-                        const m = materialCache[(r as any).materialId] as any;
-                        const parts: string[] = [];
-                        if (m?.sku) parts.push(String(m.sku));
-                        if (m?.description) parts.push(String(m.description));
-                        const laborMinutes = Math.max(
-                          0,
-                          Math.floor(toNum(m?.labor_hours ?? m?.laborHours ?? 0, 0) * 60 + toNum(m?.labor_minutes ?? m?.laborMinutes ?? 0, 0)),
                               if (r.type === 'assembly') {
                 const asmId = (r as any).assemblyId;
                 const a: any = assemblyCache[asmId];
@@ -1308,6 +1280,50 @@ export function EstimateEditorPage() {
                   </div>
                 );
               }
+              const title =
+                r.type === 'labor'
+                  ? (r as any).name ?? 'Labor'
+                  : r.type === 'material'
+                    ? materialCache[(r as any).materialId]?.name ?? `Material ${(r as any).materialId}`
+                    : assemblyCache[(r as any).assemblyId]?.name ?? `Assembly ${(r as any).assemblyId}`;
+
+              const sub =
+                r.type === 'labor'
+                  ? (() => {
+                      const total = Math.max(0, Math.floor(toNum((r as any).minutes ?? (r as any).labor_minutes ?? 0, 0)));
+                      const h = Math.floor(total / 60);
+                      const m = total % 60;
+                      const parts: string[] = [];
+                      parts.push(`${h}h ${m}m`);
+                      const desc = String((r as any).description ?? '').trim();
+                      if (desc) parts.push(desc);
+                      return parts.join(' • ');
+                    })()
+                  : r.type === 'material'
+                    ? (() => {
+                        const m = materialCache[(r as any).materialId] as any;
+                        const parts: string[] = [];
+                        if (m?.sku) parts.push(String(m.sku));
+                        if (m?.description) parts.push(String(m.description));
+                        const laborMinutes = Math.max(
+                          0,
+                          Math.floor(
+                            toNum(m?.labor_hours ?? m?.laborHours ?? 0, 0) * 60 +
+                              toNum(m?.labor_minutes ?? m?.laborMinutes ?? 0, 0),
+                          ),
+                        );
+                        if (laborMinutes > 0) parts.push(`Labor: ${laborMinutes} min`);
+                        return parts.length ? parts.join(' • ') : '—';
+                      })()
+                    : (() => {
+                        const a: any = assemblyCache[(r as any).assemblyId];
+                        const parts: string[] = [];
+                        const count = a?.item_count ?? (a?.items ? a.items.length : null);
+                        if (count != null) parts.push(`${count} items`);
+                        const desc = String(a?.description ?? '').trim();
+                        if (desc) parts.push(desc);
+                        return parts.length ? parts.join(' • ') : '—';
+                      })();
 
               return (
                 <div key={r.id} className="listRow">
@@ -1502,7 +1518,6 @@ export function EstimateEditorPage() {
     </div>
   );
 }
-
 
 
 
