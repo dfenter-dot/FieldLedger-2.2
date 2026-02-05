@@ -1517,7 +1517,6 @@ export function EstimateEditorPage() {
       </Card>
     </div>
   );
-}
 
 
 
