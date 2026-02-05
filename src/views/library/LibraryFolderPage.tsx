@@ -662,7 +662,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
 
       // Remove flow: remove parent + all children.
       if (qty == null) {
-        const nextItems = items.filter((it) => String(it?.id) !== String(parentId) && String(it?.parent_assembly_id) !== String(parentId));
+        const nextItems = items.filter((it) => String(it?.id) !== String(parentId) && (String(it?.parent_assembly_id ?? (it as any)?.parentAssemblyId) !== String(parentId)));
         const saved = await data.upsertEstimate({ ...est, items: nextItems } as any);
         setSelectedEstimateItems((saved?.items ?? nextItems) as any[]);
         return;
@@ -672,7 +672,9 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
       const parentRow = {
         id: parentId,
         type: 'assembly',
+        item_type: 'assembly',
         assembly_id: assemblyId,
+        assemblyId: assemblyId,
         quantity: qty,
         name: asm.name,
         description: (asm as any).description ?? null,
@@ -693,7 +695,9 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
             material_id: mid,
             quantity: Math.max(1, Math.round(perAsm * qty)),
             parent_assembly_id: parentId,
+            parentAssemblyId: parentId,
             per_assembly_qty: perAsm,
+            perAssemblyQty: perAsm,
           });
           continue;
         }
@@ -710,14 +714,16 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
             name: String(it?.name ?? 'Labor'),
             labor_minutes: Math.max(0, Math.round(baseMin * qty)),
             parent_assembly_id: parentId,
+            parentAssemblyId: parentId,
             per_assembly_minutes: baseMin,
+            perAssemblyMinutes: baseMin,
           });
           continue;
         }
       }
 
       // Replace existing parent/children for this assembly.
-      const without = items.filter((it) => String(it?.id) !== String(parentId) && String(it?.parent_assembly_id) !== String(parentId));
+      const without = items.filter((it) => String(it?.id) !== String(parentId) && (String(it?.parent_assembly_id ?? (it as any)?.parentAssemblyId) !== String(parentId)));
       const nextItems = [...without, parentRow, ...children];
 
       const saved = await data.upsertEstimate({ ...est, items: nextItems } as any);
