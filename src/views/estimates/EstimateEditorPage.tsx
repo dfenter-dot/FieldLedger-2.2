@@ -235,7 +235,7 @@ export function EstimateEditorPage() {
     const missingMats = rows
       .filter((r) => r.type === 'material')
       .map((r) => ((r as any).materialId ?? (r as any).material_id) as string)
-      .filter((id) => Boolean(id))
+      .filter(Boolean)
       .filter((id) => materialCache[id] === undefined);
 
     if (missingMats.length === 0) return;
@@ -263,8 +263,14 @@ export function EstimateEditorPage() {
     const missingAsm = rows
       .filter((r) => r.type === 'assembly')
       .map((r) => ((r as any).assemblyId ?? (r as any).assembly_id) as string)
-      .filter((id) => Boolean(id))
-      .filter((id) => assemblyCache[id] === undefined);
+      .filter(Boolean)
+      // If we only have a lightweight cached assembly header (no `items`), fetch the full assembly so pricing can decompose it.
+      .filter((id) => {
+        const cached = assemblyCache[id];
+        if (cached === undefined) return true;
+        if (cached === null) return false;
+        return !Array.isArray((cached as any).items);
+      });
 
     if (missingAsm.length === 0) return;
 
