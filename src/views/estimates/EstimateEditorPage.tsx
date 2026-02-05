@@ -234,7 +234,8 @@ export function EstimateEditorPage() {
   useEffect(() => {
     const missingMats = rows
       .filter((r) => r.type === 'material')
-      .map((r) => (r as any).materialId as string)
+      .map((r) => ((r as any).materialId ?? (r as any).material_id) as string)
+      .filter((id) => Boolean(id))
       .filter((id) => materialCache[id] === undefined);
 
     if (missingMats.length === 0) return;
@@ -261,7 +262,8 @@ export function EstimateEditorPage() {
   useEffect(() => {
     const missingAsm = rows
       .filter((r) => r.type === 'assembly')
-      .map((r) => (r as any).assemblyId as string)
+      .map((r) => ((r as any).assemblyId ?? (r as any).assembly_id) as string)
+      .filter((id) => Boolean(id))
       .filter((id) => assemblyCache[id] === undefined);
 
     if (missingAsm.length === 0) return;
@@ -1291,6 +1293,7 @@ export function EstimateEditorPage() {
     </div>
   );
 }
+
 
 
 
