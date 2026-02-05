@@ -192,10 +192,16 @@ export function EstimateEditorPage() {
 
   const estimateItems = useMemo<any[]>(() => (((e as any)?.items ?? []) as any[]), [e]);
 
+  function getParentAssemblyId(raw: any): string | null {
+    const pid = raw?.parent_assembly_id ?? raw?.parentAssemblyId ?? null;
+    return pid ? String(pid) : null;
+  }
+
+
   const topLevelRows = useMemo<ItemRow[]>(() => {
     const out: ItemRow[] = [];
     for (const it of estimateItems) {
-      if (it?.parent_assembly_id) continue;
+      if (getParentAssemblyId(it)) continue;
       // Reuse the same mapping logic as `rows` by looking up in the computed `rows` list.
       const r = rows.find((x) => String((x as any).id) === String(it?.id));
       if (r) out.push(r);
@@ -206,7 +212,7 @@ export function EstimateEditorPage() {
   const childRowsByParent = useMemo<Record<string, ItemRow[]>>(() => {
     const map: Record<string, ItemRow[]> = {};
     for (const it of estimateItems) {
-      const pid = it?.parent_assembly_id;
+      const pid = getParentAssemblyId(it);
       if (!pid) continue;
       const r = rows.find((x) => String((x as any).id) === String(it?.id));
       if (!r) continue;
@@ -490,10 +496,10 @@ export function EstimateEditorPage() {
     if (!target) return;
 
     // If this is an assembly parent, scale its child rows based on stored per-assembly factors.
-    if (target?.type === 'assembly' && target?.assembly_id && !target?.parent_assembly_id) {
+    if (target?.type === 'assembly' && target?.assembly_id && !getParentAssemblyId(target)) {
       const nextItems = items.map((it) => {
         if (String(it?.id) === String(itemId)) return { ...it, quantity };
-        if (String(it?.parent_assembly_id) !== String(itemId)) return it;
+        if (String(getParentAssemblyId(it)) !== String(itemId)) return it;
 
         // Child material
         if (it?.material_id) {
@@ -518,8 +524,8 @@ export function EstimateEditorPage() {
     }
 
     // If this is a child of an assembly, store the per-assembly factor so future parent scaling stays proportional.
-    if (target?.parent_assembly_id) {
-      const parent = items.find((it) => String(it?.id) === String(target.parent_assembly_id));
+    if (getParentAssemblyId(target)) {
+      const parent = items.find((it) => String(it?.id) === String(getParentAssemblyId(target)));
       const parentQty = Math.max(1, Number(parent?.quantity ?? 1) || 1);
       const per = quantity / parentQty;
       const nextItems = items.map((it) =>
@@ -540,8 +546,8 @@ export function EstimateEditorPage() {
     const target = items.find((it) => String(it?.id) === String(itemId));
     if (!target) return;
 
-    if (target?.parent_assembly_id) {
-      const parent = items.find((it) => String(it?.id) === String(target.parent_assembly_id));
+    if (getParentAssemblyId(target)) {
+      const parent = items.find((it) => String(it?.id) === String(getParentAssemblyId(target)));
       const parentQty = Math.max(1, Number(parent?.quantity ?? 1) || 1);
       const per = minutes / parentQty;
       const nextItems = items.map((it: any) =>
@@ -572,8 +578,8 @@ export function EstimateEditorPage() {
     if (!target) return;
 
     // Removing an assembly parent removes its children too.
-    if (target?.type === 'assembly' && target?.assembly_id && !target?.parent_assembly_id) {
-      const nextItems = items.filter((it) => String(it?.id) !== String(itemId) && String(it?.parent_assembly_id) !== String(itemId));
+    if (target?.type === 'assembly' && target?.assembly_id && !getParentAssemblyId(target)) {
+      const nextItems = items.filter((it) => String(it?.id) !== String(itemId) && String(getParentAssemblyId(it)) !== String(itemId));
       await save({ ...(e as any), items: nextItems } as any);
       return;
     }
