@@ -283,15 +283,29 @@ export interface EstimateOption {
 export interface EstimateItem {
   id?: UUID;
 
-  type: 'material' | 'assembly' | 'labor';
+  /** 
+   * Estimate items are persisted as JSON. The UI may add additional fields for grouping.
+   * NOTE: Assemblies in estimates can expand into child rows via `parent_assembly_id`.
+   */
+  type: 'material' | 'assembly' | 'labor' | 'blank_material';
 
   material_id?: UUID;
   assembly_id?: UUID;
+
+  /** For expanded assembly child rows */
+  parent_assembly_id?: UUID;
+  /** Multiplier used to keep child quantities proportional to the parent assembly quantity */
+  child_multiplier?: number;
+  /** When true, this assembly row is a grouping header only (pricing should use child rows instead). */
+  group_only?: boolean;
 
   /** For labor lines */
   name?: string;
   description?: string;
   labor_minutes?: number;
+
+  /** For blank material lines */
+  material_cost_override?: number;
 
   quantity: number;
 }
@@ -346,6 +360,7 @@ export interface BrandingSettings {
   logo_storage_path?: string | null;
   updated_at?: string;
 }
+
 
 
 
