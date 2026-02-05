@@ -69,6 +69,9 @@ export function EstimateEditorPage() {
     Record<string, { hours: string; minutes: string; description: string }>
   >({});
 
+  // Expand/collapse state for assembly groups inside the estimate.
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
   // Load admin/config data used by dropdowns and calculations.
   useEffect(() => {
     let cancelled = false;
@@ -1135,6 +1138,8 @@ export function EstimateEditorPage() {
                 const items: any[] = (((e as any).items ?? []) as any[]);
                 const children = items.filter((it) => it.group_id === groupId);
 
+                const expanded = expandedGroups[groupId] ?? false;
+
                 const qtyBuf = qtyEdits[groupId];
                 const displayQty = qtyBuf ?? String(Math.max(1, Math.floor(toNum((r as any).quantity ?? 1, 1))));
                 const commitGroupQty = async () => {
@@ -1147,11 +1152,21 @@ export function EstimateEditorPage() {
                 return (
                   <div key={r.id} className="listRow" style={{ alignItems: 'stretch' }}>
                     <div className="listMain">
-                      <div className="listTitle">{(r as any).name ?? 'Assembly'}</div>
+                      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                        <div className="listTitle" style={{ margin: 0 }}>{(r as any).name ?? 'Assembly'}</div>
+                        <Button
+                          variant="ghost"
+                          type="button"
+                          onClick={() => setExpandedGroups((p) => ({ ...p, [groupId]: !(p[groupId] ?? false) }))}
+                          title={expanded ? 'Collapse' : 'Expand'}
+                        >
+                          {expanded ? '▾' : '▸'}
+                        </Button>
+                      </div>
                       <div className="listSub">{(r as any).description ? String((r as any).description) : `${children.length} items`}</div>
 
                       <div style={{ marginTop: 10 }}>
-                        {children.length ? (
+                        {expanded && children.length ? (
                           <div className="stack" style={{ gap: 8 }}>
                             {children.map((ch) => {
                               const t = String(ch.type ?? '').toLowerCase();
