@@ -479,6 +479,14 @@ export function computeEstimatePricing(params: {
   const mats: PricingInput['lineItems']['materials'] = [];
   const laborLines: PricingInput['lineItems']['labor_lines'] = [];
 
+  const getGroupId = (r: any) => r?.group_id ?? r?.groupId ?? null;
+  const getParentGroupId = (r: any) => r?.parent_group_id ?? r?.parentGroupId ?? null;
+  const hasGroupedChildren = (groupId: any) => {
+    if (!groupId) return false;
+    return rows.some((x: any) => String(getParentGroupId(x) ?? '') === String(groupId));
+  };
+
+
   // 1) Direct material rows
   for (const it of rows) {
     if (it?.type !== 'material') continue;
@@ -505,11 +513,8 @@ export function computeEstimatePricing(params: {
   // 3) Assembly rows (decomposed so assemblies follow identical pricing rules)
   for (const estRow of rows) {
     if (estRow?.type !== 'assembly' || !(estRow?.assemblyId ?? estRow?.assembly_id)) continue;
-
-    // If this estimate stores the assembly's children directly (grouped rows),
-    // pricing should come from the child rows, not by decomposing again.
-    const hasChildren = rows.some((r: any) => String(r?.parent_assembly_id) === String(estRow?.id));
-    if (hasChildren) continue;
+    const groupId = getGroupId(estRow);
+    if (hasGroupedChildren(groupId)) continue;
 
     const assemblyId = String(estRow.assemblyId ?? estRow.assembly_id);
     const asm = assembliesById?.[assemblyId] as any;
@@ -678,7 +683,6 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
-
 
 
 
