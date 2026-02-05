@@ -646,134 +646,88 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
       const est = await data.getEstimate(mode.estimateId);
       if (!est) throw new Error('Estimate not found');
 
+      // Assemblies are treated as grouped placeholders inside an estimate.
+      // When added, we insert a parent "assembly" row PLUS child rows for each
+      // assembly item (materials + labor). Pricing is then computed from the child
+      // rows exactly as if they were added individually.
+      const asm = await data.getAssembly(assemblyId);
+      if (!asm) throw new Error('Assembly not found');
+
       const items = [...((est.items ?? []) as any[])];
 
-      // Parent row (group header)
-      const parentIdx = items.findIndex(
-        (it) =>
-          (it?.type === 'assembly' || it?.item_type === 'assembly') &&
-          String(it?.assembly_id ?? it?.assemblyId ?? '') === String(assemblyId) &&
-          !it?.parent_assembly_id &&
-          !it?.parentAssemblyId,
-      );
+      // Find existing parent row for this assembly (by assembly_id).
+      const existingParentIdx = items.findIndex((it) => it?.type === 'assembly' && it?.assembly_id === assemblyId);
+      const existingParent = existingParentIdx >= 0 ? items[existingParentIdx] : null;
+      const parentId = existingParent?.id ?? (crypto.randomUUID?.() ?? `it_${Date.now()}`);
 
-      const childIdxs = items
-        .map((it, i) => ({ it, i }))
-        .filter(({ it }) => String(it?.parent_assembly_id ?? it?.parentAssemblyId ?? '') === String(assemblyId))
-        .map(({ i }) => i);
-
+      // Remove flow: remove parent + all children.
       if (qty == null) {
-        // Remove parent + children
-        const toRemove = new Set<number>([...childIdxs, ...(parentIdx >= 0 ? [parentIdx] : [])]);
-        const nextItems = items.filter((_, i) => !toRemove.has(i));
+        const nextItems = items.filter((it) => String(it?.id) !== String(parentId) && String(it?.parent_assembly_id) !== String(parentId));
         const saved = await data.upsertEstimate({ ...est, items: nextItems } as any);
         setSelectedEstimateItems((saved?.items ?? nextItems) as any[]);
         return;
       }
 
-      const asm = await data.getAssembly(String(assemblyId));
-      if (!asm) throw new Error('Assembly not found');
-
-      // Upsert parent row (header-only; pricing uses children)
+      // Build/refresh parent row.
       const parentRow = {
-        id: (parentIdx >= 0 ? items[parentIdx]?.id : null) ?? crypto.randomUUID?.() ?? `it_${Date.now()}`,
+        id: parentId,
         type: 'assembly',
-        assembly_id: String(assemblyId),
+        assembly_id: assemblyId,
         quantity: qty,
-        group_only: true,
-        // snapshot fields for display (safe extras)
-        name: (asm as any)?.name ?? (asm as any)?.title ?? undefined,
-        description: (asm as any)?.description ?? undefined,
+        name: asm.name,
+        description: (asm as any).description ?? null,
       };
 
-      if (parentIdx >= 0) items[parentIdx] = parentRow;
-      else items.push(parentRow);
+      // Build children from assembly items.
+      const asmItems: any[] = ((asm as any).items ?? (asm as any).assembly_items ?? []) as any[];
+      const children: any[] = [];
 
-      // Build/refresh children.
-      const asmItems: any[] = Array.isArray((asm as any)?.items)
-        ? (asm as any).items
-        : Array.isArray((asm as any)?.assembly_items)
-          ? (asm as any).assembly_items
-          : [];
+      for (const it of asmItems) {
+        // Material item
+        const mid = it?.material_id ?? it?.materialId;
+        if (mid) {
+          const perAsm = Math.max(0, Number(it?.quantity ?? 1) || 0);
+          children.push({
+            id: crypto.randomUUID?.() ?? `it_${Date.now()}_${Math.random()}`,
+            type: 'material',
+            material_id: mid,
+            quantity: Math.max(1, Math.round(perAsm * qty)),
+            parent_assembly_id: parentId,
+            per_assembly_qty: perAsm,
+          });
+          continue;
+        }
 
-      // Existing children map by (type + material_id + name)
-      const existingChildren = items.filter(
-        (it) => String(it?.parent_assembly_id ?? it?.parentAssemblyId ?? '') === String(assemblyId),
-      ) as any[];
-
-      const keyOf = (it: any) =>
-        `${String(it?.type ?? '')}::${String(it?.material_id ?? it?.materialId ?? '')}::${String(it?.name ?? '')}`;
-
-      const existingByKey = new Map<string, any>();
-      for (const c of existingChildren) existingByKey.set(keyOf(c), c);
-
-      // Remove all existing children; we'll re-add updated rows
-      const next = items.filter((it) => String(it?.parent_assembly_id ?? it?.parentAssemblyId ?? '') !== String(assemblyId));
-
-      for (const ai of asmItems) {
-        const t = String(ai?.type ?? 'material');
-        const baseMult = Math.max(0, Number(ai?.quantity ?? 1) || 1);
-
-        const ex = existingByKey.get(keyOf(ai));
-        const childMultiplier =
-          typeof ex?.child_multiplier === 'number'
-            ? ex.child_multiplier
-            : typeof ex?.childMultiplier === 'number'
-              ? ex.childMultiplier
-              : baseMult;
-
-        const childQty = Math.max(0, qty * (Number(childMultiplier) || 0));
-
-        if (t === 'labor') {
-          next.push({
-            id: ex?.id ?? crypto.randomUUID?.() ?? `it_${Date.now()}`,
+        // Labor item
+        const itemType = String(it?.item_type ?? it?.type ?? '').toLowerCase();
+        const isLabor = itemType === 'labor' || it?.labor_minutes != null || it?.laborMinutes != null || it?.minutes != null;
+        if (isLabor) {
+          const baseMin = Math.max(0, Math.floor(Number(it?.labor_minutes ?? it?.laborMinutes ?? it?.minutes ?? 0) || 0));
+          children.push({
+            id: crypto.randomUUID?.() ?? `it_${Date.now()}_${Math.random()}`,
             type: 'labor',
-            parent_assembly_id: String(assemblyId),
-            child_multiplier: childMultiplier,
-            name: ai?.name ?? ex?.name ?? 'Labor',
-            description: ai?.description ?? ex?.description ?? '',
-            labor_minutes: Number(ai?.labor_minutes ?? ai?.minutes ?? ai?.laborMinutes ?? 0) || 0,
-            quantity: childQty,
-            hide_from_top_level: true,
+            item_type: 'labor',
+            name: String(it?.name ?? 'Labor'),
+            labor_minutes: Math.max(0, Math.round(baseMin * qty)),
+            parent_assembly_id: parentId,
+            per_assembly_minutes: baseMin,
           });
           continue;
         }
-
-        if (t === 'blank_material') {
-          next.push({
-            id: ex?.id ?? crypto.randomUUID?.() ?? `it_${Date.now()}`,
-            type: 'blank_material',
-            parent_assembly_id: String(assemblyId),
-            child_multiplier: childMultiplier,
-            name: ai?.name ?? ex?.name ?? 'Material',
-            material_cost_override: Number(ai?.material_cost_override ?? ai?.materialCostOverride ?? 0) || 0,
-            quantity: childQty,
-            hide_from_top_level: true,
-          });
-          continue;
-        }
-
-        // material
-        next.push({
-          id: ex?.id ?? crypto.randomUUID?.() ?? `it_${Date.now()}`,
-          type: 'material',
-          parent_assembly_id: String(assemblyId),
-          child_multiplier: childMultiplier,
-          material_id: String(ai?.material_id ?? ai?.materialId ?? ''),
-          quantity: childQty,
-          // carry overrides if present on the assembly item
-          material_cost_override: ai?.material_cost_override ?? ai?.materialCostOverride,
-          hide_from_top_level: true,
-        });
       }
 
-      const saved = await data.upsertEstimate({ ...est, items: next } as any);
-      setSelectedEstimateItems((saved?.items ?? next) as any[]);
+      // Replace existing parent/children for this assembly.
+      const without = items.filter((it) => String(it?.id) !== String(parentId) && String(it?.parent_assembly_id) !== String(parentId));
+      const nextItems = [...without, parentRow, ...children];
+
+      const saved = await data.upsertEstimate({ ...est, items: nextItems } as any);
+      setSelectedEstimateItems((saved?.items ?? nextItems) as any[]);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
     }
   }
+
   // Global search dropdown (materials only)
   useEffect(() => {
     if (kind !== 'materials') return;
