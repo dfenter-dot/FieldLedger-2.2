@@ -12,10 +12,10 @@ import { computeEstimatePricing } from '../../providers/data/pricing';
 import { TechCostBreakdownCard } from '../shared/TechCostBreakdownCard';
 
 type ItemRow =
-  | { id: string; type: 'material'; materialId: string; quantity: number }
+  | { id: string; type: 'material'; materialId: string; quantity: number; parentAssemblyId?: string }
+  | { id: string; type: 'blank_material'; name: string; quantity: number; parentAssemblyId?: string }
   | { id: string; type: 'assembly'; assemblyId: string; quantity: number }
-  | { id: string; type: 'assembly_group'; quantity: number; name: string; description?: string | null }
-  | { id: string; type: 'labor'; name: string; minutes: number };
+  | { id: string; type: 'labor'; name: string; minutes: number; parentAssemblyId?: string };
 
 function toIntText(raw: string) {
   const s = (raw ?? '').trim();
@@ -62,15 +62,13 @@ export function EstimateEditorPage() {
   // Local edit buffer for quantities so users can backspace/replace without double-clicking.
   // Normalized to >= 1 on blur.
   const [qtyEdits, setQtyEdits] = useState<Record<string, string>>({});
+  const [expandedAssemblies, setExpandedAssemblies] = useState<Record<string, boolean>>({});
 
   // Local edit buffer so numeric inputs can be blank while editing.
   // App-wide rule: backspacing should not require double-clicking.
   const [laborEdits, setLaborEdits] = useState<
     Record<string, { hours: string; minutes: string; description: string }>
   >({});
-
-  // Expand/collapse state for assembly groups inside the estimate.
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   // Load admin/config data used by dropdowns and calculations.
   useEffect(() => {
@@ -143,67 +141,112 @@ export function EstimateEditorPage() {
       });
   }, [data, estimateId, nav]);
 
+  const childrenByAssemblyId = useMemo<Record<string, ItemRow[]>>(() => {
+    const items: any[] = ((e as any)?.items ?? []) as any[];
+    const map: Record<string, ItemRow[]> = {};
+
+    for (const it of items) {
+      const parentId = it.parent_assembly_id ?? it.parentAssemblyId;
+      if (!parentId) continue;
+      const pid = String(parentId);
+
+      if (it.type === 'labor' || it.item_type === 'labor') {
+        map[pid] ??= [];
+        map[pid].push({
+          id: String(it.id),
+          type: 'labor',
+          parentAssemblyId: pid,
+          name: String(it.name ?? 'Labor'),
+          minutes: Math.max(0, Math.floor(toNum(it.minutes ?? it.labor_minutes ?? it.laborMinutes ?? 0, 0))),
+          quantity: Math.max(0, toNum(it.quantity ?? 0, 0)),
+        } as any);
+        continue;
+      }
+
+      if (it.type === 'blank_material') {
+        map[pid] ??= [];
+        map[pid].push({
+          id: String(it.id),
+          type: 'blank_material',
+          parentAssemblyId: pid,
+          name: String(it.name ?? 'Material'),
+          quantity: Math.max(0, toNum(it.quantity ?? 0, 0)),
+        } as any);
+        continue;
+      }
+
+      if (it.material_id) {
+        map[pid] ??= [];
+        map[pid].push({
+          id: String(it.id),
+          type: 'material',
+          parentAssemblyId: pid,
+          materialId: String(it.material_id),
+          quantity: Math.max(0, toNum(it.quantity ?? 0, 0)),
+        } as any);
+        continue;
+      }
+    }
+
+    // Stable order (insertion order is fine, but keep deterministic)
+    for (const k of Object.keys(map)) {
+      map[k] = map[k].slice();
+    }
+    return map;
+  }, [e]);
+
   const rows = useMemo<ItemRow[]>(() => {
     const items: any[] = ((e as any)?.items ?? []) as any[];
 
-    return items
-      .map((it: any) => {
-        // Grouped child rows live inside an assembly card and should not appear as
-        // top-level rows in the estimate.
-        if (it?.group_id) return null;
+    const top = items.filter(
+      (it: any) =>
+        !(it?.parent_assembly_id || it?.parentAssemblyId) &&
+        !Boolean(it?.hide_from_top_level ?? it?.hideFromTopLevel),
+    );
 
-        // Assembly group header (expanded assembly)
-        if (String(it?.type ?? '').toLowerCase() === 'assembly_group') {
+    return top
+      .map((it: any) => {
+        // Assembly header
+        if (it.assembly_id) {
           return {
-            id: it.id,
-            type: 'assembly_group' as const,
+            id: String(it.id),
+            type: 'assembly' as const,
+            assemblyId: String(it.assembly_id),
             quantity: Math.max(1, toNum(it.quantity ?? 1, 1)),
-            name: String(it.name ?? 'Assembly'),
-            description: it.description ?? null,
           };
         }
 
         // Material line
         if (it.material_id) {
           return {
-            id: it.id,
+            id: String(it.id),
             type: 'material' as const,
-            materialId: it.material_id,
+            materialId: String(it.material_id),
             quantity: Math.max(1, toNum(it.quantity ?? 1, 1)),
           };
         }
 
-        // Assembly line
-        if (it.assembly_id) {
+        // Blank material top-level (rare)
+        if (it.type === 'blank_material') {
           return {
-            id: it.id,
-            type: 'assembly' as const,
-            assemblyId: it.assembly_id,
+            id: String(it.id),
+            type: 'blank_material' as const,
+            name: String(it.name ?? 'Material'),
             quantity: Math.max(1, toNum(it.quantity ?? 1, 1)),
           };
         }
 
-        // Labor line: support either item_type/type flag OR presence of labor_minutes
-        const itemType = String(it.item_type ?? it.type ?? '').toLowerCase();
-        const isLabor =
-          itemType === 'labor' ||
-          it.labor_minutes != null ||
-          it.laborMinutes != null ||
-          (it.name && it.minutes != null && !it.material_id && !it.assembly_id);
-
-        if (isLabor) {
-          const mins = Math.max(0, Math.floor(toNum(it.labor_minutes ?? it.laborMinutes ?? it.minutes ?? 0, 0)));
-          return {
-            id: it.id,
-            type: 'labor' as const,
-            name: String(it.name ?? 'Labor'),
-            minutes: mins,
-          };
-        }
-
-        return null;
+        // Labor
+        const minutes = Math.max(0, Math.floor(toNum(it.minutes ?? it.labor_minutes ?? it.laborMinutes ?? 0, 0)));
+        return {
+          id: String(it.id),
+          type: 'labor' as const,
+          name: String(it.name ?? 'Labor'),
+          minutes,
+          quantity: Math.max(1, toNum(it.quantity ?? 1, 1)),
+        };
       })
-      .filter(Boolean) as ItemRow[];
+      .filter(Boolean) as any;
   }, [e]);
 
   // Keep local edit buffers in sync with loaded items.
@@ -251,11 +294,9 @@ export function EstimateEditorPage() {
   });
 
   useEffect(() => {
-    // Load materials referenced by any estimate item (including assembly-expanded child rows).
-    const items: any[] = ((e as any)?.items ?? []) as any[];
-    const missingMats = items
-      .filter((it) => !!it?.material_id)
-      .map((it) => String(it.material_id))
+    const missingMats = rows
+      .filter((r) => r.type === 'material')
+      .map((r) => (r as any).materialId as string)
       .filter((id) => materialCache[id] === undefined);
 
     if (missingMats.length === 0) return;
@@ -277,7 +318,7 @@ export function EstimateEditorPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, e, materialCache]);
+  }, [data, rows, materialCache]);
 
   useEffect(() => {
     const missingAsm = rows
@@ -477,61 +518,44 @@ export function EstimateEditorPage() {
 
   async function updateQuantity(itemId: string, quantity: number) {
     if (!e) return;
-    const nextItems = ((e as any).items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
-    await save({ ...(e as any), items: nextItems } as any);
-  }
 
-  async function updateAssemblyGroupQuantity(groupId: string, groupQty: number) {
-    if (!e) return;
-    const items: any[] = [...(((e as any).items ?? []) as any[])];
-    const next = items.map((it) => {
-      if (it.id === groupId && String(it.type ?? '').toLowerCase() === 'assembly_group') {
-        return { ...it, quantity: groupQty };
+    const items: any[] = [ ...(((e as any).items ?? []) as any[]) ];
+    const idx = items.findIndex((it) => String(it?.id) === String(itemId));
+    if (idx < 0) return;
+
+    const it = items[idx];
+    items[idx] = { ...it, quantity };
+
+    // If editing an expanded assembly child row, update its multiplier so it stays proportional when parent qty changes.
+    const parentId = it?.parent_assembly_id ?? it?.parentAssemblyId;
+    if (parentId) {
+      const parent = items.find(
+        (x) =>
+          (x?.type === 'assembly' || x?.item_type === 'assembly') &&
+          String(x?.assembly_id ?? x?.assemblyId ?? '') === String(parentId) &&
+          !(x?.parent_assembly_id || x?.parentAssemblyId),
+      );
+      const parentQty = Math.max(1, toNum(parent?.quantity ?? 1, 1));
+      const mult = parentQty > 0 ? quantity / parentQty : quantity;
+      items[idx] = { ...items[idx], child_multiplier: mult, childMultiplier: mult };
+      await save({ ...(e as any), items } as any);
+      return;
+    }
+
+    // If editing an assembly header qty, update all its children quantities using their multipliers.
+    if ((it?.type === 'assembly' || it?.item_type === 'assembly') && (it?.assembly_id ?? it?.assemblyId)) {
+      const asmId = String(it.assembly_id ?? it.assemblyId);
+      for (let i = 0; i < items.length; i++) {
+        const c = items[i];
+        if (String(c?.parent_assembly_id ?? c?.parentAssemblyId ?? '') !== asmId) continue;
+        const mult = typeof c?.child_multiplier === 'number' ? c.child_multiplier : typeof c?.childMultiplier === 'number' ? c.childMultiplier : 0;
+        const nextQty = Math.max(0, quantity * (Number(mult) || 0));
+        items[i] = { ...c, quantity: nextQty };
       }
-      if (it.group_id !== groupId) return it;
+    }
 
-      // Child rows are stored as fully-expanded estimate line items. When the group
-      // quantity changes, we recompute quantities/minutes from stored baselines.
-      if ((it.material_id || String(it.type ?? '').toLowerCase() === 'blank_material') && it.base_quantity != null) {
-        const base = Math.max(1, Math.floor(toNum(it.base_quantity, 1)));
-        return { ...it, quantity: Math.max(1, base * groupQty) };
-      }
-      if (String(it.type ?? '').toLowerCase() === 'labor' && it.base_labor_minutes != null) {
-        const baseM = Math.max(0, Math.floor(toNum(it.base_labor_minutes, 0)));
-        return { ...it, labor_minutes: baseM * groupQty, laborMinutes: baseM * groupQty, minutes: baseM * groupQty };
-      }
-      return it;
-    });
-
-    await save({ ...(e as any), items: next } as any);
-  }
-
-  async function updateAssemblyChildBaseQuantity(childId: string, groupId: string, baseQty: number) {
-    if (!e) return;
-    const items: any[] = [...(((e as any).items ?? []) as any[])];
-    const group = items.find((it) => it.id === groupId);
-    const groupQty = Math.max(1, Math.floor(toNum(group?.quantity ?? 1, 1)));
-    const next = items.map((it) => {
-      if (it.id !== childId) return it;
-      const b = Math.max(1, Math.floor(toNum(baseQty, 1)));
-      return { ...it, base_quantity: b, quantity: Math.max(1, b * groupQty) };
-    });
-    await save({ ...(e as any), items: next } as any);
-  }
-
-  async function updateAssemblyChildBaseLaborMinutes(childId: string, groupId: string, baseMinutes: number) {
-    if (!e) return;
-    const items: any[] = [...(((e as any).items ?? []) as any[])];
-    const group = items.find((it) => it.id === groupId);
-    const groupQty = Math.max(1, Math.floor(toNum(group?.quantity ?? 1, 1)));
-    const b = Math.max(0, Math.floor(toNum(baseMinutes, 0)));
-    const next = items.map((it) => {
-      if (it.id !== childId) return it;
-      const mins = b * groupQty;
-      return { ...it, base_labor_minutes: b, labor_minutes: mins, laborMinutes: mins, minutes: mins };
-    });
-    await save({ ...(e as any), items: next } as any);
-  }
+    await save({ ...(e as any), items } as any);
+  }}
 
   async function updateLaborMinutes(itemId: string, minutes: number) {
     if (!e) return;
@@ -549,12 +573,28 @@ export function EstimateEditorPage() {
 
   async function removeItem(itemId: string) {
     if (!e) return;
-    const items: any[] = (((e as any).items ?? []) as any[]);
-    // If removing an assembly group header, also remove its child rows.
-    const isGroup = items.some((it) => it.id === itemId && String(it.type ?? '').toLowerCase() === 'assembly_group');
-    const nextItems = isGroup ? items.filter((it) => it.id !== itemId && it.group_id !== itemId) : items.filter((it) => it.id !== itemId);
+
+    const items: any[] = [ ...(((e as any).items ?? []) as any[]) ];
+    const idx = items.findIndex((it) => String(it?.id) === String(itemId));
+    if (idx < 0) return;
+
+    const it = items[idx];
+
+    // If removing an assembly header row, remove its children too.
+    if ((it?.type === 'assembly' || it?.item_type === 'assembly') && (it?.assembly_id ?? it?.assemblyId)) {
+      const asmId = String(it.assembly_id ?? it.assemblyId);
+      const nextItems = items.filter(
+        (x) =>
+          String(x?.id) !== String(itemId) &&
+          String(x?.parent_assembly_id ?? x?.parentAssemblyId ?? '') !== asmId,
+      );
+      await save({ ...(e as any), items: nextItems } as any);
+      return;
+    }
+
+    const nextItems = items.filter((x) => String(x?.id) !== String(itemId));
     await save({ ...(e as any), items: nextItems } as any);
-  }
+  }}
 
   if (!e) return <div className="muted">Loading…</div>;
 
@@ -1133,186 +1173,6 @@ export function EstimateEditorPage() {
 				) : null}
           <div className="list">
             {rows.map((r) => {
-              if (r.type === 'assembly_group') {
-                const groupId = r.id;
-                const items: any[] = (((e as any).items ?? []) as any[]);
-                const children = items.filter((it) => it.group_id === groupId);
-
-                const expanded = expandedGroups[groupId] ?? false;
-
-                const qtyBuf = qtyEdits[groupId];
-                const displayQty = qtyBuf ?? String(Math.max(1, Math.floor(toNum((r as any).quantity ?? 1, 1))));
-                const commitGroupQty = async () => {
-                  const raw = (qtyEdits[groupId] ?? '').trim();
-                  const n = raw === '' ? Math.max(1, Math.floor(toNum((r as any).quantity ?? 1, 1))) : Math.max(1, Math.floor(toNum(raw, 1)));
-                  setQtyEdits((p) => ({ ...p, [groupId]: String(n) }));
-                  await updateAssemblyGroupQuantity(groupId, n);
-                };
-
-                return (
-                  <div key={r.id} className="listRow" style={{ alignItems: 'stretch' }}>
-                    <div className="listMain">
-                      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                        <div className="listTitle" style={{ margin: 0 }}>{(r as any).name ?? 'Assembly'}</div>
-                        <Button
-                          variant="ghost"
-                          type="button"
-                          onClick={() => setExpandedGroups((p) => ({ ...p, [groupId]: !(p[groupId] ?? false) }))}
-                          title={expanded ? 'Collapse' : 'Expand'}
-                        >
-                          {expanded ? '▾' : '▸'}
-                        </Button>
-                      </div>
-                      <div className="listSub">{(r as any).description ? String((r as any).description) : `${children.length} items`}</div>
-
-                      <div style={{ marginTop: 10 }}>
-                        {expanded && children.length ? (
-                          <div className="stack" style={{ gap: 8 }}>
-                            {children.map((ch) => {
-                              const t = String(ch.type ?? '').toLowerCase();
-                              if (t === 'material') {
-                                const matName = materialCache[String(ch.material_id)]?.name ?? 'Material';
-                                const base = Math.max(1, Math.floor(toNum(ch.base_quantity ?? 1, 1)));
-                                const total = Math.max(1, Math.floor(toNum(ch.quantity ?? 1, 1)));
-                                return (
-                                  <div key={ch.id} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
-                                    <div className="stack" style={{ minWidth: 0 }}>
-                                      <div style={{ fontWeight: 600 }}>{matName}</div>
-                                      <div className="muted small">Total: {total}</div>
-                                    </div>
-                                    <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                                      <span className="muted small">Qty / assembly</span>
-                                      <Input
-                                        style={{ width: 100 }}
-                                        type="text"
-                                        inputMode="numeric"
-                                        value={String(base)}
-                                        onChange={(ev) => {
-                                          const v = ev.target.value;
-                                          const n = v.trim() === '' ? 1 : Math.max(1, Math.floor(toNum(v, 1)));
-                                          // optimistic UI update
-                                          setE((prev) => {
-                                            if (!prev) return prev;
-                                            const nextItems = (((prev as any).items ?? []) as any[]).map((it) =>
-                                              it.id === ch.id ? { ...it, base_quantity: n, quantity: n * Math.max(1, Math.floor(toNum((r as any).quantity ?? 1, 1))) } : it,
-                                            );
-                                            return { ...(prev as any), items: nextItems } as any;
-                                          });
-                                        }}
-                                        onBlur={async (ev) => {
-                                          const n = Math.max(1, Math.floor(toNum(ev.target.value, 1)));
-                                          await updateAssemblyChildBaseQuantity(String(ch.id), groupId, n);
-                                        }}
-                                      />
-                                      <Button variant="danger" onClick={() => removeItem(String(ch.id))}>Remove</Button>
-                                    </div>
-                                  </div>
-                                );
-                              }
-                              if (t === 'labor') {
-                                const baseM = Math.max(0, Math.floor(toNum(ch.base_labor_minutes ?? 0, 0)));
-                                const totalM = Math.max(0, Math.floor(toNum(ch.labor_minutes ?? 0, 0)));
-                                return (
-                                  <div key={ch.id} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
-                                    <div className="stack" style={{ minWidth: 0 }}>
-                                      <div style={{ fontWeight: 600 }}>{String(ch.name ?? 'Labor')}</div>
-                                      <div className="muted small">Total: {totalM} min</div>
-                                    </div>
-                                    <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                                      <span className="muted small">Min / assembly</span>
-                                      <Input
-                                        style={{ width: 100 }}
-                                        type="text"
-                                        inputMode="numeric"
-                                        value={String(baseM)}
-                                        onChange={(ev) => {
-                                          const v = ev.target.value;
-                                          const n = v.trim() === '' ? 0 : Math.max(0, Math.floor(toNum(v, 0)));
-                                          setE((prev) => {
-                                            if (!prev) return prev;
-                                            const groupQty = Math.max(1, Math.floor(toNum((r as any).quantity ?? 1, 1)));
-                                            const nextItems = (((prev as any).items ?? []) as any[]).map((it) =>
-                                              it.id === ch.id ? { ...it, base_labor_minutes: n, labor_minutes: n * groupQty } : it,
-                                            );
-                                            return { ...(prev as any), items: nextItems } as any;
-                                          });
-                                        }}
-                                        onBlur={async (ev) => {
-                                          const n = Math.max(0, Math.floor(toNum(ev.target.value, 0)));
-                                          await updateAssemblyChildBaseLaborMinutes(String(ch.id), groupId, n);
-                                        }}
-                                      />
-                                      <Button variant="danger" onClick={() => removeItem(String(ch.id))}>Remove</Button>
-                                    </div>
-                                  </div>
-                                );
-                              }
-
-                              // blank_material (best-effort)
-                              const base = Math.max(1, Math.floor(toNum(ch.base_quantity ?? 1, 1)));
-                              const total = Math.max(1, Math.floor(toNum(ch.quantity ?? 1, 1)));
-                              return (
-                                <div key={ch.id} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
-                                  <div className="stack" style={{ minWidth: 0 }}>
-                                    <div style={{ fontWeight: 600 }}>{String(ch.name ?? 'Material')}</div>
-                                    <div className="muted small">Total: {total}</div>
-                                  </div>
-                                  <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                                    <span className="muted small">Qty / assembly</span>
-                                    <Input
-                                      style={{ width: 100 }}
-                                      type="text"
-                                      inputMode="numeric"
-                                      value={String(base)}
-                                      onChange={(ev) => {
-                                        const v = ev.target.value;
-                                        const n = v.trim() === '' ? 1 : Math.max(1, Math.floor(toNum(v, 1)));
-                                        setE((prev) => {
-                                          if (!prev) return prev;
-                                          const groupQty = Math.max(1, Math.floor(toNum((r as any).quantity ?? 1, 1)));
-                                          const nextItems = (((prev as any).items ?? []) as any[]).map((it) =>
-                                            it.id === ch.id ? { ...it, base_quantity: n, quantity: n * groupQty } : it,
-                                          );
-                                          return { ...(prev as any), items: nextItems } as any;
-                                        });
-                                      }}
-                                      onBlur={async (ev) => {
-                                        const n = Math.max(1, Math.floor(toNum(ev.target.value, 1)));
-                                        await updateAssemblyChildBaseQuantity(String(ch.id), groupId, n);
-                                      }}
-                                    />
-                                    <Button variant="danger" onClick={() => removeItem(String(ch.id))}>Remove</Button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="muted small">No items in this assembly.</div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="listRight" style={{ gap: 8, alignItems: 'flex-end' }}>
-                      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                        <span className="muted small">Assembly Qty</span>
-                        <Input
-                          style={{ width: 90 }}
-                          type="text"
-                          inputMode="numeric"
-                          value={displayQty}
-                          onChange={(ev) => setQtyEdits((p) => ({ ...p, [groupId]: ev.target.value }))}
-                          onBlur={commitGroupQty}
-                        />
-                      </div>
-                      <Button variant="danger" onClick={() => removeItem(groupId)}>
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-                );
-              }
-
               const title =
                 r.type === 'labor'
                   ? (r as any).name ?? 'Labor'
@@ -1341,18 +1201,114 @@ export function EstimateEditorPage() {
                         const laborMinutes = Math.max(
                           0,
                           Math.floor(toNum(m?.labor_hours ?? m?.laborHours ?? 0, 0) * 60 + toNum(m?.labor_minutes ?? m?.laborMinutes ?? 0, 0)),
-                        );
-                        if (laborMinutes > 0) parts.push(`Labor: ${laborMinutes} min`);
-                        return parts.length ? parts.join(' • ') : '—';
-                      })()
-                    : (() => {
-                        const a: any = assemblyCache[(r as any).assemblyId];
-                        const parts: string[] = [];
-                        const count = a?.item_count ?? (a?.items ? a.items.length : null);
-                        if (count != null) parts.push(`${count} items`);
-                        if (a?.description) parts.push(String(a.description));
-                        return parts.length ? parts.join(' • ') : '—';
-                      })();
+                              if (r.type === 'assembly') {
+                const asmId = (r as any).assemblyId;
+                const a: any = assemblyCache[asmId];
+                const isOpen = Boolean(expandedAssemblies[asmId]);
+                const children = childrenByAssemblyId[asmId] ?? [];
+
+                const headerSub = (() => {
+                  const parts: string[] = [];
+                  const count = a?.item_count ?? (children?.length ? children.length : a?.items ? a.items.length : null);
+                  if (count != null) parts.push(`${count} items`);
+                  const desc = String(a?.description ?? (a as any)?.description ?? '').trim();
+                  if (desc) parts.push(desc);
+                  return parts.length ? parts.join(' • ') : '—';
+                })();
+
+                return (
+                  <div key={r.id}>
+                    <div className="listRow">
+                      <div
+                        className="listMain"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => setExpandedAssemblies((p) => ({ ...p, [asmId]: !Boolean(p[asmId]) }))}
+                      >
+                        <div className="listTitle">{a?.name ?? `Assembly ${asmId}`}</div>
+                        <div className="listSub">{headerSub}</div>
+                      </div>
+
+                      <div className="listRight" style={{ gap: 8 }}>
+                        <Input
+                          style={{ width: 90 }}
+                          type="text"
+                          inputMode="numeric"
+                          value={qtyEdits[r.id] ?? String(r.quantity)}
+                          onChange={(ev) => setQtyEdits((p) => ({ ...p, [r.id]: ev.target.value }))}
+                          onBlur={() => {
+                            const raw = (qtyEdits[r.id] ?? String(r.quantity)).trim();
+                            const n = raw === '' ? 1 : Math.max(1, Math.floor(toNum(raw, 1)));
+                            setQtyEdits((p) => ({ ...p, [r.id]: String(n) }));
+                            updateQuantity(r.id, n).catch(console.error);
+                          }}
+                        />
+                        <Button variant="danger" disabled={isLocked} onClick={() => removeItem(r.id)}>
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+
+                    {isOpen && children.length > 0 ? (
+                      <div className="list" style={{ marginLeft: 22, marginTop: 8 }}>
+                        {children.map((c) => {
+                          const cTitle =
+                            c.type === 'labor'
+                              ? (c as any).name ?? 'Labor'
+                              : c.type === 'blank_material'
+                                ? (c as any).name ?? 'Material'
+                                : materialCache[(c as any).materialId]?.name ?? `Material ${(c as any).materialId}`;
+
+                          const cSub =
+                            c.type === 'labor'
+                              ? `Labor: ${Math.max(0, Math.floor(toNum((c as any).minutes ?? 0, 0)))} min`
+                              : c.type === 'blank_material'
+                                ? 'Blank material'
+                                : (() => {
+                                    const m = materialCache[(c as any).materialId] as any;
+                                    const parts: string[] = [];
+                                    if (m?.sku) parts.push(String(m.sku));
+                                    if (m?.description) parts.push(String(m.description));
+                                    const laborMinutes = Math.max(
+                                      0,
+                                      Math.floor(toNum(m?.labor_hours ?? m?.laborHours ?? 0, 0) * 60 + toNum(m?.labor_minutes ?? m?.laborMinutes ?? 0, 0)),
+                                    );
+                                    if (laborMinutes > 0) parts.push(`Labor: ${laborMinutes} min`);
+                                    return parts.length ? parts.join(' • ') : '—';
+                                  })();
+
+                          return (
+                            <div key={c.id} className="listRow" style={{ opacity: 0.98 }}>
+                              <div className="listMain">
+                                <div className="listTitle">{cTitle}</div>
+                                <div className="listSub">{cSub}</div>
+                              </div>
+
+                              <div className="listRight" style={{ gap: 8 }}>
+                                <Input
+                                  style={{ width: 90 }}
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={qtyEdits[c.id] ?? String((c as any).quantity ?? 0)}
+                                  onChange={(ev) => setQtyEdits((p) => ({ ...p, [c.id]: ev.target.value }))}
+                                  onBlur={() => {
+                                    const raw = (qtyEdits[c.id] ?? String((c as any).quantity ?? 0)).trim();
+                                    const n = raw === '' ? 0 : Math.max(0, Number(raw));
+                                    setQtyEdits((p) => ({ ...p, [c.id]: String(n) }));
+                                    updateQuantity(c.id, n).catch(console.error);
+                                  }}
+                                />
+                                <Button variant="danger" disabled={isLocked} onClick={() => removeItem(c.id)}>
+                                  Remove
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              }
 
               return (
                 <div key={r.id} className="listRow">
