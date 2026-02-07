@@ -599,6 +599,7 @@ export function computeEstimatePricing(params: {
 
   const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
+  const subtotalBeforeProcessingDisplay = applyDiscount && breakdown.subtotals.discount_amount > 0 ? breakdown.subtotals.pre_discount_subtotal : breakdown.totals.final_subtotal;
   return {
     labor_minutes_actual: breakdown.labor.actual_minutes,
     labor_minutes_expected: breakdown.labor.expected_minutes,
@@ -617,7 +618,7 @@ export function computeEstimatePricing(params: {
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
-    subtotal_before_processing: breakdown.totals.final_subtotal,
+    subtotal_before_processing: subtotalBeforeProcessingDisplay,
     processing_fee: breakdown.processing_fee,
     total: breakdown.totals.final_total,
 
