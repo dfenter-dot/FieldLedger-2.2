@@ -407,7 +407,7 @@ export function computeAssemblyPricing(params: {
   const jt = toEngineJobType(jobType);
 
   const breakdown = computePricingBreakdown({
-    company,
+    company: companyForPricing,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -580,7 +580,19 @@ export function computeEstimatePricing(params: {
       (estimate as any)?.applyProcessingFees ??
       false,
   );
-  const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
+  const rawDiscountPct = toNum(
+    (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent,
+    NaN,
+  );
+  const effectiveDiscountPct =
+    Number.isFinite(rawDiscountPct) && rawDiscountPct > 0 ? rawDiscountPct : company.discount_percent;
+
+  // Some builds store a toggle (apply_discount); discount percent lives on the estimate.
+  const applyDiscount =
+    Boolean((estimate as any)?.apply_discount ?? (estimate as any)?.applyDiscount ?? false) && effectiveDiscountPct > 0;
+
+  // Pricing engine reads discount percent from "company" input, so override it per-estimate.
+  const companyForPricing = { ...company, discount_percent: effectiveDiscountPct };
 
   const breakdown = computePricingBreakdown({
     company,
@@ -599,7 +611,6 @@ export function computeEstimatePricing(params: {
 
   const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
-  const subtotalBeforeProcessingDisplay = applyDiscount && breakdown.subtotals.discount_amount > 0 ? breakdown.subtotals.pre_discount_subtotal : breakdown.totals.final_subtotal;
   return {
     labor_minutes_actual: breakdown.labor.actual_minutes,
     labor_minutes_expected: breakdown.labor.expected_minutes,
@@ -614,11 +625,11 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: company.discount_percent,
+    discount_percent: effectiveDiscountPct,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
-    subtotal_before_processing: subtotalBeforeProcessingDisplay,
+    subtotal_before_processing: breakdown.totals.final_subtotal,
     processing_fee: breakdown.processing_fee,
     total: breakdown.totals.final_total,
 
@@ -684,6 +695,7 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
