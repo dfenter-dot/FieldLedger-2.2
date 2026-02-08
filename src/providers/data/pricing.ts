@@ -406,8 +406,16 @@ export function computeAssemblyPricing(params: {
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
+  // --- Discount percent (per-estimate, capped to Admin max) ---
+  // Admin discount percent is treated as the maximum allowed.
+  const adminMaxDiscount = toNum((company as any)?.discount_percent, 0);
+  const enteredDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent;
+  const enteredDiscount = toNum(enteredDiscountRaw, adminMaxDiscount);
+  const effectiveDiscountPercent = Math.max(0, Math.min(adminMaxDiscount, enteredDiscount));
+  const companyForPricing = { ...(company as any), discount_percent: effectiveDiscountPercent };
+
   const breakdown = computePricingBreakdown({
-    company,
+    company: companyForPricing,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -566,22 +574,7 @@ export function computeEstimatePricing(params: {
     if (legacyMinutes > 0) laborLines.push({ minutes: legacyMinutes * estQty });
   }
 
-  const maxAllowedDiscount = toNum(
-  companySettings?.discount_percent_default ?? companySettings?.discount_percent ?? 0,
-  0
-);
-const requestedDiscount = toNum(
-  estimate?.discount_percent ?? (estimate as any)?.discountPercent ?? maxAllowedDiscount,
-  maxAllowedDiscount
-);
-const effectiveDiscount = Math.min(Math.max(requestedDiscount, 0), maxAllowedDiscount);
-
-const company = toEngineCompany({
-  ...companySettings,
-  // Force the pricing engine to use the per-estimate discount percent (capped to Admin max).
-  discount_percent_default: effectiveDiscount,
-  discount_percent: effectiveDiscount,
-});
+  const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -598,7 +591,7 @@ const company = toEngineCompany({
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
   const breakdown = computePricingBreakdown({
-    company,
+    company: companyForPricing,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -628,7 +621,7 @@ const company = toEngineCompany({
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: company.discount_percent,
+    discount_percent: effectiveDiscountPercent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
