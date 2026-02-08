@@ -406,8 +406,19 @@ export function computeAssemblyPricing(params: {
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
+  // Estimate-level discount percent overrides company default (UI stores discount percent on the estimate).
+  const estimateDiscountPercentRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent ?? null;
+  const estimateDiscountPercent =
+    estimateDiscountPercentRaw == null || estimateDiscountPercentRaw === ''
+      ? null
+      : Number(estimateDiscountPercentRaw);
+  if (estimateDiscountPercent != null && Number.isFinite(estimateDiscountPercent)) {
+    (company as any).discount_percent = estimateDiscountPercent;
+  }
+
+
   const breakdown = computePricingBreakdown({
-    company: companyForPricing,
+    company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -580,19 +591,7 @@ export function computeEstimatePricing(params: {
       (estimate as any)?.applyProcessingFees ??
       false,
   );
-  const rawDiscountPct = toNum(
-    (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent,
-    NaN,
-  );
-  const effectiveDiscountPct =
-    Number.isFinite(rawDiscountPct) && rawDiscountPct > 0 ? rawDiscountPct : company.discount_percent;
-
-  // Some builds store a toggle (apply_discount); discount percent lives on the estimate.
-  const applyDiscount =
-    Boolean((estimate as any)?.apply_discount ?? (estimate as any)?.applyDiscount ?? false) && effectiveDiscountPct > 0;
-
-  // Pricing engine reads discount percent from "company" input, so override it per-estimate.
-  const companyForPricing = { ...company, discount_percent: effectiveDiscountPct };
+  const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
   const breakdown = computePricingBreakdown({
     company,
@@ -625,7 +624,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: effectiveDiscountPct,
+    discount_percent: company.discount_percent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
