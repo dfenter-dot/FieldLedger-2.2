@@ -591,8 +591,22 @@ export function computeEstimatePricing(params: {
   );
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
+  // Discount behavior:
+  // - Admin Company Setup defines the MAX allowed discount percent.
+  // - Estimate may use any discount percent <= max.
+  // - If Apply Discount is ON and estimate percent is blank/invalid, fallback to max.
+  const adminMaxDiscountPct = Math.max(0, toNum(company?.discount_percent ?? 0, 0));
+  const enteredDiscountPctRaw = estimate?.discount_percent ?? (estimate as any)?.discountPercent;
+  const enteredDiscountPct = toNum(enteredDiscountPctRaw as any, NaN);
+  const chosenDiscountPct = Number.isFinite(enteredDiscountPct) ? enteredDiscountPct : adminMaxDiscountPct;
+  const effectiveDiscountPct = applyDiscount
+    ? Math.min(adminMaxDiscountPct, Math.max(0, chosenDiscountPct))
+    : 0;
+
+  const companyForPricing = { ...company, discount_percent: effectiveDiscountPct };
+
   const breakdown = computePricingBreakdown({
-    company,
+    company: companyForPricing,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -622,7 +636,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: company.discount_percent,
+    discount_percent: effectiveDiscountPct,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
@@ -692,6 +706,7 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
