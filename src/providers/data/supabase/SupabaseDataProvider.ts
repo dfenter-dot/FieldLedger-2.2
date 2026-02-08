@@ -934,8 +934,6 @@ export class SupabaseDataProvider implements IDataProvider {
       ),
 
       apply_discount: Boolean((estimate as any).apply_discount ?? false),
-      // Estimate-level discount percent (used by discount preload pricing math).
-      // NOTE: requires DB column `public.estimates.discount_percent`.
       discount_percent: (estimate as any).discount_percent ?? (estimate as any).discountPercent ?? null,
       apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
       // Deprecated: misc material is governed solely by Admin configuration.
