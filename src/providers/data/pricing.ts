@@ -310,7 +310,7 @@ function toEngineCompany(s: any) {
       s?.allow_misc_when_customer_supplies ??
       false
     ),
-    discount_percent: toNum(s?.default_discount_percent ?? s?.discount_percent_default ?? s?.discount_percent ?? 0),
+    discount_percent: toNum(s?.discount_percent_default ?? s?.discount_percent ?? 0),
     processing_fee_percent: toNum(s?.processing_fee_percent, 0),
   };
 }
@@ -407,7 +407,7 @@ export function computeAssemblyPricing(params: {
   const jt = toEngineJobType(jobType);
 
   const breakdown = computePricingBreakdown({
-    company: company,
+    company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -566,18 +566,17 @@ export function computeEstimatePricing(params: {
     if (legacyMinutes > 0) laborLines.push({ minutes: legacyMinutes * estQty });
   }
 
-  const company = toEngineCompany(companySettings);
-
-  // Discount percent can be overridden per-estimate. If null/blank, fall back to Company default.
+  // Admin sets the maximum allowed discount percent (company.discount_percent).
+  // Each estimate can use any value <= that max (editable per estimate).
+  const companyBase = toEngineCompany(companySettings);
+  const maxAllowedDiscount = toNum(companyBase.discount_percent, 0);
   const estDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent ?? null;
   const estDiscountNum =
-    estDiscountRaw === null || estDiscountRaw === undefined || String(estDiscountRaw).trim() === ''
-      ? NaN
-      : Number(estDiscountRaw);
-  const companyWithEstimateDiscount = Number.isFinite(estDiscountNum)
-    ? { ...company, discount_percent: estDiscountNum }
-    : company;
-
+    estDiscountRaw == null || String(estDiscountRaw).trim() === ''
+      ? maxAllowedDiscount
+      : toNum(String(estDiscountRaw), maxAllowedDiscount);
+  const effectiveDiscountPercent = clamp(estDiscountNum, 0, maxAllowedDiscount);
+  const company = { ...companyBase, discount_percent: effectiveDiscountPercent };
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -594,7 +593,7 @@ export function computeEstimatePricing(params: {
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
   const breakdown = computePricingBreakdown({
-    company: company,
+    company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -624,7 +623,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: companyWithEstimateDiscount.discount_percent,
+    discount_percent: effectiveDiscountPercent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
@@ -694,6 +693,7 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
