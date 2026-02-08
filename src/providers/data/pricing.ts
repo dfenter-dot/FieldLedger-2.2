@@ -406,14 +406,9 @@ export function computeAssemblyPricing(params: {
   const companyBase = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
-  // Discount percent:
-  // - Admin sets the MAX allowed (companyBase.discount_percent)
-  // - Estimate may choose any percent <= max via estimate.discount_percent
-  const adminMaxDiscount = Math.max(0, toNum((companyBase as any)?.discount_percent, 0));
-  const enteredDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent;
-  const enteredDiscount = toNum(enteredDiscountRaw, adminMaxDiscount);
-  const effectiveDiscount = Math.min(Math.max(enteredDiscount, 0), adminMaxDiscount);
-  const company = { ...companyBase, discount_percent: effectiveDiscount };
+  // NOTE: Assemblies are priced independently of Estimate-level discount settings.
+  // Any discount logic is applied at the Estimate level only.
+  const company = companyBase;
 
   const breakdown = computePricingBreakdown({
     company,
@@ -437,7 +432,7 @@ export function computeAssemblyPricing(params: {
   const customerSupplies =
     Boolean(assembly?.customer_supplied_materials === true) ||
     Boolean((assembly as any)?.customer_supplies_materials === true);
-  const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
+  const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, companyForPricing.purchase_tax_percent);
 
   return {
     labor_minutes_total: expectedMinutes,
@@ -591,19 +586,22 @@ export function computeEstimatePricing(params: {
   );
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
-  // Discount behavior:
-  // - Admin Company Setup defines the MAX allowed discount percent.
-  // - Estimate may use any discount percent <= max.
-  // - If Apply Discount is ON and estimate percent is blank/invalid, fallback to max.
-  const adminMaxDiscountPct = Math.max(0, toNum(company?.discount_percent ?? 0, 0));
-  const enteredDiscountPctRaw = estimate?.discount_percent ?? (estimate as any)?.discountPercent;
-  const enteredDiscountPct = toNum(enteredDiscountPctRaw as any, NaN);
-  const chosenDiscountPct = Number.isFinite(enteredDiscountPct) ? enteredDiscountPct : adminMaxDiscountPct;
-  const effectiveDiscountPct = applyDiscount
-    ? Math.min(adminMaxDiscountPct, Math.max(0, chosenDiscountPct))
-    : 0;
-
-  const companyForPricing = { ...company, discount_percent: effectiveDiscountPct };
+  // Discount percent:
+  // - Admin sets the MAX allowed via company settings (company.discount_percent)
+  // - Estimate may enter any percent <= max
+  // - When Apply Discount is ON, we use the entered percent (capped) for the preload math.
+  // - When Apply Discount is OFF, we keep using the admin max for the preload buffer.
+  const adminMaxDiscount = Math.max(0, toNum((company as any)?.discount_percent, 0));
+  const enteredRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent;
+  const enteredStr = String(enteredRaw ?? '').trim();
+  // Important: Number('') === 0, but an empty field should mean "use admin max".
+  const enteredParsed = enteredStr === '' ? Number.NaN : Number(enteredStr);
+  const enteredDiscount = Number.isFinite(enteredParsed) ? enteredParsed : adminMaxDiscount;
+  const effectiveDiscount = Math.min(Math.max(enteredDiscount, 0), adminMaxDiscount);
+  const companyForPricing = {
+    ...company,
+    discount_percent: applyDiscount ? effectiveDiscount : adminMaxDiscount,
+  };
 
   const breakdown = computePricingBreakdown({
     company: companyForPricing,
@@ -636,7 +634,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: effectiveDiscountPct,
+    discount_percent: companyForPricing.discount_percent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
