@@ -566,17 +566,20 @@ export function computeEstimatePricing(params: {
     if (legacyMinutes > 0) laborLines.push({ minutes: legacyMinutes * estQty });
   }
 
-  // Admin sets the maximum allowed discount percent (company.discount_percent).
-  // Each estimate can use any value <= that max (editable per estimate).
-  const companyBase = toEngineCompany(companySettings);
-  const maxAllowedDiscount = toNum(companyBase.discount_percent, 0);
-  const estDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent ?? null;
-  const estDiscountNum =
-    estDiscountRaw == null || String(estDiscountRaw).trim() === ''
-      ? maxAllowedDiscount
-      : toNum(String(estDiscountRaw), maxAllowedDiscount);
-  const effectiveDiscountPercent = clamp(estDiscountNum, 0, maxAllowedDiscount);
-  const company = { ...companyBase, discount_percent: effectiveDiscountPercent };
+  const company = toEngineCompany(companySettings);
+
+  // Discount % is editable per-estimate, but Admin controls the maximum allowed.
+  // If an estimate-specific discount percent exists, use it (clamped to [0, adminMax]).
+  // Otherwise fall back to the Admin default already on `company.discount_percent`.
+  const adminMaxDiscountPct = clampPct(toNum(company.discount_percent, 0));
+  const estDiscountRaw = estimate?.discount_percent ?? (estimate as any)?.discountPercent;
+  const estDiscountPct = Number.isFinite(Number(estDiscountRaw)) ? clampPct(toNum(estDiscountRaw, 0)) : NaN;
+  if (Number.isFinite(estDiscountPct)) {
+    company.discount_percent = Math.min(estDiscountPct, adminMaxDiscountPct);
+  } else {
+    company.discount_percent = adminMaxDiscountPct;
+  }
+
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -623,7 +626,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: effectiveDiscountPercent,
+    discount_percent: company.discount_percent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
