@@ -934,9 +934,11 @@ export class SupabaseDataProvider implements IDataProvider {
       ),
 
       apply_discount: Boolean((estimate as any).apply_discount ?? false),
-      // Editable per-estimate percent (capped in UI by admin max)
+      // Editable per-estimate discount percent (capped by Admin). Nullable.
       discount_percent:
-        (estimate as any).discount_percent ?? (estimate as any).discountPercent ?? null,
+        (estimate as any).discount_percent == null || String((estimate as any).discount_percent).trim() === ''
+          ? null
+          : Number((estimate as any).discount_percent),
       apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
       // Deprecated: misc material is governed solely by Admin configuration.
       // Do NOT send apply_misc_material to Supabase (column may not exist in migrated schemas).
