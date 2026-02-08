@@ -41,6 +41,12 @@ export type PricingInput = {
     apply_discount: boolean;
     apply_processing_fee: boolean;
     customer_supplies_materials: boolean;
+    /**
+     * Optional per-document discount percent override.
+     * Used by Estimates to allow applying a LOWER discount than the Admin default.
+     * Admin default still defines the "buffer" (pre-discount subtotal inflation).
+     */
+    discount_percent_override?: number;
   };
 };
 
@@ -160,23 +166,36 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
     laborSell = marginSubtotal - materialSell;
   }
 
-  // --- DISCOUNT BUFFER (always preload when allowed) ---
-  const discountRate = company.discount_percent / 100;
-  const canDiscount = jobType.allow_discounts && discountRate > 0;
-  // We always compute an inflated display subtotal so the business keeps extra margin if no discount is applied.
+  // --- DISCOUNT BUFFER + APPLIED DISCOUNT ---
+  // Admin discount percent defines the *buffer* we preload into the displayed subtotal.
+  // Estimates may apply a LOWER discount percent without changing the preloaded subtotal.
+  const adminDiscountPercent = clampPct(company.discount_percent);
+  const adminDiscountRate = adminDiscountPercent / 100;
+  const canDiscount = jobType.allow_discounts && adminDiscountRate > 0;
+
+  // Always compute an inflated display subtotal when discounts are allowed.
   const preDiscountSubtotal = canDiscount
-    ? marginSubtotal / Math.max(1 - discountRate, 0.0001)
+    ? marginSubtotal / Math.max(1 - adminDiscountRate, 0.0001)
     : marginSubtotal;
 
-  // If discount toggle is ON, we apply enough discount to bring the charged subtotal back down to the target (marginSubtotal).
+  // Determine which discount percent to apply (capped to Admin default).
+  const requestedDiscountPercent =
+    flags.discount_percent_override == null
+      ? adminDiscountPercent
+      : clampPct(flags.discount_percent_override);
+  const appliedDiscountPercent = Math.min(requestedDiscountPercent, adminDiscountPercent);
+  const appliedDiscountRate = appliedDiscountPercent / 100;
+
   const discountAmount = canDiscount && flags.apply_discount
-    ? preDiscountSubtotal - marginSubtotal
+    ? preDiscountSubtotal * appliedDiscountRate
     : 0;
 
-  // Charged subtotal before processing depends on whether discount is applied.
-  const chargedSubtotal = (canDiscount && !flags.apply_discount)
-    ? preDiscountSubtotal
-    : marginSubtotal;
+  // Charged subtotal before processing:
+  // - If discount toggle OFF: customer pays the inflated preDiscountSubtotal
+  // - If discount toggle ON: customer pays preDiscountSubtotal minus chosen discount
+  const chargedSubtotal = (canDiscount && flags.apply_discount)
+    ? (preDiscountSubtotal - discountAmount)
+    : preDiscountSubtotal;
   // --- PROCESSING FEE ---
   const processingFee = flags.apply_processing_fee
     ? chargedSubtotal * (company.processing_fee_percent / 100)
@@ -568,15 +587,13 @@ export function computeEstimatePricing(params: {
 
   const company = toEngineCompany(companySettings);
 
-  // Discount percent can be overridden per-estimate. If null/blank, fall back to Company default.
+  // Discount percent can be overridden per-estimate (typically to a LOWER percent than Admin).
+  // If null/blank, we treat it as "use Admin default".
   const estDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent ?? null;
   const estDiscountNum =
     estDiscountRaw === null || estDiscountRaw === undefined || String(estDiscountRaw).trim() === ''
       ? NaN
       : Number(estDiscountRaw);
-  const companyWithEstimateDiscount = Number.isFinite(estDiscountNum)
-    ? { ...company, discount_percent: estDiscountNum }
-    : company;
 
   const jt = toEngineJobType(jobType);
 
@@ -605,6 +622,7 @@ export function computeEstimatePricing(params: {
       apply_discount: applyDiscount,
       apply_processing_fee: applyProcessing,
       customer_supplies_materials: customerSupplies,
+      discount_percent_override: Number.isFinite(estDiscountNum) ? estDiscountNum : undefined,
     },
   });
 
@@ -624,7 +642,11 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: companyWithEstimateDiscount.discount_percent,
+    // Return the effective discount percent being applied (always capped to Admin default).
+    discount_percent: Math.min(
+      clampPct(Number.isFinite(estDiscountNum) ? estDiscountNum : company.discount_percent),
+      clampPct(company.discount_percent),
+    ),
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
@@ -694,6 +716,7 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
