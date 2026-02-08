@@ -310,7 +310,14 @@ function toEngineCompany(s: any) {
       s?.allow_misc_when_customer_supplies ??
       false
     ),
-    discount_percent: toNum(s?.discount_percent_default ?? s?.discount_percent ?? 0),
+    // Admin default/max discount percent.
+    // Tolerate multiple historical schema names.
+    discount_percent: toNum(
+      s?.default_discount_percent ??
+      s?.discount_percent_default ??
+      s?.discount_percent ??
+      0
+    ),
     processing_fee_percent: toNum(s?.processing_fee_percent, 0),
   };
 }
@@ -567,20 +574,21 @@ export function computeEstimatePricing(params: {
   }
 
   const company = toEngineCompany(companySettings);
-
-  // Discount % is editable per-estimate, but Admin controls the maximum allowed.
-  // If an estimate-specific discount percent exists, use it (clamped to [0, adminMax]).
-  // Otherwise fall back to the Admin default already on `company.discount_percent`.
-  const adminMaxDiscountPct = clampPct(toNum(company.discount_percent, 0));
-  const estDiscountRaw = estimate?.discount_percent ?? (estimate as any)?.discountPercent;
-  const estDiscountPct = Number.isFinite(Number(estDiscountRaw)) ? clampPct(toNum(estDiscountRaw, 0)) : NaN;
-  if (Number.isFinite(estDiscountPct)) {
-    company.discount_percent = Math.min(estDiscountPct, adminMaxDiscountPct);
-  } else {
-    company.discount_percent = adminMaxDiscountPct;
-  }
-
   const jt = toEngineJobType(jobType);
+
+  // Discount percent is editable per estimate, but capped by Admin's max/default.
+  // If the estimate has no explicit discount_percent, fall back to the Admin value.
+  const adminMaxDiscount = clampPct(toNum(company.discount_percent, 0));
+  const estDiscountRaw =
+    (estimate as any)?.discount_percent ??
+    (estimate as any)?.discountPercent ??
+    (estimate as any)?.discountPercentOverride ??
+    null;
+  const estDiscount =
+    estDiscountRaw == null || String(estDiscountRaw).trim() === ''
+      ? adminMaxDiscount
+      : clampPct(toNum(estDiscountRaw, adminMaxDiscount));
+  const effectiveDiscountPercent = adminMaxDiscount > 0 ? Math.min(estDiscount, adminMaxDiscount) : estDiscount;
 
   const customerSupplies =
     Boolean(estimate?.customer_supplied_materials === true) ||
@@ -626,7 +634,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: company.discount_percent,
+    discount_percent: effectiveDiscountPercent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
