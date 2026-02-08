@@ -404,17 +404,10 @@ export function computeAssemblyPricing(params: {
   const laborLines: PricingInput['lineItems']['labor_lines'] = [...laborFromItems, ...laborFromLegacy];
 
   const company = toEngineCompany(companySettings);
-  // Discount percent can be set per-estimate; if blank, fall back to Company default.
-  const estDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent ?? null;
-  const estDiscountNum = estDiscountRaw === null || estDiscountRaw === undefined ? NaN : Number(estDiscountRaw);
-  const companyWithEstimateDiscount = Number.isFinite(estDiscountNum)
-    ? { ...company, discount_percent: estDiscountNum }
-    : company;
-
   const jt = toEngineJobType(jobType);
 
   const breakdown = computePricingBreakdown({
-    company: companyWithEstimateDiscount,
+    company: company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -574,6 +567,17 @@ export function computeEstimatePricing(params: {
   }
 
   const company = toEngineCompany(companySettings);
+
+  // Discount percent can be overridden per-estimate. If null/blank, fall back to Company default.
+  const estDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent ?? null;
+  const estDiscountNum =
+    estDiscountRaw === null || estDiscountRaw === undefined || String(estDiscountRaw).trim() === ''
+      ? NaN
+      : Number(estDiscountRaw);
+  const companyWithEstimateDiscount = Number.isFinite(estDiscountNum)
+    ? { ...company, discount_percent: estDiscountNum }
+    : company;
+
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -590,7 +594,7 @@ export function computeEstimatePricing(params: {
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
   const breakdown = computePricingBreakdown({
-    company: companyWithEstimateDiscount,
+    company: company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -620,7 +624,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: company.discount_percent,
+    discount_percent: companyWithEstimateDiscount.discount_percent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
