@@ -404,14 +404,24 @@ export function computeAssemblyPricing(params: {
   const laborLines: PricingInput['lineItems']['labor_lines'] = [...laborFromItems, ...laborFromLegacy];
 
   const company = toEngineCompany(companySettings);
-
-  // Discount is editable per-estimate, capped by Admin's configured discount percent (max allowed).
-  const adminMaxDiscountPct = clampPct(toNum((companySettings as any)?.discount_percent_default ?? (companySettings as any)?.discount_percent ?? 0));
-  const estDiscountRaw = toNum((estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent, NaN);
-  const estDiscountPct = Number.isFinite(estDiscountRaw) ? clampPct(estDiscountRaw) : adminMaxDiscountPct;
-  const effectiveDiscountPct = Math.min(estDiscountPct, adminMaxDiscountPct);
-  const companyForPricing = { ...company, discount_percent: effectiveDiscountPct };
   const jt = toEngineJobType(jobType);
+
+  // Discount handling (authoritative)
+  // - Admin sets the *maximum allowed* discount percent.
+  // - Estimate may choose a lower percent.
+  // - If the estimate percent is blank/undefined, default to admin max.
+  // - Pricing engine uses the effective percent for both the preload subtotal and the applied discount.
+  const adminMaxDiscountPct = clampPct(toNum(company.discount_percent, 0));
+  const enteredDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent;
+  const enteredDiscountPct =
+    enteredDiscountRaw === '' || enteredDiscountRaw == null
+      ? null
+      : clampPct(toNum(enteredDiscountRaw, 0));
+  const effectiveDiscountPct = Math.min(
+    adminMaxDiscountPct,
+    enteredDiscountPct == null ? adminMaxDiscountPct : enteredDiscountPct,
+  );
+  const companyForPricing = { ...company, discount_percent: effectiveDiscountPct };
 
   const breakdown = computePricingBreakdown({
     company: companyForPricing,
@@ -574,13 +584,6 @@ export function computeEstimatePricing(params: {
   }
 
   const company = toEngineCompany(companySettings);
-
-  // Discount is editable per-estimate, capped by Admin's configured discount percent (max allowed).
-  const adminMaxDiscountPct = clampPct(toNum((companySettings as any)?.discount_percent_default ?? (companySettings as any)?.discount_percent ?? 0));
-  const estDiscountRaw = toNum((estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent, NaN);
-  const estDiscountPct = Number.isFinite(estDiscountRaw) ? clampPct(estDiscountRaw) : adminMaxDiscountPct;
-  const effectiveDiscountPct = Math.min(estDiscountPct, adminMaxDiscountPct);
-  const companyForPricing = { ...company, discount_percent: effectiveDiscountPct };
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -595,6 +598,14 @@ export function computeEstimatePricing(params: {
       false,
   );
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
+
+  // Admin sets the maximum discount percent. Estimate may choose a lower percent.
+  const adminMaxDiscountPct = clampPct(toNum(company?.discount_percent, 0));
+  const rawEstimatePct = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent;
+  const estimatePctProvided = rawEstimatePct !== null && rawEstimatePct !== undefined && String(rawEstimatePct).trim() !== '';
+  const estimatePct = estimatePctProvided ? clampPct(toNum(rawEstimatePct, adminMaxDiscountPct)) : adminMaxDiscountPct;
+  const effectiveDiscountPct = Math.min(estimatePct, adminMaxDiscountPct);
+  const companyForPricing = { ...company, discount_percent: effectiveDiscountPct };
 
   const breakdown = computePricingBreakdown({
     company: companyForPricing,
@@ -627,6 +638,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
+    // Expose the effective percent so the UI can show the value actually used.
     discount_percent: effectiveDiscountPct,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
@@ -697,6 +709,7 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
