@@ -310,7 +310,7 @@ function toEngineCompany(s: any) {
       s?.allow_misc_when_customer_supplies ??
       false
     ),
-    discount_percent: toNum(s?.discount_percent_default ?? s?.discount_percent ?? 0),
+    discount_percent: toNum(s?.default_discount_percent ?? s?.discount_percent_default ?? s?.discount_percent ?? 0),
     processing_fee_percent: toNum(s?.processing_fee_percent, 0),
   };
 }
@@ -403,15 +403,11 @@ export function computeAssemblyPricing(params: {
 
   const laborLines: PricingInput['lineItems']['labor_lines'] = [...laborFromItems, ...laborFromLegacy];
 
-  const companyBase = toEngineCompany(companySettings);
+  const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
-  // NOTE: Assemblies are priced independently of Estimate-level discount settings.
-  // Any discount logic is applied at the Estimate level only.
-  const company = companyBase;
-
   const breakdown = computePricingBreakdown({
-    company,
+    company: company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -432,7 +428,7 @@ export function computeAssemblyPricing(params: {
   const customerSupplies =
     Boolean(assembly?.customer_supplied_materials === true) ||
     Boolean((assembly as any)?.customer_supplies_materials === true);
-  const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, companyForPricing.purchase_tax_percent);
+  const materialCost = customerSupplies ? 0 : computeMaterialCostTotal(mats, company.purchase_tax_percent);
 
   return {
     labor_minutes_total: expectedMinutes,
@@ -571,6 +567,17 @@ export function computeEstimatePricing(params: {
   }
 
   const company = toEngineCompany(companySettings);
+
+  // Discount percent can be overridden per-estimate. If null/blank, fall back to Company default.
+  const estDiscountRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent ?? null;
+  const estDiscountNum =
+    estDiscountRaw === null || estDiscountRaw === undefined || String(estDiscountRaw).trim() === ''
+      ? NaN
+      : Number(estDiscountRaw);
+  const companyWithEstimateDiscount = Number.isFinite(estDiscountNum)
+    ? { ...company, discount_percent: estDiscountNum }
+    : company;
+
   const jt = toEngineJobType(jobType);
 
   const customerSupplies =
@@ -586,25 +593,8 @@ export function computeEstimatePricing(params: {
   );
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
-  // Discount percent:
-  // - Admin sets the MAX allowed via company settings (company.discount_percent)
-  // - Estimate may enter any percent <= max
-  // - When Apply Discount is ON, we use the entered percent (capped) for the preload math.
-  // - When Apply Discount is OFF, we keep using the admin max for the preload buffer.
-  const adminMaxDiscount = Math.max(0, toNum((company as any)?.discount_percent, 0));
-  const enteredRaw = (estimate as any)?.discount_percent ?? (estimate as any)?.discountPercent;
-  const enteredStr = String(enteredRaw ?? '').trim();
-  // Important: Number('') === 0, but an empty field should mean "use admin max".
-  const enteredParsed = enteredStr === '' ? Number.NaN : Number(enteredStr);
-  const enteredDiscount = Number.isFinite(enteredParsed) ? enteredParsed : adminMaxDiscount;
-  const effectiveDiscount = Math.min(Math.max(enteredDiscount, 0), adminMaxDiscount);
-  const companyForPricing = {
-    ...company,
-    discount_percent: applyDiscount ? effectiveDiscount : adminMaxDiscount,
-  };
-
   const breakdown = computePricingBreakdown({
-    company: companyForPricing,
+    company: company,
     jobType: jt,
     lineItems: { materials: mats, labor_lines: laborLines },
     tech: { 
@@ -634,7 +624,7 @@ export function computeEstimatePricing(params: {
 
 
     labor_rate_used_per_hour: breakdown.labor.effective_rate,
-    discount_percent: companyForPricing.discount_percent,
+    discount_percent: companyWithEstimateDiscount.discount_percent,
     pre_discount_total: breakdown.subtotals.pre_discount_subtotal,
     discount_amount: breakdown.subtotals.discount_amount,
 
@@ -704,8 +694,6 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
-
-
 
 
 
