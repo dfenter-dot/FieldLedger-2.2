@@ -9,6 +9,11 @@ export type PricingInput = {
   company: {
     tech_wage: number;
     loaded_labor_rate: number;
+    /**
+     * Admin minimum billable labor minutes per job (flat-rate only).
+     * If computed/entered labor minutes are below this threshold, pricing should bill at the minimum.
+     */
+    min_billable_labor_minutes_per_job: number;
     purchase_tax_percent: number;
     material_markup_tiers: Array<{ min: number; max: number; percent: number }>;
     misc_material_percent: number;
@@ -96,7 +101,17 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
     0
   );
 
-  const actualMinutes = materialLabor + laborLineMinutes;
+  const rawActualMinutes = materialLabor + laborLineMinutes;
+
+  // Minimum billable labor minutes (flat-rate only):
+  // - If total minutes are below the admin minimum, bill at the minimum.
+  // - If total minutes exceed the minimum (even by 1 minute), bill the true total.
+  const minBillable = Math.max(0, toNum(company.min_billable_labor_minutes_per_job, 0));
+  const actualMinutes =
+    jobType.mode === 'flat_rate' && minBillable > 0
+      ? Math.max(rawActualMinutes, minBillable)
+      : rawActualMinutes;
+
   const expectedMinutes =
     jobType.mode === 'flat_rate'
       ? actualMinutes / Math.max(jobType.efficiency_percent / 100, 0.0001)
@@ -317,6 +332,14 @@ function toEngineCompany(s: any) {
   return {
     tech_wage: avgWage,
     loaded_labor_rate: loadedLaborRate,
+    min_billable_labor_minutes_per_job: toNum(
+      s?.min_billable_labor_minutes_per_job ??
+        s?.min_billable_labor_minutes ??
+        s?.minimum_billable_labor_minutes_per_job ??
+        s?.minimum_job_minutes ??
+        0,
+      0,
+    ),
     purchase_tax_percent: toNum(s?.material_purchase_tax_percent ?? s?.purchase_tax_percent, 0),
     material_markup_tiers: tiers,
     misc_material_percent: toNum(s?.misc_material_percent, 0),
