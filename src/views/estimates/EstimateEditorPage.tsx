@@ -587,9 +587,20 @@ export function EstimateEditorPage() {
     if (!e) return;
     try {
       const fromId = activeOptionId ?? (e as any).active_option_id ?? options?.[0]?.id ?? null;
-      if (!fromId) return;
+      if (!fromId) {
+        setStatus('No option selected to copy.');
+        setTimeout(() => setStatus(''), 1200);
+        return;
+      }
 
-      const created = await (data as any).copyEstimateOption?.(e.id, fromId);
+      if (!(data as any).copyEstimateOption) {
+        setStatus('Options are not supported by the current data provider.');
+        setTimeout(() => setStatus(''), 2000);
+        return;
+      }
+
+      setStatus('Creating option…');
+      const created = await (data as any).copyEstimateOption(e.id, fromId);
       const opts = await (data as any).listEstimateOptions?.(e.id);
       const list: any[] = Array.isArray(opts) ? opts : [];
       setOptions(list as any);
@@ -604,8 +615,12 @@ export function EstimateEditorPage() {
         }));
         await switchOption(created.id);
       }
+      setStatus('');
     } catch (err) {
       console.error(err);
+      const msg = String((err as any)?.message ?? err ?? 'Failed to add option');
+      setStatus(msg);
+      setTimeout(() => setStatus(''), 3500);
     }
   }
 async function updateQuantity(itemId: string, quantity: number) {
@@ -1142,64 +1157,76 @@ async function updateQuantity(itemId: string, quantity: number) {
             Duplicate Estimate
           </Button>
 
-          {/* Estimate Options */}
-          <Card style={{ padding: 12, minWidth: 320 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <div style={{ fontWeight: 700 }}>Option</div>
-              <select
-                value={activeOptionId ?? ''}
-                onChange={(ev) => switchOption(ev.target.value)}
-                disabled={isLocked || options.length === 0}
-                style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.15)' }}
-              >
-                {options.map((o: any) => (
-                  <option key={o.id} value={o.id}>
-                    {(optionEdits[o.id]?.name ?? o.option_name ?? 'Option')}
-                  </option>
-                ))}
-              </select>
-
-              <Button variant="secondary" disabled={isLocked || !activeOptionId} onClick={addOptionFromActive}>
-                Add Option
-              </Button>
-            </div>
-
-            {activeOptionId ? (
-              <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
-                <div className="stack">
-                  <label className="label">Option Name</label>
-                  <Input
-                    value={optionEdits[activeOptionId]?.name ?? ''}
-                    onChange={(ev) =>
-                      setOptionEdits((prev) => ({
-                        ...prev,
-                        [activeOptionId]: {
-                          ...(prev[activeOptionId] ?? { name: '', description: '' }),
-                          name: (ev as any).target.value,
-                        },
-                      }))
-                    }
-                  />
-                </div>
-
-                <div className="stack">
-                  <label className="label">Option Description</label>
-                  <Input
-                    value={optionEdits[activeOptionId]?.description ?? ''}
-                    onChange={(ev) =>
-                      setOptionEdits((prev) => ({
-                        ...prev,
-                        [activeOptionId]: {
-                          ...(prev[activeOptionId] ?? { name: '', description: '' }),
-                          description: (ev as any).target.value,
-                        },
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-            ) : null}
-          </Card>
+	          {/* Estimate Options */}
+	          <Card
+	            title="Options"
+	            right={
+	              <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+	                <div className="inputWrap" style={{ minWidth: 140 }}>
+	                  <select
+	                    className="input"
+	                    value={activeOptionId ?? ''}
+	                    onChange={(ev) => switchOption(ev.target.value)}
+	                    disabled={isLocked || options.length === 0}
+	                  >
+	                    {options.map((o: any) => (
+	                      <option key={o.id} value={o.id}>
+	                        {optionEdits[o.id]?.name ?? o.option_name ?? 'Option'}
+	                      </option>
+	                    ))}
+	                  </select>
+	                </div>
+	
+	                <Button
+	                  variant="secondary"
+	                  disabled={isLocked || options.length === 0}
+	                  onClick={addOptionFromActive}
+	                >
+	                  Add Option
+	                </Button>
+	              </div>
+	            }
+	          >
+	            {activeOptionId ? (
+	              <div style={{ display: 'grid', gap: 8 }}>
+	                <div className="stack">
+	                  <label className="label">Option Name</label>
+	                  <Input
+	                    disabled={isLocked}
+	                    value={optionEdits[activeOptionId]?.name ?? ''}
+	                    onChange={(ev) =>
+	                      setOptionEdits((prev) => ({
+	                        ...prev,
+	                        [activeOptionId]: {
+	                          ...(prev[activeOptionId] ?? { name: '', description: '' }),
+	                          name: (ev as any).target.value,
+	                        },
+	                      }))
+	                    }
+	                  />
+	                </div>
+	
+	                <div className="stack">
+	                  <label className="label">Option Description</label>
+	                  <Input
+	                    disabled={isLocked}
+	                    value={optionEdits[activeOptionId]?.description ?? ''}
+	                    onChange={(ev) =>
+	                      setOptionEdits((prev) => ({
+	                        ...prev,
+	                        [activeOptionId]: {
+	                          ...(prev[activeOptionId] ?? { name: '', description: '' }),
+	                          description: (ev as any).target.value,
+	                        },
+	                      }))
+	                    }
+	                  />
+	                </div>
+	              </div>
+	            ) : (
+	              <div style={{ color: 'var(--muted)' }}>No options found for this estimate.</div>
+	            )}
+	          </Card>
 
 
           <Button
