@@ -1171,24 +1171,32 @@ async function updateQuantity(itemId: string, quantity: number) {
                   <Input
                     value={optionEdits[activeOptionId]?.name ?? ''}
                     onChange={(ev) =>
-                    setOptionEdits((prev) => ({
-                      ...prev,
-                      [activeOptionId]: { ...(prev[activeOptionId] ?? { name: '', description: '' }), name: (ev as any).target.value },
-                    }))
-                  }
-                />
+                      setOptionEdits((prev) => ({
+                        ...prev,
+                        [activeOptionId]: {
+                          ...(prev[activeOptionId] ?? { name: '', description: '' }),
+                          name: (ev as any).target.value,
+                        },
+                      }))
+                    }
+                  />
                 </div>
+
                 <div className="stack">
                   <label className="label">Option Description</label>
                   <Input
                     value={optionEdits[activeOptionId]?.description ?? ''}
                     onChange={(ev) =>
-                    setOptionEdits((prev) => ({
-                      ...prev,
-                      [activeOptionId]: { ...(prev[activeOptionId] ?? { name: '', description: '' }), description: (ev as any).target.value },
-                    }))
-                  }
-                />
+                      setOptionEdits((prev) => ({
+                        ...prev,
+                        [activeOptionId]: {
+                          ...(prev[activeOptionId] ?? { name: '', description: '' }),
+                          description: (ev as any).target.value,
+                        },
+                      }))
+                    }
+                  />
+                </div>
               </div>
             ) : null}
           </Card>
@@ -1204,57 +1212,6 @@ async function updateQuantity(itemId: string, quantity: number) {
           >
             Add Materials
           </Button>
-
-          {/* Estimate Options */}
-          <Card style={{ padding: 12, minWidth: 320 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <div style={{ fontWeight: 700 }}>Option</div>
-              <select
-                value={activeOptionId ?? ''}
-                onChange={(ev) => switchOption(ev.target.value)}
-                disabled={isLocked || options.length === 0}
-                style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.15)' }}
-              >
-                {options.map((o: any) => (
-                  <option key={o.id} value={o.id}>
-                    {(optionEdits[o.id]?.name ?? o.option_name ?? 'Option')}
-                  </option>
-                ))}
-              </select>
-
-              <Button variant="secondary" disabled={isLocked || !activeOptionId} onClick={addOptionFromActive}>
-                Add Option
-              </Button>
-            </div>
-
-            {activeOptionId ? (
-              <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
-                <div className="stack">
-                  <label className="label">Option Name</label>
-                  <Input
-                    value={optionEdits[activeOptionId]?.name ?? ''}
-                    onChange={(ev) =>
-                    setOptionEdits((prev) => ({
-                      ...prev,
-                      [activeOptionId]: { ...(prev[activeOptionId] ?? { name: '', description: '' }), name: (ev as any).target.value },
-                    }))
-                  }
-                />
-                </div>
-                <div className="stack">
-                  <label className="label">Option Description</label>
-                  <Input
-                    value={optionEdits[activeOptionId]?.description ?? ''}
-                    onChange={(ev) =>
-                    setOptionEdits((prev) => ({
-                      ...prev,
-                      [activeOptionId]: { ...(prev[activeOptionId] ?? { name: '', description: '' }), description: (ev as any).target.value },
-                    }))
-                  }
-                />
-              </div>
-            ) : null}
-          </Card>
 
 
           <Button
