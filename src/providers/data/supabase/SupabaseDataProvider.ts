@@ -6,6 +6,8 @@ import {
   CompanySettings,
   CsvSettings,
   Estimate,
+  EstimateOption,
+  EstimateItem,
   Folder,
   JobType,
   LibraryType,
@@ -1081,7 +1083,267 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
 
-  async deleteEstimate(id: string): Promise<void> {
+  
+
+  async updateEstimateHeader(estimate: Partial<Estimate>): Promise<Estimate> {
+    const companyId = await this.currentCompanyId();
+
+    // Whitelist columns that actually exist on `estimates`
+    const payload: any = {
+      id: (estimate as any).id,
+      company_id: companyId,
+      estimate_number: (estimate as any).estimate_number ?? null,
+      name: (estimate as any).name ?? null,
+
+      customer_name: (estimate as any).customer_name ?? null,
+      customer_phone: (estimate as any).customer_phone ?? null,
+      customer_email: (estimate as any).customer_email ?? null,
+      customer_address: (estimate as any).customer_address ?? null,
+      private_notes: (estimate as any).private_notes ?? null,
+
+      job_type_id: (estimate as any).job_type_id ?? null,
+      use_admin_rules: Boolean((estimate as any).use_admin_rules ?? false),
+
+      customer_supplies_materials: Boolean(
+        (estimate as any).customer_supplies_materials ??
+          (estimate as any).customer_supplied_materials ??
+          false
+      ),
+
+      apply_discount: Boolean((estimate as any).apply_discount ?? false),
+      discount_percent:
+        (estimate as any).discount_percent == null || String((estimate as any).discount_percent).trim() === ''
+          ? null
+          : Number((estimate as any).discount_percent),
+      apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
+
+      status: (estimate as any).status ?? 'draft',
+      sent_at: (estimate as any).sent_at ?? null,
+      approved_at: (estimate as any).approved_at ?? null,
+      declined_at: (estimate as any).declined_at ?? null,
+      valid_until: (estimate as any).valid_until ?? null,
+
+      created_by: (estimate as any).created_by ?? null,
+      created_at: (estimate as any).created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (!payload.id) delete payload.id;
+
+    const { data, error } = await this.supabase.from('estimates').upsert(payload).select('*').single();
+    if (error) throw error;
+
+    return (await this.getEstimate(data.id)) ?? (data as any);
+  }
+
+  async listEstimateOptions(estimateId: string): Promise<EstimateOption[]> {
+    const companyId = await this.currentCompanyId();
+
+    // Ensure tenant boundary: estimate must belong to company
+    const { data: est, error: estErr } = await this.supabase
+      .from('estimates')
+      .select('id, company_id')
+      .eq('company_id', companyId)
+      .eq('id', estimateId)
+      .maybeSingle();
+    if (estErr) throw estErr;
+    if (!est) return [];
+
+    const { data, error } = await this.supabase
+      .from('estimate_options')
+      .select('*')
+      .eq('estimate_id', estimateId)
+      .order('sort_order', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as any;
+  }
+
+  async createEstimateOption(estimateId: string, optionName: string): Promise<EstimateOption> {
+    const existing = await this.listEstimateOptions(estimateId);
+    const nextSort = (existing?.reduce((m, o: any) => Math.max(m, Number(o.sort_order ?? 0)), 0) ?? 0) + 1;
+
+    const { data, error } = await this.supabase
+      .from('estimate_options')
+      .insert({ estimate_id: estimateId, option_name: optionName, sort_order: nextSort })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as any;
+  }
+
+  async updateEstimateOption(option: Partial<EstimateOption> & { id: string }): Promise<EstimateOption> {
+    const payload: any = {};
+    if ((option as any).option_name != null) payload.option_name = (option as any).option_name;
+    if ((option as any).option_description !== undefined) payload.option_description = (option as any).option_description;
+    if ((option as any).sort_order != null) payload.sort_order = (option as any).sort_order;
+
+    const { data, error } = await this.supabase
+      .from('estimate_options')
+      .update(payload)
+      .eq('id', option.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as any;
+  }
+
+  async getEstimateItemsForOption(optionId: string): Promise<EstimateItem[]> {
+    const { data: items, error: itemsErr } = await this.supabase
+      .from('estimate_items')
+      .select('*')
+      .eq('estimate_option_id', optionId)
+      .order('sort_order', { ascending: true });
+    if (itemsErr) throw itemsErr;
+
+    const mappedItems = (items ?? []).map((it: any) => {
+      const t = (it.item_type ?? it.type ?? 'material') as string;
+      const group_id = it.group_id ?? it.groupId ?? null;
+      const parent_group_id = it.parent_group_id ?? it.parentGroupId ?? null;
+      const quantity_factor =
+        it.quantity_factor != null || it.quantityFactor != null ? Number(it.quantity_factor ?? it.quantityFactor) : null;
+
+      if (t === 'labor') {
+        return {
+          id: it.id,
+          type: 'labor',
+          name: it.name ?? 'Labor',
+          description: it.description ?? null,
+          labor_minutes: Number(it.labor_minutes ?? 0),
+          quantity: 1,
+
+          group_id,
+          parent_group_id,
+          quantity_factor,
+        } as any;
+      }
+      if (t === 'assembly') {
+        return {
+          id: it.id,
+          type: 'assembly',
+          assembly_id: it.assembly_id ?? it.assemblyId ?? null,
+          quantity: Number(it.quantity ?? 1),
+
+          group_id,
+          parent_group_id,
+          quantity_factor,
+        } as any;
+      }
+      // material
+      return {
+        id: it.id,
+        type: 'material',
+        material_id: it.material_id ?? it.materialId ?? null,
+        quantity: Number(it.quantity ?? 1),
+
+        group_id,
+        parent_group_id,
+        quantity_factor,
+      } as any;
+    });
+
+    return mappedItems as any;
+  }
+
+  async replaceEstimateItemsForOption(optionId: string, items: EstimateItem[]): Promise<void> {
+    // Clear existing
+    const { count: existingCount, error: countErr } = await this.supabase
+      .from('estimate_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('estimate_option_id', optionId);
+    if (countErr) throw countErr;
+
+    const { data: deletedRows, error: delErr } = await this.supabase
+      .from('estimate_items')
+      .delete()
+      .eq('estimate_option_id', optionId)
+      .select('id');
+    if (delErr) throw delErr;
+    if ((existingCount ?? 0) > 0 && (deletedRows?.length ?? 0) === 0) {
+      throw new Error(
+        'Save failed: existing estimate line items could not be cleared (likely an RLS DELETE policy issue on estimate_items).'
+      );
+    }
+
+    const rows = (Array.isArray(items) ? items : []).map((it: any, idx: number) => {
+      const type = it.type ?? it.item_type ?? 'material';
+
+      const group_id = it.group_id ?? it.groupId ?? null;
+      const parent_group_id = it.parent_group_id ?? it.parentGroupId ?? null;
+      const quantity_factor =
+        it.quantity_factor != null || it.quantityFactor != null ? Number(it.quantity_factor ?? it.quantityFactor) : null;
+
+      if (type === 'labor') {
+        const laborMinutes = Number.isFinite(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes))
+          ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
+          : 0;
+        return {
+          estimate_option_id: optionId,
+          item_type: 'labor',
+          name: it.name ?? 'Labor',
+          description: it.description ?? null,
+          quantity: 1,
+          labor_minutes: laborMinutes,
+          sort_order: idx,
+
+          group_id,
+          parent_group_id,
+          quantity_factor,
+        };
+      }
+
+      if (type === 'assembly') {
+        return {
+          estimate_option_id: optionId,
+          item_type: 'assembly',
+          assembly_id: it.assembly_id ?? it.assemblyId ?? it.assembly_id,
+          quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+          labor_minutes: 0,
+          sort_order: idx,
+
+          group_id,
+          parent_group_id,
+          quantity_factor,
+        };
+      }
+
+      return {
+        estimate_option_id: optionId,
+        item_type: 'material',
+        material_id: it.material_id ?? it.materialId ?? it.material_id,
+        quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+        labor_minutes: 0,
+        sort_order: idx,
+
+        group_id,
+        parent_group_id,
+        quantity_factor,
+      };
+    });
+
+    if (rows.length > 0) {
+      const { error: insErr } = await this.supabase.from('estimate_items').insert(rows as any);
+      if (insErr) throw insErr;
+    }
+  }
+
+  async copyEstimateOption(estimateId: string, fromOptionId: string): Promise<EstimateOption> {
+    const existing = await this.listEstimateOptions(estimateId);
+    const nextSort = (existing?.reduce((m, o: any) => Math.max(m, Number(o.sort_order ?? 0)), 0) ?? 0) + 1;
+    const newName = `Option ${nextSort}`;
+
+    const { data: createdOpt, error: createOptErr } = await this.supabase
+      .from('estimate_options')
+      .insert({ estimate_id: estimateId, option_name: newName, sort_order: nextSort })
+      .select('*')
+      .single();
+    if (createOptErr) throw createOptErr;
+
+    const items = await this.getEstimateItemsForOption(fromOptionId);
+    await this.replaceEstimateItemsForOption(createdOpt.id, items);
+
+    return createdOpt as any;
+  }
+async deleteEstimate(id: string): Promise<void> {
     const { error } = await this.supabase.from('estimates').delete().eq('id', id);
     if (error) throw error;
   }
@@ -1200,6 +1462,7 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 }
+
 
 
 
