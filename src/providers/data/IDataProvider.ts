@@ -5,6 +5,8 @@ import type {
   CompanySettings,
   CsvSettings,
   Estimate,
+  EstimateOption,
+  EstimateItem,
   Folder,
   JobType,
   LibraryType,
@@ -108,6 +110,13 @@ export interface IDataProvider {
   listEstimates(): Promise<Estimate[]>;
   getEstimate(id: string): Promise<Estimate | null>;
   upsertEstimate(estimate: Partial<Estimate>): Promise<Estimate>;
+  updateEstimateHeader(estimate: Partial<Estimate>): Promise<Estimate>;
+  listEstimateOptions(estimateId: string): Promise<EstimateOption[]>;
+  getEstimateItemsForOption(optionId: string): Promise<EstimateItem[]>;
+  replaceEstimateItemsForOption(optionId: string, items: EstimateItem[]): Promise<void>;
+  updateEstimateOption(option: Partial<EstimateOption> & { id: string }): Promise<EstimateOption>;
+  createEstimateOption(estimateId: string, optionName: string): Promise<EstimateOption>;
+
   copyEstimateOption(estimateId: string, fromOptionId: string): Promise<EstimateOption>;
   deleteEstimate(id: string): Promise<void>;
 
@@ -120,4 +129,5 @@ export interface IDataProvider {
   getBrandingSettings(): Promise<BrandingSettings>;
   saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings>;
 }
+
 
