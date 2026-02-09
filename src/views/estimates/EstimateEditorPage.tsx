@@ -5,7 +5,7 @@ import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
-import type { Assembly, Estimate, Material } from '../../providers/data/types';
+import type { Assembly, Estimate, EstimateOption, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
 import { computeEstimatePricing } from '../../providers/data/pricing';
@@ -93,6 +93,11 @@ export function EstimateEditorPage() {
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
+  const [options, setOptions] = useState<EstimateOption[]>([]);
+  const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
+  const [optionEdits, setOptionEdits] = useState<Record<string, { name: string; description: string }>>({});
+
+
   // Local edit buffer for quantities so users can backspace/replace without double-clicking.
   // Normalized to >= 1 on blur.
   const [qtyEdits, setQtyEdits] = useState<Record<string, string>>({});
@@ -169,7 +174,33 @@ export function EstimateEditorPage() {
 
     data
       .getEstimate(estimateId)
-      .then(setE)
+      .then(async (est) => {
+        setE(est);
+        try {
+          const opts = await (data as any).listEstimateOptions?.(est?.id ?? estimateId);
+          const list: any[] = Array.isArray(opts) ? opts : [];
+          setOptions(list as any);
+          const initialActive =
+            (est as any)?.active_option_id ?? (est as any)?.activeOptionId ?? (list?.[0]?.id ?? null);
+          if (initialActive) {
+            setActiveOptionId(initialActive);
+            // Ensure we have the items for the selected option (getEstimate returns active option items, but we refresh to be safe)
+            const items = await (data as any).getEstimateItemsForOption?.(initialActive);
+            if (Array.isArray(items)) setE((prev) => (prev ? ({ ...prev, active_option_id: initialActive, items } as any) : prev));
+          }
+          // Seed edit buffers
+          const edits: any = {};
+          for (const o of list) {
+            edits[o.id] = {
+              name: (o as any).option_name ?? (o as any).optionName ?? 'Option',
+              description: (o as any).option_description ?? (o as any).optionDescription ?? '',
+            };
+          }
+          setOptionEdits(edits);
+        } catch (err) {
+          console.error(err);
+        }
+      })
       .catch((err) => {
         console.error(err);
         setStatus(String((err as any)?.message ?? err));
@@ -399,7 +430,18 @@ export function EstimateEditorPage() {
   async function save(next: Estimate) {
     try {
       setStatus('Saving…');
-      const saved = await data.upsertEstimate(next);
+
+      const optId = activeOptionId ?? (next as any)?.active_option_id ?? null;
+      if (optId && optionEdits[optId] && (data as any).updateEstimateOption) {
+        const ed = optionEdits[optId];
+        await (data as any).updateEstimateOption({
+          id: optId,
+          option_name: ed.name,
+          option_description: ed.description,
+        });
+      }
+
+      const saved = await data.upsertEstimate({ ...(next as any), active_option_id: optId } as any);
       setE(saved);
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1200);
@@ -518,7 +560,55 @@ export function EstimateEditorPage() {
     }
   }
 
-  async function updateQuantity(itemId: string, quantity: number) {
+  
+  async function switchOption(optionId: string) {
+    if (!e) return;
+    try {
+      // Save current option name/description (fast) before switching
+      const currentId = activeOptionId ?? (e as any).active_option_id ?? null;
+      if (currentId && optionEdits[currentId] && (data as any).updateEstimateOption) {
+        const ed = optionEdits[currentId];
+        await (data as any).updateEstimateOption({
+          id: currentId,
+          option_name: ed.name,
+          option_description: ed.description,
+        });
+      }
+
+      const items = await (data as any).getEstimateItemsForOption?.(optionId);
+      setActiveOptionId(optionId);
+      setE({ ...(e as any), active_option_id: optionId, items: Array.isArray(items) ? items : [] } as any);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function addOptionFromActive() {
+    if (!e) return;
+    try {
+      const fromId = activeOptionId ?? (e as any).active_option_id ?? options?.[0]?.id ?? null;
+      if (!fromId) return;
+
+      const created = await (data as any).copyEstimateOption?.(e.id, fromId);
+      const opts = await (data as any).listEstimateOptions?.(e.id);
+      const list: any[] = Array.isArray(opts) ? opts : [];
+      setOptions(list as any);
+
+      if (created?.id) {
+        setOptionEdits((prev) => ({
+          ...prev,
+          [created.id]: {
+            name: (created as any).option_name ?? 'Option',
+            description: (created as any).option_description ?? '',
+          },
+        }));
+        await switchOption(created.id);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+async function updateQuantity(itemId: string, quantity: number) {
   if (!e) return;
 
   const items: any[] = [...(((e as any).items ?? []) as any[])];
@@ -1052,22 +1142,126 @@ export function EstimateEditorPage() {
             Duplicate Estimate
           </Button>
 
+          {/* Estimate Options */}
+          <Card style={{ padding: 12, minWidth: 320 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ fontWeight: 700 }}>Option</div>
+              <select
+                value={activeOptionId ?? ''}
+                onChange={(ev) => switchOption(ev.target.value)}
+                disabled={isLocked || options.length === 0}
+                style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.15)' }}
+              >
+                {options.map((o: any) => (
+                  <option key={o.id} value={o.id}>
+                    {(optionEdits[o.id]?.name ?? o.option_name ?? 'Option')}
+                  </option>
+                ))}
+              </select>
+
+              <Button variant="secondary" disabled={isLocked || !activeOptionId} onClick={addOptionFromActive}>
+                Add Option
+              </Button>
+            </div>
+
+            {activeOptionId ? (
+              <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+                <div className="stack">
+                  <label className="label">Option Name</label>
+                  <Input
+                    value={optionEdits[activeOptionId]?.name ?? ''}
+                    onChange={(ev) =>
+                    setOptionEdits((prev) => ({
+                      ...prev,
+                      [activeOptionId]: { ...(prev[activeOptionId] ?? { name: '', description: '' }), name: (ev as any).target.value },
+                    }))
+                  }
+                />
+                </div>
+                <div className="stack">
+                  <label className="label">Option Description</label>
+                  <Input
+                    value={optionEdits[activeOptionId]?.description ?? ''}
+                    onChange={(ev) =>
+                    setOptionEdits((prev) => ({
+                      ...prev,
+                      [activeOptionId]: { ...(prev[activeOptionId] ?? { name: '', description: '' }), description: (ev as any).target.value },
+                    }))
+                  }
+                />
+              </div>
+            ) : null}
+          </Card>
+
+
           <Button
             variant="primary"
             disabled={isLocked}
             onClick={() => {
-              setMode({ type: 'add-materials-to-estimate', estimateId: (e as any).id });
+              setMode({ type: 'add-materials-to-estimate', estimateId: (e as any).id, optionId: activeOptionId ?? (e as any)?.active_option_id ?? null });
               nav('/materials');
             }}
           >
             Add Materials
           </Button>
 
+          {/* Estimate Options */}
+          <Card style={{ padding: 12, minWidth: 320 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ fontWeight: 700 }}>Option</div>
+              <select
+                value={activeOptionId ?? ''}
+                onChange={(ev) => switchOption(ev.target.value)}
+                disabled={isLocked || options.length === 0}
+                style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.15)' }}
+              >
+                {options.map((o: any) => (
+                  <option key={o.id} value={o.id}>
+                    {(optionEdits[o.id]?.name ?? o.option_name ?? 'Option')}
+                  </option>
+                ))}
+              </select>
+
+              <Button variant="secondary" disabled={isLocked || !activeOptionId} onClick={addOptionFromActive}>
+                Add Option
+              </Button>
+            </div>
+
+            {activeOptionId ? (
+              <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+                <div className="stack">
+                  <label className="label">Option Name</label>
+                  <Input
+                    value={optionEdits[activeOptionId]?.name ?? ''}
+                    onChange={(ev) =>
+                    setOptionEdits((prev) => ({
+                      ...prev,
+                      [activeOptionId]: { ...(prev[activeOptionId] ?? { name: '', description: '' }), name: (ev as any).target.value },
+                    }))
+                  }
+                />
+                </div>
+                <div className="stack">
+                  <label className="label">Option Description</label>
+                  <Input
+                    value={optionEdits[activeOptionId]?.description ?? ''}
+                    onChange={(ev) =>
+                    setOptionEdits((prev) => ({
+                      ...prev,
+                      [activeOptionId]: { ...(prev[activeOptionId] ?? { name: '', description: '' }), description: (ev as any).target.value },
+                    }))
+                  }
+                />
+              </div>
+            ) : null}
+          </Card>
+
+
           <Button
             variant="primary"
             disabled={isLocked}
             onClick={() => {
-              setMode({ type: 'add-assemblies-to-estimate', estimateId: (e as any).id });
+              setMode({ type: 'add-assemblies-to-estimate', estimateId: (e as any).id, optionId: activeOptionId ?? (e as any)?.active_option_id ?? null });
               nav('/assemblies');
             }}
           >
