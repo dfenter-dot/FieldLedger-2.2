@@ -47,12 +47,12 @@ function getMaterialUnitCost(mat: any): { chosen: number; usingCustom: boolean }
 }
 
 function fmtLaborHM(totalMinutes: number) {
+  // Display as compact hours+minutes (e.g., 0h30m, 2h0m, 1h30m).
+  // This is display-only; it must not change any math.
   const mins = Math.max(0, Math.floor(Number(totalMinutes || 0)));
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  if (h <= 0) return `${m}m`;
-  if (m <= 0) return `${h}h`;
-  return `${h}h ${m}m`;
+  return `${h}h${m}m`;
 }
 
 function toIntText(raw: string) {
@@ -1039,8 +1039,8 @@ export function AssemblyEditorPage() {
 
               return (
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  <div className="pill">Actual Labor: {baselineMinutes} min</div>
-                  <div className="pill">Expected Labor: {expectedMinutes} min</div>
+                  <div className="pill">Actual Labor: {fmtLaborHM(baselineMinutes)}</div>
+                  <div className="pill">Expected Labor: {fmtLaborHM(expectedMinutes)}</div>
                   <div className="pill">Material Cost: ${materialCost.toFixed(2)}</div>
                   <div className="pill">Material Price: ${materialPrice.toFixed(2)}</div>
                   <div className="pill">Labor Price: ${laborPrice.toFixed(2)}</div>
@@ -1060,6 +1060,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
