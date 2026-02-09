@@ -96,6 +96,9 @@ export function EstimateEditorPage() {
   const [options, setOptions] = useState<EstimateOption[]>([]);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   const [optionEdits, setOptionEdits] = useState<Record<string, { name: string; description: string }>>({});
+  const [showOptionsView, setShowOptionsView] = useState(false);
+  const [expandedOptions, setExpandedOptions] = useState<Record<string, boolean>>({});
+  const [optionItemsCache, setOptionItemsCache] = useState<Record<string, any[]>>({});
 
 
   // Local edit buffer for quantities so users can backspace/replace without double-clicking.
@@ -583,13 +586,47 @@ export function EstimateEditorPage() {
     }
   }
 
-  async function addOptionFromActive() {
-    if (!e) return;
+  async function ensureInitialOptionExists() {
+    if (!e) return null;
+    if (!(data as any).createEstimateOption || !(data as any).replaceEstimateItemsForOption) return null;
+    if (options.length > 0) return options[0];
+
+    // Create Option 1 from the current estimate items (so "Add Option" can copy from it).
+    setStatus('Creating first option…');
+    const opt1 = await (data as any).createEstimateOption(e.id, 'Option 1');
+    await (data as any).replaceEstimateItemsForOption(opt1.id, ((e as any).items ?? []) as any);
+
+    const refreshed = await (data as any).listEstimateOptions?.(e.id);
+    const list: any[] = Array.isArray(refreshed) ? refreshed : [opt1];
+    setOptions(list as any);
+    setOptionEdits((prev) => ({
+      ...prev,
+      [opt1.id]: { name: (opt1 as any).option_name ?? 'Option 1', description: (opt1 as any).option_description ?? '' },
+    }));
+    setActiveOptionId(opt1.id);
+    setE((prev) => (prev ? ({ ...(prev as any), active_option_id: opt1.id } as any) : prev));
+
+    // Persist active_option_id on the estimate header if supported.
+    if ((data as any).updateEstimateHeader) {
+      try {
+        await (data as any).updateEstimateHeader({ id: e.id, active_option_id: opt1.id } as any);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    setStatus('');
+    return opt1;
+  }
+
+  async function addOption() {
+    if (!e || isLocked) return;
     try {
-      const fromId = activeOptionId ?? (e as any).active_option_id ?? options?.[0]?.id ?? null;
+      // Ensure we have a base option to copy from.
+      const base = await ensureInitialOptionExists();
+      const fromId = (activeOptionId ?? (e as any).active_option_id ?? base?.id ?? null) as any;
       if (!fromId) {
-        setStatus('No option selected to copy.');
-        setTimeout(() => setStatus(''), 1200);
+        setStatus('Unable to determine an option to copy.');
+        setTimeout(() => setStatus(''), 2000);
         return;
       }
 
@@ -601,19 +638,21 @@ export function EstimateEditorPage() {
 
       setStatus('Creating option…');
       const created = await (data as any).copyEstimateOption(e.id, fromId);
-      const opts = await (data as any).listEstimateOptions?.(e.id);
-      const list: any[] = Array.isArray(opts) ? opts : [];
+      const refreshed = await (data as any).listEstimateOptions?.(e.id);
+      const list: any[] = Array.isArray(refreshed) ? refreshed : [];
       setOptions(list as any);
 
       if (created?.id) {
+        const nextIndex = list.length > 0 ? list.length : options.length + 1;
         setOptionEdits((prev) => ({
           ...prev,
           [created.id]: {
-            name: (created as any).option_name ?? 'Option',
+            name: (created as any).option_name ?? `Option ${nextIndex}`,
             description: (created as any).option_description ?? '',
           },
         }));
         await switchOption(created.id);
+        setShowOptionsView(false);
       }
       setStatus('');
     } catch (err) {
@@ -621,6 +660,19 @@ export function EstimateEditorPage() {
       const msg = String((err as any)?.message ?? err ?? 'Failed to add option');
       setStatus(msg);
       setTimeout(() => setStatus(''), 3500);
+    }
+  }
+
+  async function toggleOptionExpanded(optionId: string) {
+    setExpandedOptions((prev) => ({ ...prev, [optionId]: !prev[optionId] }));
+    // Lazy-load items for expanded options.
+    if (!optionItemsCache[optionId] && (data as any).getEstimateItemsForOption) {
+      try {
+        const items = await (data as any).getEstimateItemsForOption(optionId);
+        if (Array.isArray(items)) setOptionItemsCache((prev) => ({ ...prev, [optionId]: items }));
+      } catch (err) {
+        console.error(err);
+      }
     }
   }
 async function updateQuantity(itemId: string, quantity: number) {
@@ -1157,76 +1209,19 @@ async function updateQuantity(itemId: string, quantity: number) {
             Duplicate Estimate
           </Button>
 
-	          {/* Estimate Options */}
-	          <Card
-	            title="Options"
-	            right={
-	              <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-	                <div className="inputWrap" style={{ minWidth: 140 }}>
-	                  <select
-	                    className="input"
-	                    value={activeOptionId ?? ''}
-	                    onChange={(ev) => switchOption(ev.target.value)}
-	                    disabled={isLocked || options.length === 0}
-	                  >
-	                    {options.map((o: any) => (
-	                      <option key={o.id} value={o.id}>
-	                        {optionEdits[o.id]?.name ?? o.option_name ?? 'Option'}
-	                      </option>
-	                    ))}
-	                  </select>
-	                </div>
-	
-	                <Button
-	                  variant="secondary"
-	                  disabled={isLocked || options.length === 0}
-	                  onClick={addOptionFromActive}
-	                >
-	                  Add Option
-	                </Button>
-	              </div>
-	            }
-	          >
-	            {activeOptionId ? (
-	              <div style={{ display: 'grid', gap: 8 }}>
-	                <div className="stack">
-	                  <label className="label">Option Name</label>
-	                  <Input
-	                    disabled={isLocked}
-	                    value={optionEdits[activeOptionId]?.name ?? ''}
-	                    onChange={(ev) =>
-	                      setOptionEdits((prev) => ({
-	                        ...prev,
-	                        [activeOptionId]: {
-	                          ...(prev[activeOptionId] ?? { name: '', description: '' }),
-	                          name: (ev as any).target.value,
-	                        },
-	                      }))
-	                    }
-	                  />
-	                </div>
-	
-	                <div className="stack">
-	                  <label className="label">Option Description</label>
-	                  <Input
-	                    disabled={isLocked}
-	                    value={optionEdits[activeOptionId]?.description ?? ''}
-	                    onChange={(ev) =>
-	                      setOptionEdits((prev) => ({
-	                        ...prev,
-	                        [activeOptionId]: {
-	                          ...(prev[activeOptionId] ?? { name: '', description: '' }),
-	                          description: (ev as any).target.value,
-	                        },
-	                      }))
-	                    }
-	                  />
-	                </div>
-	              </div>
-	            ) : (
-	              <div style={{ color: 'var(--muted)' }}>No options found for this estimate.</div>
-	            )}
-	          </Card>
+          <Button variant="secondary" disabled={!e || isLocked} onClick={addOption}>
+            Add Option
+          </Button>
+
+          {options.length > 0 ? (
+            <Button
+              variant="secondary"
+              disabled={!e}
+              onClick={() => setShowOptionsView((v) => !v)}
+            >
+              {showOptionsView ? 'Back to Estimate' : 'View Options'}
+            </Button>
+          ) : null}
 
 
           <Button
@@ -1317,6 +1312,134 @@ async function updateQuantity(itemId: string, quantity: number) {
           </Button>
         </div>
 
+        {/* Option details (when multi-option mode is active) */}
+        {!showOptionsView && activeOptionId ? (
+          <Card title="Option" style={{ marginTop: 8 }}>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div className="stack">
+                <label className="label">Option Name</label>
+                <Input
+                  disabled={isLocked}
+                  value={optionEdits[activeOptionId]?.name ?? ''}
+                  onChange={(ev) =>
+                    setOptionEdits((prev) => ({
+                      ...prev,
+                      [activeOptionId]: {
+                        ...(prev[activeOptionId] ?? { name: '', description: '' }),
+                        name: (ev as any).target.value,
+                      },
+                    }))
+                  }
+                />
+              </div>
+
+              <div className="stack">
+                <label className="label">Option Description</label>
+                <Input
+                  disabled={isLocked}
+                  value={optionEdits[activeOptionId]?.description ?? ''}
+                  onChange={(ev) =>
+                    setOptionEdits((prev) => ({
+                      ...prev,
+                      [activeOptionId]: {
+                        ...(prev[activeOptionId] ?? { name: '', description: '' }),
+                        description: (ev as any).target.value,
+                      },
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
+        {/* Options overview */}
+        {showOptionsView ? (
+          <Card title="Options" style={{ marginTop: 8 }}>
+            {options.length === 0 ? (
+              <div style={{ color: 'var(--muted)' }}>No options yet. Click “Add Option” to create one.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {options
+                  .slice()
+                  .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+                  .map((o: any) => {
+                    const isExpanded = Boolean(expandedOptions[o.id]);
+                    const items = optionItemsCache[o.id] ?? null;
+                    const name = optionEdits[o.id]?.name ?? o.option_name ?? 'Option';
+                    const desc = optionEdits[o.id]?.description ?? o.option_description ?? '';
+
+                    return (
+                      <Card
+                        key={o.id}
+                        title={name}
+                        right={
+                          <div className="row" style={{ gap: 8 }}>
+                            <Button
+                              variant="secondary"
+                              onClick={async () => {
+                                await switchOption(o.id);
+                                setShowOptionsView(false);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button variant="secondary" onClick={() => toggleOptionExpanded(o.id)}>
+                              {isExpanded ? 'Hide' : 'Show'}
+                            </Button>
+                          </div>
+                        }
+                      >
+                        {isExpanded ? (
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            {desc ? (
+                              <div className="muted" style={{ whiteSpace: 'pre-wrap' }}>
+                                {desc}
+                              </div>
+                            ) : null}
+                            <div style={{ display: 'grid', gap: 6 }}>
+                              {(items ?? []).length === 0 ? (
+                                <div style={{ color: 'var(--muted)' }}>Loading…</div>
+                              ) : (
+                                (items ?? []).map((it: any) => {
+                                  const type = String(it?.type ?? it?.item_type ?? '').toLowerCase();
+                                  const qty = toNum(it?.quantity ?? 1, 1);
+
+                                  let label = 'Item';
+                                  if (it?.material_id || type === 'material') {
+                                    const m = materialCache[String(it.material_id ?? '')];
+                                    label = m?.name ?? 'Material';
+                                  } else if (it?.assembly_id || type === 'assembly') {
+                                    const a = assemblyCache[String(it.assembly_id ?? '')];
+                                    label = a?.name ?? it?.name ?? 'Assembly';
+                                  } else if (type === 'labor' || it?.labor_minutes != null || it?.minutes != null) {
+                                    label = it?.name ?? 'Labor';
+                                  }
+
+                                  return (
+                                    <div
+                                      key={String(it?.id ?? crypto.randomUUID?.() ?? Math.random())}
+                                      className="row"
+                                      style={{ justifyContent: 'space-between', gap: 10 }}
+                                    >
+                                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+                                      <div style={{ opacity: 0.85, whiteSpace: 'nowrap' }}>x{qty}</div>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </Card>
+                    );
+                  })}
+              </div>
+            )}
+          </Card>
+        ) : null}
+
+        {!showOptionsView ? (
         <div className="mt">
           <div className="muted small">Line Items</div>
 				{showBlankMaterialCard ? (
@@ -1626,6 +1749,7 @@ async function updateQuantity(itemId: string, quantity: number) {
             {rows.length === 0 ? <div className="muted">No line items yet.</div> : null}
           </div>
         </div>
+        ) : null}
 
         {(companySettings as any)?.show_tech_view_breakdown ?? false ? (
           <div className="mt">
