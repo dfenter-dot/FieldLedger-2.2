@@ -672,7 +672,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
         if (parentIdx >= 0) items.splice(parentIdx, 1);
         removeChildren(parentGroupId);
 
-        const saved = await data.upsertEstimate({ ...est, items } as any);
+        const saved = await data.upsertEstimate({ ...est, active_option_id: (mode as any).optionId ?? (est as any).active_option_id ?? null, items } as any);
         setSelectedEstimateItems((saved?.items ?? items) as any[]);
         return;
       }
@@ -744,7 +744,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           // We intentionally skip here to avoid creating broken rows.
         }
 
-        const saved = await data.upsertEstimate({ ...est, items } as any);
+        const saved = await data.upsertEstimate({ ...est, active_option_id: (mode as any).optionId ?? (est as any).active_option_id ?? null, items } as any);
         setSelectedEstimateItems((saved?.items ?? items) as any[]);
         return;
       }
@@ -771,7 +771,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
         }
       }
 
-      const saved = await data.upsertEstimate({ ...est, items } as any);
+      const saved = await data.upsertEstimate({ ...est, active_option_id: (mode as any).optionId ?? (est as any).active_option_id ?? null, items } as any);
       setSelectedEstimateItems((saved?.items ?? items) as any[]);
     } catch (e: any) {
       console.error(e);
@@ -1249,3 +1249,4 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
