@@ -282,7 +282,8 @@ export interface EstimateOption {
   id: UUID;
   estimate_id: UUID;
   option_name: string;
-  sort_order: number;
+    option_description?: string | null;
+sort_order: number;
   created_at?: string;
 }
 
@@ -358,6 +359,7 @@ export interface BrandingSettings {
   logo_storage_path?: string | null;
   updated_at?: string;
 }
+
 
 
 
