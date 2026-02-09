@@ -63,6 +63,15 @@ function toNum(raw: unknown, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function fmtLaborHM(totalMinutes: number) {
+  // Display as compact hours+minutes (e.g., 0h30m, 2h0m, 1h30m).
+  // Display-only; does not affect pricing math.
+  const mins = Math.max(0, Math.floor(Number(totalMinutes || 0)));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${h}h${m}m`;
+}
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -1450,8 +1459,8 @@ export function EstimateEditorPage() {
           <div className="mt">
             <div className="muted small">Cost & Pricing Breakdown</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <div className="pill">Actual Labor: {Math.round(toNum((totals as any).labor_minutes_actual, 0))} min</div>
-              <div className="pill">Expected Labor: {Math.round(toNum((totals as any).labor_minutes_expected, 0))} min</div>
+              <div className="pill">Actual Labor: {fmtLaborHM(Math.round(toNum((totals as any).labor_minutes_actual, 0)))}</div>
+              <div className="pill">Expected Labor: {fmtLaborHM(Math.round(toNum((totals as any).labor_minutes_expected, 0)))}</div>
 
               <div className="pill">Material Cost: ${safeFixed((totals as any).material_cost)}</div>
               <div className="pill">Material Price: ${safeFixed((totals as any).material_price)}</div>
@@ -1492,6 +1501,7 @@ export function EstimateEditorPage() {
     </div>
   );
 }
+
 
 
 
