@@ -337,7 +337,64 @@ export class LocalDataProvider implements IDataProvider {
     return created;
   }
 
-  async deleteEstimate(id: string): Promise<void> {
+  
+  async updateEstimateHeader(estimate: Partial<Estimate>): Promise<Estimate> {
+    // Local provider: treat as upsert without touching items/options.
+    return this.upsertEstimate(estimate);
+  }
+
+  async listEstimateOptions(estimateId: string): Promise<EstimateOption[]> {
+    const est = this.estimates.find(e => e.id === estimateId) as any;
+    return (est?.options ?? []) as EstimateOption[];
+  }
+
+  async createEstimateOption(estimateId: string, optionName: string): Promise<EstimateOption> {
+    const estIdx = this.estimates.findIndex(e => e.id === estimateId);
+    if (estIdx < 0) throw new Error('Estimate not found');
+    const est: any = this.estimates[estIdx] as any;
+    const nextSort = Array.isArray(est.options) ? est.options.length + 1 : 1;
+    const opt: any = { id: crypto.randomUUID(), estimate_id: estimateId, option_name: optionName, sort_order: nextSort };
+    est.options = [...(est.options ?? []), opt];
+    this.estimates[estIdx] = est;
+    return opt as EstimateOption;
+  }
+
+  async updateEstimateOption(option: Partial<EstimateOption> & { id: string }): Promise<EstimateOption> {
+    // Local provider: options stored in-memory on the estimate.
+    for (const e of this.estimates as any[]) {
+      const opts: any[] = e?.options ?? [];
+      const idx = opts.findIndex(o => o.id === option.id);
+      if (idx >= 0) {
+        opts[idx] = { ...opts[idx], ...option };
+        e.options = opts;
+        return opts[idx] as EstimateOption;
+      }
+    }
+    throw new Error('Estimate option not found');
+  }
+
+  async getEstimateItemsForOption(optionId: string): Promise<EstimateItem[]> {
+    // Local provider: items stored on estimate (single-option legacy).
+    const est: any = this.estimates.find(e => (e as any).active_option_id === optionId) ?? null;
+    return (est?.items ?? []) as EstimateItem[];
+  }
+
+  async replaceEstimateItemsForOption(optionId: string, items: EstimateItem[]): Promise<void> {
+    // Local provider: items stored on estimate (single-option legacy).
+    const idx = this.estimates.findIndex(e => (e as any).active_option_id === optionId);
+    if (idx >= 0) {
+      (this.estimates[idx] as any).items = items as any;
+      (this.estimates[idx] as any).updated_at = new Date().toISOString();
+      return;
+    }
+    // If no estimate tracks active_option_id, do nothing (local-only mode used for dev).
+  }
+
+  async copyEstimateOption(estimateId: string, fromOptionId: string): Promise<EstimateOption> {
+    // Minimal local implementation: create new option row.
+    return this.createEstimateOption(estimateId, 'Option');
+  }
+async deleteEstimate(id: string): Promise<void> {
     this.estimates = this.estimates.filter(e => e.id !== id);
   }
 
@@ -361,5 +418,6 @@ export class LocalDataProvider implements IDataProvider {
     return settings as BrandingSettings;
   }
 }
+
 
 
