@@ -640,10 +640,18 @@ export function EstimateEditorPage() {
       const created = await (data as any).copyEstimateOption(e.id, fromId);
       const refreshed = await (data as any).listEstimateOptions?.(e.id);
       const list: any[] = Array.isArray(refreshed) ? refreshed : [];
-      setOptions(list as any);
+      // Some environments may briefly return an empty list after creation.
+      // Ensure the newly created option is reflected locally.
+      const nextList =
+        list.length > 0
+          ? list
+          : created?.id
+            ? [...options, created]
+            : options;
+      setOptions(nextList as any);
 
       if (created?.id) {
-        const nextIndex = list.length > 0 ? list.length : options.length + 1;
+        const nextIndex = nextList.length > 0 ? nextList.length : options.length + 1;
         setOptionEdits((prev) => ({
           ...prev,
           [created.id]: {
@@ -666,10 +674,12 @@ export function EstimateEditorPage() {
   async function toggleOptionExpanded(optionId: string) {
     setExpandedOptions((prev) => ({ ...prev, [optionId]: !prev[optionId] }));
     // Lazy-load items for expanded options.
-    if (!optionItemsCache[optionId] && (data as any).getEstimateItemsForOption) {
+    // NOTE: cache entries may be an empty array; only fetch when truly undefined.
+    if (optionItemsCache[optionId] === undefined && (data as any).getEstimateItemsForOption) {
       try {
         const items = await (data as any).getEstimateItemsForOption(optionId);
         if (Array.isArray(items)) setOptionItemsCache((prev) => ({ ...prev, [optionId]: items }));
+        else setOptionItemsCache((prev) => ({ ...prev, [optionId]: [] }));
       } catch (err) {
         console.error(err);
       }
@@ -1213,15 +1223,24 @@ async function updateQuantity(itemId: string, quantity: number) {
             Add Option
           </Button>
 
-          {options.length > 0 ? (
-            <Button
-              variant="secondary"
-              disabled={!e}
-              onClick={() => setShowOptionsView((v) => !v)}
-            >
-              {showOptionsView ? 'Back to Estimate' : 'View Options'}
-            </Button>
-          ) : null}
+          <Button
+            variant="secondary"
+            disabled={!e}
+            onClick={async () => {
+              // If no options exist yet, create the first option from the current estimate
+              // so the Options view has something to show.
+              if (!showOptionsView && options.length === 0) {
+                try {
+                  await ensureInitialOptionExists();
+                } catch (err) {
+                  console.error(err);
+                }
+              }
+              setShowOptionsView((v) => !v);
+            }}
+          >
+            {showOptionsView ? 'Back to Estimate' : 'View Options'}
+          </Button>
 
 
           <Button
@@ -1398,8 +1417,10 @@ async function updateQuantity(itemId: string, quantity: number) {
                               </div>
                             ) : null}
                             <div style={{ display: 'grid', gap: 6 }}>
-                              {(items ?? []).length === 0 ? (
+                              {items == null ? (
                                 <div style={{ color: 'var(--muted)' }}>Loading…</div>
+                              ) : (items ?? []).length === 0 ? (
+                                <div style={{ color: 'var(--muted)' }}>No line items.</div>
                               ) : (
                                 (items ?? []).map((it: any) => {
                                   const type = String(it?.type ?? it?.item_type ?? '').toLowerCase();
