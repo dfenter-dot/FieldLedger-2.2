@@ -3,8 +3,8 @@ import { createContext, ReactNode, useContext, useMemo, useState } from 'react';
 export type SelectionMode =
   | { type: 'none' }
   | { type: 'add-materials-to-assembly'; assemblyId: string }
-  | { type: 'add-materials-to-estimate'; estimateId: string }
-  | { type: 'add-assemblies-to-estimate'; estimateId: string }
+  | { type: 'add-materials-to-estimate'; estimateId: string; optionId?: string | null }
+  | { type: 'add-assemblies-to-estimate'; estimateId: string; optionId?: string | null }
   | { type: 'job-costing-pick-estimate' };
 
 type SelectionContextValue = {
@@ -26,4 +26,5 @@ export function useSelection() {
   if (!ctx) throw new Error('useSelection must be used within SelectionProvider');
   return ctx;
 }
+
 
