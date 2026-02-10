@@ -45,11 +45,30 @@ export class SupabaseDataProvider implements IDataProvider {
      Helpers
   ============================ */
 
-  private async currentCompanyId(): Promise<string> {
-    const { data, error } = await this.supabase.from('profiles').select('company_id').single();
-    if (error || !data?.company_id) throw new Error('No company context available');
-    return data.company_id;
+  private
+  async currentCompanyId(): Promise<string> {
+    // Always resolve company_id from the logged-in user explicitly.
+    const { data: authData, error: authErr } = await this.supabase.auth.getUser();
+    if (authErr || !authData?.user?.id) throw new Error('Not authenticated');
+
+    const userId = authData.user.id;
+
+    const { data, error } = await this.supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const companyId = (data as any)?.company_id ?? null;
+
+    // Hard guard to prevent PostgREST 400 (uuid filter with undefined/blank)
+    if (error || !companyId || typeof companyId !== 'string' || companyId.trim().length < 10) {
+      throw new Error('No company context available (profiles.company_id missing)');
+    }
+
+    return companyId;
   }
+
 
   async getCurrentCompanyId(): Promise<string> {
     return this.currentCompanyId();
@@ -552,6 +571,7 @@ export class SupabaseDataProvider implements IDataProvider {
       use_admin_rules: Boolean(row.use_admin_rules ?? false),
       // Keep both spellings to avoid UI/pricing drift.
       // DB column is `customer_supplies_materials`.
+      customer_supplied_materials: Boolean(row.customer_supplies_materials ?? false),
       customer_supplies_materials: Boolean(row.customer_supplies_materials ?? false),
       taxable: Boolean(row.taxable ?? false),
       // NOTE: used by LibraryFolderPage; safe to ignore elsewhere
@@ -897,17 +917,9 @@ export class SupabaseDataProvider implements IDataProvider {
 
     return {
       ...(data as any),
-
-      // OPTION-SCOPED pricing controls (source of truth)
-      job_type_id: (activeOption as any)?.job_type_id ?? null,
-      use_admin_rules: Boolean((activeOption as any)?.use_admin_rules ?? false),
-      customer_supplies_materials: Boolean((activeOption as any)?.customer_supplies_materials ?? false),
-      apply_discount: Boolean((activeOption as any)?.apply_discount ?? false),
-      discount_percent:
-        (activeOption as any)?.discount_percent == null || String((activeOption as any)?.discount_percent).trim() === ''
-          ? null
-          : Number((activeOption as any)?.discount_percent),
-      apply_processing_fees: Boolean((activeOption as any)?.apply_processing_fees ?? false),
+      // normalize to UI field name used elsewhere
+      customer_supplied_materials: Boolean((data as any).customer_supplies_materials ?? (data as any).customer_supplied_materials ?? false),
+      customer_supplies_materials: Boolean((data as any).customer_supplies_materials ?? false),
       options: (options ?? []) as any,
       active_option_id: (activeOption?.id ?? null) as any,
       items: mappedItems as any,
@@ -933,7 +945,24 @@ export class SupabaseDataProvider implements IDataProvider {
       customer_address: (estimate as any).customer_address ?? null,
       private_notes: (estimate as any).private_notes ?? null,
 
-      active_option_id: (estimate as any).active_option_id ?? (estimate as any).activeOptionId ?? null,
+      job_type_id: (estimate as any).job_type_id ?? null,
+      use_admin_rules: Boolean((estimate as any).use_admin_rules ?? false),
+
+      customer_supplies_materials: Boolean(
+        (estimate as any).customer_supplies_materials ??
+          (estimate as any).customer_supplied_materials ??
+          false
+      ),
+
+      apply_discount: Boolean((estimate as any).apply_discount ?? false),
+      // Editable per-estimate discount percent (capped by Admin). Nullable.
+      discount_percent:
+        (estimate as any).discount_percent == null || String((estimate as any).discount_percent).trim() === ''
+          ? null
+          : Number((estimate as any).discount_percent),
+      apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
+      // Deprecated: misc material is governed solely by Admin configuration.
+      // Do NOT send apply_misc_material to Supabase (column may not exist in migrated schemas).
 
       status: (estimate as any).status ?? 'draft',
       sent_at: (estimate as any).sent_at ?? null,
@@ -944,7 +973,6 @@ export class SupabaseDataProvider implements IDataProvider {
       created_by: (estimate as any).created_by ?? null,
       created_at: (estimate as any).created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
-
     };
 
     if (!payload.id) delete payload.id;
@@ -979,46 +1007,6 @@ export class SupabaseDataProvider implements IDataProvider {
     }
 
     activeOptionId = activeOption?.id ?? null;
-    // Persist active option selection on the estimate group (so list-click resumes where you left off)
-    {
-      const { error: aoErr } = await this.supabase
-        .from('estimates')
-        .update({ active_option_id: activeOptionId, updated_at: new Date().toISOString() } as any)
-        .eq('id', data.id);
-      if (aoErr) throw aoErr;
-    }
-
-    // Persist OPTION-SCOPED pricing controls on the active option
-    {
-      const optionPayload: any = {
-        job_type_id: (estimate as any).job_type_id ?? null,
-        use_admin_rules: Boolean((estimate as any).use_admin_rules ?? false),
-        customer_supplies_materials: Boolean(
-          (estimate as any).customer_supplies_materials ??
-            (estimate as any).customer_supplied_materials ??
-            false
-        ),
-        apply_discount: Boolean((estimate as any).apply_discount ?? false),
-        discount_percent:
-          (estimate as any).discount_percent == null || String((estimate as any).discount_percent).trim() === ''
-            ? null
-            : Number((estimate as any).discount_percent),
-        apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error: optUpdErr } = await this.supabase.from('estimate_options').update(optionPayload).eq('id', activeOptionId);
-      if (optUpdErr) {
-        const msg = String((optUpdErr as any)?.message ?? optUpdErr);
-        if (msg.toLowerCase().includes('column') || msg.toLowerCase().includes('unknown')) {
-          throw new Error(
-            'Estimate save failed: estimate_options is missing one or more option-level pricing columns. Run the included SQL migration to add them.'
-          );
-        }
-        throw optUpdErr;
-      }
-    }
-
 
     // Replace all items for active option on save
     {
@@ -1132,7 +1120,21 @@ export class SupabaseDataProvider implements IDataProvider {
       customer_address: (estimate as any).customer_address ?? null,
       private_notes: (estimate as any).private_notes ?? null,
 
-      active_option_id: (estimate as any).active_option_id ?? (estimate as any).activeOptionId ?? null,
+      job_type_id: (estimate as any).job_type_id ?? null,
+      use_admin_rules: Boolean((estimate as any).use_admin_rules ?? false),
+
+      customer_supplies_materials: Boolean(
+        (estimate as any).customer_supplies_materials ??
+          (estimate as any).customer_supplied_materials ??
+          false
+      ),
+
+      apply_discount: Boolean((estimate as any).apply_discount ?? false),
+      discount_percent:
+        (estimate as any).discount_percent == null || String((estimate as any).discount_percent).trim() === ''
+          ? null
+          : Number((estimate as any).discount_percent),
+      apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
 
       status: (estimate as any).status ?? 'draft',
       sent_at: (estimate as any).sent_at ?? null,
@@ -1140,8 +1142,9 @@ export class SupabaseDataProvider implements IDataProvider {
       declined_at: (estimate as any).declined_at ?? null,
       valid_until: (estimate as any).valid_until ?? null,
 
+      created_by: (estimate as any).created_by ?? null,
+      created_at: (estimate as any).created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
-
     };
 
     if (!payload.id) delete payload.id;
@@ -1176,12 +1179,11 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async createEstimateOption(estimateId: string, optionName: string): Promise<EstimateOption> {
     const existing = await this.listEstimateOptions(estimateId);
-    const nextSort = (existing?.reduce((mx, o: any) => Math.max(mx, Number(o.sort_order ?? 0)), 0) ?? 0) + 1;
-    const nextNum = (existing?.reduce((mx, o: any) => Math.max(mx, Number(o.option_number ?? 0)), 0) ?? 0) + 1;
+    const nextSort = (existing?.reduce((m, o: any) => Math.max(m, Number(o.sort_order ?? 0)), 0) ?? 0) + 1;
 
     const { data, error } = await this.supabase
       .from('estimate_options')
-      .insert({ estimate_id: estimateId, option_name: optionName, option_number: nextNum, sort_order: nextSort })
+      .insert({ estimate_id: estimateId, option_name: optionName, sort_order: nextSort })
       .select('*')
       .single();
     if (error) throw error;
@@ -1345,35 +1347,12 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async copyEstimateOption(estimateId: string, fromOptionId: string): Promise<EstimateOption> {
     const existing = await this.listEstimateOptions(estimateId);
-
-    // Ensure Option 1 exists (self-heal)
-    if (!existing || existing.length === 0) {
-      await this.createEstimateOption(estimateId, 'Option 1');
-    }
-
-    const refreshed = await this.listEstimateOptions(estimateId);
-    const nextSort = (refreshed?.reduce((mx, o: any) => Math.max(mx, Number(o.sort_order ?? 0)), 0) ?? 0) + 1;
-    const nextNum = (refreshed?.reduce((mx, o: any) => Math.max(mx, Number(o.option_number ?? 0)), 0) ?? 0) + 1;
-    const newName = `Option ${nextNum}`;
-
-    // Pull source option pricing controls
-    const src = (refreshed ?? []).find((o: any) => String(o.id) === String(fromOptionId)) ?? null;
+    const nextSort = (existing?.reduce((m, o: any) => Math.max(m, Number(o.sort_order ?? 0)), 0) ?? 0) + 1;
+    const newName = `Option ${nextSort}`;
 
     const { data: createdOpt, error: createOptErr } = await this.supabase
       .from('estimate_options')
-      .insert({
-        estimate_id: estimateId,
-        option_name: newName,
-        option_number: nextNum,
-        sort_order: nextSort,
-        option_description: null,
-        job_type_id: src?.job_type_id ?? null,
-        use_admin_rules: Boolean(src?.use_admin_rules ?? false),
-        customer_supplies_materials: Boolean(src?.customer_supplies_materials ?? false),
-        apply_discount: Boolean(src?.apply_discount ?? false),
-        discount_percent: src?.discount_percent ?? null,
-        apply_processing_fees: Boolean(src?.apply_processing_fees ?? false),
-      })
+      .insert({ estimate_id: estimateId, option_name: newName, sort_order: nextSort })
       .select('*')
       .single();
     if (createOptErr) throw createOptErr;
