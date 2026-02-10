@@ -11,23 +11,6 @@ import { useDialogs } from '../../providers/dialogs/DialogContext';
 import { computeEstimatePricing } from '../../providers/data/pricing';
 import { TechCostBreakdownCard } from '../shared/TechCostBreakdownCard';
 
-function uuidv4(): string {
-  // Use native when available.
-  const c: any = (globalThis as any)?.crypto;
-  if (c?.randomUUID) return c.randomUUID();
-  // Otherwise generate v4 using crypto.getRandomValues if possible.
-  const bytes = new Uint8Array(16);
-  if (c?.getRandomValues) c.getRandomValues(bytes);
-  else {
-    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-  }
-  // Per RFC4122 section 4.4
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 type ItemRow =
   | {
       id: string;
@@ -114,11 +97,6 @@ function getSortedOptions(list: EstimateOption[]) {
     });
 }
 
-function optionSuffix(opt: any, fallbackIndex: number) {
-  const n = toNum(opt?.option_number ?? opt?.optionNumber, 0);
-  return n >= 1 ? n : fallbackIndex;
-}
-
 export function EstimateEditorPage() {
   const { estimateId } = useParams();
   const data = useData();
@@ -135,35 +113,43 @@ export function EstimateEditorPage() {
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   type OptionPayload = {
     description: string;
+    settings?: {
+      job_type_id?: string | null;
+      use_admin_rules?: boolean;
+      customer_supplies_materials?: boolean;
+      apply_discount?: boolean;
+      discount_percent?: number | null;
+      apply_processing_fees?: boolean;
+    };
   };
 
   function safeParseOptionPayload(raw: any): OptionPayload {
-    // Legacy-safe: previously option_description stored JSON like {description, settings}
-    // Now option_description is plain text. We still tolerate old JSON so existing data loads.
-    const s = String(raw ?? '').trim();
-    if (!s) return { description: '' };
-    if (s.startsWith('{') && s.endsWith('}')) {
-      try {
-        const j = JSON.parse(s);
-        if (j && typeof j === 'object') {
-          const d = (j as any).description;
-          if (typeof d === 'string') return { description: d };
-        }
-      } catch {
-        // fall through
-      }
-    }
-    return { description: s };
+    const text = raw == null ? '' : String(raw);
+    return { description: text };
   }
 
   function buildOptionPayload(description: string): string {
-    // New contract: store plain text only.
     return String(description ?? '');
   }
 
-  
+  function currentOptionSettingsFromEstimate(est: any): OptionPayload['settings'] {
+    return {
+      job_type_id: est?.job_type_id ?? null,
+      use_admin_rules: Boolean(est?.use_admin_rules ?? false),
+      customer_supplies_materials: Boolean(
+        est?.customer_supplies_materials ?? est?.customer_supplied_materials ?? false,
+      ),
+      apply_discount: Boolean(est?.apply_discount ?? false),
+      discount_percent:
+        est?.discount_percent == null || String(est?.discount_percent).trim() === ''
+          ? null
+          : Number(est?.discount_percent),
+      apply_processing_fees: Boolean(est?.apply_processing_fees ?? false),
+    };
+  }
+
   const [optionEdits, setOptionEdits] = useState<
-    Record<string, { name: string; description: string }>
+    Record<string, { name: string; description: string; settings?: OptionPayload['settings'] }>
   >({});
   const [showOptionsView, setShowOptionsView] = useState(false);
   const [expandedOptions, setExpandedOptions] = useState<Record<string, boolean>>({});
@@ -215,7 +201,7 @@ export function EstimateEditorPage() {
           const nextNum = Math.max(starting, maxNum + 1);
 
           const draft: Estimate = {
-            id: uuidv4(),
+            id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
             company_id: null,
             name: 'New Estimate',
             estimate_number: nextNum,
@@ -260,14 +246,7 @@ export function EstimateEditorPage() {
             const items = await (data as any).getEstimateItemsForOption?.(initialActive);
             const optRow = (list ?? []).find((o: any) => String(o.id) === String(initialActive)) ?? null;
             const payload = safeParseOptionPayload((optRow as any)?.option_description ?? (optRow as any)?.optionDescription);
-            const settings = {
-              job_type_id: (optRow as any)?.job_type_id ?? null,
-              use_admin_rules: Boolean((optRow as any)?.use_admin_rules ?? false),
-              customer_supplies_materials: Boolean((optRow as any)?.customer_supplies_materials ?? false),
-              apply_discount: Boolean((optRow as any)?.apply_discount ?? false),
-              discount_percent: (optRow as any)?.discount_percent ?? null,
-              apply_processing_fees: Boolean((optRow as any)?.apply_processing_fees ?? false),
-            };
+            const settings = payload.settings ?? {};
             if (Array.isArray(items)) {
               setE((prev) =>
                 prev
@@ -298,6 +277,7 @@ export function EstimateEditorPage() {
             edits[o.id] = {
               name: (o as any).option_name ?? (o as any).optionName ?? 'Option',
               description: payload.description,
+              settings: payload.settings,
             };
           }
           setOptionEdits(edits);
@@ -375,20 +355,16 @@ export function EstimateEditorPage() {
 
   const sortedOptions = useMemo(() => getSortedOptions(options), [options]);
   const currentOptionId = (activeOptionId ?? (e as any)?.active_option_id ?? null) as string | null;
-  const currentOptionMeta = useMemo(() => {
-    if (!currentOptionId) return { index: -1, optionNumber: null as number | null };
-    const idx = sortedOptions.findIndex((o) => String(o.id) === String(currentOptionId));
-    const row: any = idx >= 0 ? (sortedOptions[idx] as any) : null;
-    const num = row?.option_number ?? row?.optionNumber ?? null;
-    return { index: idx, optionNumber: typeof num === 'number' ? num : num != null ? Number(num) : null };
+  const currentOptionIndex = useMemo(() => {
+    if (!currentOptionId) return -1;
+    return sortedOptions.findIndex((o) => String(o.id) === String(currentOptionId));
   }, [sortedOptions, currentOptionId]);
   const displayEstimateNumber = useMemo(() => {
     const base = String((e as any)?.estimate_number ?? '');
-    // Suffix is stable identity: option_number (monotonic). Reorder MUST NOT change this.
-    if (sortedOptions.length > 0 && currentOptionMeta.optionNumber && currentOptionMeta.optionNumber > 0)
-      return `${base}-${currentOptionMeta.optionNumber}`;
+    // Only suffix when options exist and we can resolve the active option index.
+    if (sortedOptions.length > 0 && currentOptionIndex >= 0) return `${base}-${currentOptionIndex + 1}`;
     return base;
-  }, [e, sortedOptions.length, currentOptionMeta.optionNumber]);
+  }, [e, sortedOptions.length, currentOptionIndex]);
 
   const renderRows = useMemo(() => {
     const top = rows.filter((r) => !(r as any).parentGroupId);
@@ -559,6 +535,12 @@ export function EstimateEditorPage() {
           id: optId,
           option_name: ed.name,
           option_description: buildOptionPayload(ed.description),
+          job_type_id: (next as any).job_type_id ?? null,
+          use_admin_rules: Boolean((next as any).use_admin_rules ?? false),
+          customer_supplies_materials: Boolean((next as any).customer_supplies_materials ?? (next as any).customer_supplied_materials ?? false),
+          apply_discount: Boolean((next as any).apply_discount ?? false),
+          discount_percent: (next as any).discount_percent,
+          apply_processing_fees: Boolean((next as any).apply_processing_fees ?? false),
         });
       }
 
@@ -692,34 +674,17 @@ export function EstimateEditorPage() {
         await (data as any).updateEstimateOption({
           id: currentId,
           option_name: ed.name,
-          option_description: buildOptionPayload(ed.description),
+          option_description: buildOptionPayload(ed.description, currentOptionSettingsFromEstimate(e)),
         });
       }
 
       const items = await (data as any).getEstimateItemsForOption?.(optionId);
 
-      // Find the option row (prefer the current in-memory list; fall back to refetch).
-      let optRow: any = (options ?? []).find((o: any) => String(o.id) === String(optionId)) ?? null;
-      if (!optRow && (data as any).listEstimateOptions && e?.id) {
-        try {
-          const refreshed = await (data as any).listEstimateOptions(String(e.id));
-          const list: any[] = Array.isArray(refreshed) ? refreshed : [];
-          setOptions(list as any);
-          optRow = list.find((o: any) => String(o.id) === String(optionId)) ?? null;
-        } catch {
-          // ignore
-        }
-      }
-
-      // Load per-option settings (job type, discount toggles, etc.) from option columns (NOT from description).
-      const settings = {
-        job_type_id: (optRow as any)?.job_type_id ?? null,
-        use_admin_rules: Boolean((optRow as any)?.use_admin_rules ?? false),
-        customer_supplies_materials: Boolean((optRow as any)?.customer_supplies_materials ?? false),
-        apply_discount: Boolean((optRow as any)?.apply_discount ?? false),
-        discount_percent: (optRow as any)?.discount_percent ?? null,
-        apply_processing_fees: Boolean((optRow as any)?.apply_processing_fees ?? false),
-      };
+      // Load per-option settings (job type, discount toggles, etc.) from the option payload
+      // so each option can be priced/configured independently.
+      const optRow = (options ?? []).find((o: any) => String(o.id) === String(optionId)) ?? null;
+      const payload = safeParseOptionPayload((optRow as any)?.option_description);
+      const settings = payload.settings ?? {};
 
       setActiveOptionId(optionId);
       setE({
@@ -768,7 +733,7 @@ export function EstimateEditorPage() {
       try {
         await (data as any).updateEstimateOption({
           id: opt1.id,
-          option_description: buildOptionPayload(''),
+          option_description: buildOptionPayload('', currentOptionSettingsFromEstimate(e)),
         });
       } catch {
         // ignore
@@ -782,7 +747,9 @@ export function EstimateEditorPage() {
       ...prev,
       [opt1.id]: {
         name: (opt1 as any).option_name ?? 'Option 1',
-        description: safeParseOptionPayload((opt1 as any).option_description).description,      },
+        description: safeParseOptionPayload((opt1 as any).option_description).description,
+        settings: currentOptionSettingsFromEstimate(e),
+      },
     }));
     setActiveOptionId(opt1.id);
     setE((prev) => (prev ? ({ ...(prev as any), active_option_id: opt1.id } as any) : prev));
@@ -832,8 +799,7 @@ export function EstimateEditorPage() {
       setOptions(nextList as any);
 
       if (created?.id) {
-        const createdNumRaw = (created as any).option_number ?? (created as any).optionNumber;
-        const createdNum = createdNumRaw != null ? Number(createdNumRaw) : null;
+        const nextIndex = nextList.length > 0 ? nextList.length : options.length + 1;
 
         // Per spec: new options start with a blank description, but copy line items.
         // We also snapshot the current option-level settings into the option payload so
@@ -842,7 +808,7 @@ export function EstimateEditorPage() {
           try {
             await (data as any).updateEstimateOption({
               id: created.id,
-              option_description: buildOptionPayload(''),
+              option_description: buildOptionPayload('', currentOptionSettingsFromEstimate(e)),
             });
           } catch {
             // ignore
@@ -852,8 +818,10 @@ export function EstimateEditorPage() {
         setOptionEdits((prev) => ({
           ...prev,
           [created.id]: {
-            name: (created as any).option_name ?? `Option ${createdNum ?? (options.length + 1)}`,
-            description: '',          },
+            name: (created as any).option_name ?? `Option ${nextIndex}`,
+            description: '',
+            settings: currentOptionSettingsFromEstimate(e),
+          },
         }));
         await switchOption(created.id);
         setShowOptionsView(false);
@@ -1398,10 +1366,8 @@ async function updateQuantity(itemId: string, quantity: number) {
             {sortedOptions.map((o, idx) => {
               const oid = String((o as any).id);
               const isActive = oid === String(currentOptionId ?? '');
-              const onumRaw = (o as any).option_number ?? (o as any).optionNumber;
-              const onum = onumRaw != null ? Number(onumRaw) : null;
               const label =
-                optionEdits[oid]?.name ?? (o as any).option_name ?? (o as any).optionName ?? `Option ${onum ?? idx + 1}`;
+                optionEdits[oid]?.name ?? (o as any).option_name ?? (o as any).optionName ?? `Option ${idx + 1}`;
               return (
                 <Button
                   key={oid}
