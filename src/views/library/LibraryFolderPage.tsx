@@ -862,7 +862,11 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                     variant="primary"
                     onClick={() => {
                       setMode({ type: 'none' });
-                      nav(returnToPath);
+                      if (mode.type === 'add-materials-to-estimate' || mode.type === 'add-assemblies-to-estimate') {
+                        nav(returnToPath, { state: { activeOptionId: (mode as any).optionId ?? null } });
+                      } else {
+                        nav(returnToPath);
+                      }
                     }}
                   >
                     {mode.type === 'add-materials-to-assembly' ? 'Return to Assembly' : 'Return to Estimate'}
@@ -1253,5 +1257,6 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
 
 
