@@ -282,19 +282,16 @@ export interface EstimateOption {
   id: UUID;
   estimate_id: UUID;
 
-  /** Stable, monotonic suffix identity within an estimate group (e.g., 1 => 2600-1). */
-  option_number: number;
+  /** Stable suffix identity: 1 => -1, 2 => -2, etc. */
+  option_number?: number | null;
 
-  /** Display name (e.g., Option 1, Bronze, Silver, Gold). */
   option_name: string;
-
-  /** Plain-text description (no JSON payload). */
   option_description?: string | null;
 
-  /** Display ordering only (drag/drop). Does NOT affect option_number. */
+  /** Display order only (drag/drop). Does NOT affect option_number. */
   sort_order: number;
 
-  /** Option-specific pricing controls (source of truth for calculations). */
+  /** Option-scoped pricing controls */
   job_type_id?: UUID | null;
   use_admin_rules?: boolean;
   customer_supplies_materials?: boolean;
@@ -307,11 +304,8 @@ export interface EstimateOption {
 }
 
 
-
 export interface EstimateItem {
   id?: UUID;
-  estimate_option_id?: UUID;
-  sort_order?: number;
 
   type: 'material' | 'assembly' | 'labor';
 
