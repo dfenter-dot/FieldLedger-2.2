@@ -1,0 +1,44 @@
+-- FieldLedger Options: add missing option fields to estimate_options
+-- Run in Supabase SQL editor OR commit as Supabase migration (recommended).
+-- Safe to run multiple times.
+
+alter table if exists public.estimate_options
+  add column if not exists option_number integer,
+  add column if not exists option_description text,
+  add column if not exists sort_order integer default 1,
+  add column if not exists job_type_id uuid null,
+  add column if not exists use_admin_rules boolean default false,
+  add column if not exists customer_supplies_materials boolean default false,
+  add column if not exists apply_discount boolean default false,
+  add column if not exists discount_percent numeric null,
+  add column if not exists apply_processing_fees boolean default false,
+  add column if not exists updated_at timestamptz default now();
+
+-- Backfill option_number for existing rows (stable, based on sort_order then created_at)
+with ranked as (
+  select id,
+         row_number() over (partition by estimate_id order by sort_order nulls last, created_at nulls last, id) as rn
+  from public.estimate_options
+)
+update public.estimate_options eo
+set option_number = r.rn
+from ranked r
+where eo.id = r.id and (eo.option_number is null or eo.option_number < 1);
+
+-- Ensure updated_at updates
+create or replace function public.set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_estimate_options_updated_at on public.estimate_options;
+create trigger trg_estimate_options_updated_at
+before update on public.estimate_options
+for each row execute function public.set_updated_at();
+
+-- Ask PostgREST to refresh schema cache (helps remove "column not found in schema cache")
+notify pgrst, 'reload schema';
+
