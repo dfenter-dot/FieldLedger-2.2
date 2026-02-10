@@ -354,31 +354,57 @@ export function EstimateOptionsPage() {
                       ) : (
                         <div style={{ display: 'grid', gap: 6 }}>
                           {items.map((it: any, idx: number) => {
-                            const type = String(it?.type ?? it?.item_type ?? '').toLowerCase();
+                            const typeRaw = String(it?.type ?? it?.item_type ?? '').toLowerCase();
                             const qty = Number(it?.quantity ?? 1) || 1;
-                            let label = 'Item';
 
-                            if (type === 'material') {
+                            const typeLabel =
+                              typeRaw === 'material'
+                                ? 'Material'
+                                : typeRaw === 'assembly'
+                                  ? 'Assembly'
+                                  : typeRaw === 'labor'
+                                    ? 'Labor'
+                                    : 'Item';
+
+                            let label = it?.name ?? 'Item';
+                            if (typeRaw === 'material') {
                               const mid = String(it.material_id ?? it.materialId ?? '');
                               label = materialsById[mid]?.name ?? 'Material';
-                            } else if (type === 'assembly') {
+                            } else if (typeRaw === 'assembly') {
                               const aid = String(it.assembly_id ?? it.assemblyId ?? '');
                               label = assembliesById[aid]?.name ?? it?.name ?? 'Assembly';
-                            } else if (type === 'labor') {
+                            } else if (typeRaw === 'labor') {
                               label = it?.name ?? 'Labor';
+                            }
+
+                            let meta = '';
+                            if (typeRaw === 'labor') {
+                              const minutes = Number(it?.minutes ?? it?.labor_minutes ?? it?.laborMinutes ?? 0);
+                              const hours = Number(it?.hours ?? it?.labor_hours ?? it?.laborHours ?? 0);
+                              const totalMin = Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
+                              const totalHr = Number.isFinite(hours) && hours > 0 ? hours : 0;
+                              if (totalHr || totalMin) {
+                                meta = totalHr ? `${totalHr}h${totalMin ? ` ${totalMin}m` : ''}` : `${totalMin}m`;
+                              }
                             }
 
                             return (
                               <div
                                 key={String(it?.id ?? idx)}
                                 className="row"
-                                style={{ justifyContent: 'space-between' }}
+                                style={{ justifyContent: 'space-between', alignItems: 'center' }}
                               >
-                                <div>{label}</div>
-                                <div className="muted">x{qty}</div>
+                                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                                  <div className="pill">{typeLabel}</div>
+                                  <div>
+                                    <div>{label}</div>
+                                    {meta ? <div className="muted small">{meta}</div> : null}
+                                  </div>
+                                </div>
+                                <div className="muted">Qty {qty}</div>
                               </div>
                             );
-                          })}
+                          })}})}
                         </div>
                       )}
                     </div>
@@ -392,5 +418,6 @@ export function EstimateOptionsPage() {
     </div>
   );
 }
+
 
 
