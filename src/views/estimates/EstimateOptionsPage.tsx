@@ -262,7 +262,7 @@ export function EstimateOptionsPage() {
           jobTypesById,
           companySettings,
         } as any);
-        totals[oid] = Number((pricing as any)?.total_price ?? (pricing as any)?.totals?.final_total ?? 0);
+        totals[oid] = Number((pricing as any)?.total ?? (pricing as any)?.total_price ?? (pricing as any)?.totals?.final_total ?? 0);
       } catch {
         totals[oid] = 0;
       }
