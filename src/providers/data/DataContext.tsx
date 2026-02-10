@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { IDataProvider } from './IDataProvider';
 import { useAuth } from '../auth/AuthContext';
-import { createDataProvider } from './dataProviderFactory.ts';
+import { createDataProvider } from './DataProviderFactory';
 import {
   Assembly,
   Estimate,
@@ -40,7 +40,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [rules, setRules] = useState<AdminRule[]>([]);
 
-  // Resolve company FIRST
   useEffect(() => {
     if (!session) return;
 
@@ -48,10 +47,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const baseProvider = createDataProvider('supabase');
       const cid = await baseProvider.getCompanyIdForUser(session.user.id);
 
-      if (!cid) {
-        console.error('Company ID could not be resolved');
-        return;
-      }
+      if (!cid) return;
 
       setCompanyId(cid);
       setProvider(createDataProvider('supabase', cid));
@@ -60,7 +56,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     resolveCompany();
   }, [session]);
 
-  // HARD GUARD: never query without company + provider
   const reloadAll = async () => {
     if (!provider || !companyId) return;
 
@@ -109,17 +104,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       rules,
       reloadAll,
     }),
-    [
-      provider,
-      companyId,
-      estimates,
-      materials,
-      assemblies,
-      jobTypes,
-      branding,
-      companySettings,
-      rules,
-    ]
+    [provider, companyId, estimates, materials, assemblies, jobTypes, branding, companySettings, rules]
   );
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
