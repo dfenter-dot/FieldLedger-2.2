@@ -1,77 +1,120 @@
--- Estimate Items RLS Policies
---
--- Fix: estimate line items not saving because DELETE/INSERT/UPDATE are blocked by RLS.
---
--- Assumptions:
---   - public.profiles has columns: user_id (uuid), company_id (uuid)
---   - public.estimates has column: company_id (uuid)
---   - public.estimate_options has column: estimate_id (uuid)
---   - public.estimate_items has column: estimate_option_id (uuid)
+BEGIN;
 
-alter table if exists public.estimate_items enable row level security;
+ALTER TABLE public.estimate_items ENABLE ROW LEVEL SECURITY;
 
--- Helper predicate: does the current user belong to the same company as the estimate group?
--- NOTE: auth.uid() is the logged-in user id.
+DO $$
+DECLARE
+  fk_col text;
+BEGIN
+  -- Detect which column links estimate_items -> estimate_options
+  SELECT c.column_name
+  INTO fk_col
+  FROM information_schema.columns c
+  WHERE c.table_schema = 'public'
+    AND c.table_name = 'estimate_items'
+    AND c.column_name IN ('estimate_option_id', 'option_id', 'estimate_options_id', 'estimate_option_uuid')
+  ORDER BY CASE c.column_name
+    WHEN 'estimate_option_id' THEN 1
+    WHEN 'option_id' THEN 2
+    WHEN 'estimate_options_id' THEN 3
+    WHEN 'estimate_option_uuid' THEN 4
+    ELSE 99
+  END
+  LIMIT 1;
 
-create policy if not exists "estimate_items_select_own_company" on public.estimate_items
-for select
-using (
-  exists (
-    select 1
-    from public.estimate_options eo
-    join public.estimates e on e.id = eo.estimate_id
-    join public.profiles p on p.company_id = e.company_id
-    where eo.id = estimate_items.estimate_option_id
-      and p.user_id = auth.uid()
-  )
-);
+  IF fk_col IS NULL THEN
+    RAISE EXCEPTION 'Could not find option FK column on public.estimate_items. Expected one of: estimate_option_id, option_id, estimate_options_id, estimate_option_uuid';
+  END IF;
 
-create policy if not exists "estimate_items_insert_own_company" on public.estimate_items
-for insert
-with check (
-  exists (
-    select 1
-    from public.estimate_options eo
-    join public.estimates e on e.id = eo.estimate_id
-    join public.profiles p on p.company_id = e.company_id
-    where eo.id = estimate_items.estimate_option_id
-      and p.user_id = auth.uid()
-  )
-);
+  -- Drop policies if they already exist (safe re-run)
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='estimate_items' AND policyname='estimate_items_select_own_company') THEN
+    EXECUTE 'DROP POLICY estimate_items_select_own_company ON public.estimate_items';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='estimate_items' AND policyname='estimate_items_insert_own_company') THEN
+    EXECUTE 'DROP POLICY estimate_items_insert_own_company ON public.estimate_items';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='estimate_items' AND policyname='estimate_items_update_own_company') THEN
+    EXECUTE 'DROP POLICY estimate_items_update_own_company ON public.estimate_items';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='estimate_items' AND policyname='estimate_items_delete_own_company') THEN
+    EXECUTE 'DROP POLICY estimate_items_delete_own_company ON public.estimate_items';
+  END IF;
 
-create policy if not exists "estimate_items_update_own_company" on public.estimate_items
-for update
-using (
-  exists (
-    select 1
-    from public.estimate_options eo
-    join public.estimates e on e.id = eo.estimate_id
-    join public.profiles p on p.company_id = e.company_id
-    where eo.id = estimate_items.estimate_option_id
-      and p.user_id = auth.uid()
-  )
-)
-with check (
-  exists (
-    select 1
-    from public.estimate_options eo
-    join public.estimates e on e.id = eo.estimate_id
-    join public.profiles p on p.company_id = e.company_id
-    where eo.id = estimate_items.estimate_option_id
-      and p.user_id = auth.uid()
-  )
-);
+  -- Create policies using the detected FK column to estimate_options
+  EXECUTE format($sql$
+    CREATE POLICY estimate_items_select_own_company
+    ON public.estimate_items
+    FOR SELECT
+    USING (
+      EXISTS (
+        SELECT 1
+        FROM public.estimate_options eo
+        JOIN public.estimates e ON e.id = eo.estimate_id
+        JOIN public.profiles p ON p.company_id = e.company_id
+        WHERE eo.id = estimate_items.%I
+          AND p.user_id = auth.uid()
+      )
+    );
+  $sql$, fk_col);
 
-create policy if not exists "estimate_items_delete_own_company" on public.estimate_items
-for delete
-using (
-  exists (
-    select 1
-    from public.estimate_options eo
-    join public.estimates e on e.id = eo.estimate_id
-    join public.profiles p on p.company_id = e.company_id
-    where eo.id = estimate_items.estimate_option_id
-      and p.user_id = auth.uid()
-  )
-);
+  EXECUTE format($sql$
+    CREATE POLICY estimate_items_insert_own_company
+    ON public.estimate_items
+    FOR INSERT
+    WITH CHECK (
+      EXISTS (
+        SELECT 1
+        FROM public.estimate_options eo
+        JOIN public.estimates e ON e.id = eo.estimate_id
+        JOIN public.profiles p ON p.company_id = e.company_id
+        WHERE eo.id = estimate_items.%I
+          AND p.user_id = auth.uid()
+      )
+    );
+  $sql$, fk_col);
 
+  EXECUTE format($sql$
+    CREATE POLICY estimate_items_update_own_company
+    ON public.estimate_items
+    FOR UPDATE
+    USING (
+      EXISTS (
+        SELECT 1
+        FROM public.estimate_options eo
+        JOIN public.estimates e ON e.id = eo.estimate_id
+        JOIN public.profiles p ON p.company_id = e.company_id
+        WHERE eo.id = estimate_items.%I
+          AND p.user_id = auth.uid()
+      )
+    )
+    WITH CHECK (
+      EXISTS (
+        SELECT 1
+        FROM public.estimate_options eo
+        JOIN public.estimates e ON e.id = eo.estimate_id
+        JOIN public.profiles p ON p.company_id = e.company_id
+        WHERE eo.id = estimate_items.%I
+          AND p.user_id = auth.uid()
+      )
+    );
+  $sql$, fk_col, fk_col);
+
+  EXECUTE format($sql$
+    CREATE POLICY estimate_items_delete_own_company
+    ON public.estimate_items
+    FOR DELETE
+    USING (
+      EXISTS (
+        SELECT 1
+        FROM public.estimate_options eo
+        JOIN public.estimates e ON e.id = eo.estimate_id
+        JOIN public.profiles p ON p.company_id = e.company_id
+        WHERE eo.id = estimate_items.%I
+          AND p.user_id = auth.uid()
+      )
+    );
+  $sql$, fk_col);
+
+END $$;
+
+COMMIT;
