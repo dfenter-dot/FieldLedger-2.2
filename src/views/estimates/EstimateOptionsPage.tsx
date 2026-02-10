@@ -114,22 +114,55 @@ export function EstimateOptionsPage() {
         setItemsByOptionId(nextItems);
 
         // Load referenced materials/assemblies needed for pricing + preview labels.
-        for (const id of Array.from(matIds)) {
-          if (materialsById[id]) continue;
-          try {
-            const m = await data.getMaterial(id);
-            if (m) setMaterialsById((prev) => ({ ...prev, [id]: m }));
-          } catch {
-            // ignore
+        // IMPORTANT: do this in a single batch so we don't rely on stale state closures.
+        const matList = Array.from(matIds);
+        const asmList = Array.from(asmIds);
+
+        if (matList.length) {
+          const matPairs = await Promise.all(
+            matList.map(async (id) => {
+              try {
+                const m = await data.getMaterial(id);
+                return m ? [id, m] : null;
+              } catch {
+                return null;
+              }
+            })
+          );
+          if (!cancelled) {
+            setMaterialsById((prev) => {
+              const next = { ...prev };
+              for (const p of matPairs) {
+                if (!p) continue;
+                const [id, m] = p as any;
+                next[id] = m;
+              }
+              return next;
+            });
           }
         }
-        for (const id of Array.from(asmIds)) {
-          if (assembliesById[id]) continue;
-          try {
-            const a = await data.getAssembly(id);
-            if (a) setAssembliesById((prev) => ({ ...prev, [id]: a }));
-          } catch {
-            // ignore
+
+        if (asmList.length) {
+          const asmPairs = await Promise.all(
+            asmList.map(async (id) => {
+              try {
+                const a = await data.getAssembly(id);
+                return a ? [id, a] : null;
+              } catch {
+                return null;
+              }
+            })
+          );
+          if (!cancelled) {
+            setAssembliesById((prev) => {
+              const next = { ...prev };
+              for (const p of asmPairs) {
+                if (!p) continue;
+                const [id, a] = p as any;
+                next[id] = a;
+              }
+              return next;
+            });
           }
         }
       } catch (err: any) {
