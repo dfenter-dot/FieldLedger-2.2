@@ -111,18 +111,59 @@ export function EstimateEditorPage() {
 
   const [options, setOptions] = useState<EstimateOption[]>([]);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
-    type OptionEdits = {
-    name: string;
+  type OptionPayload = {
     description: string;
+    settings?: {
+      job_type_id?: string | null;
+      use_admin_rules?: boolean;
+      customer_supplies_materials?: boolean;
+      apply_discount?: boolean;
+      discount_percent?: number | null;
+      apply_processing_fees?: boolean;
+    };
   };
 
-  function optionNumberLabel(opt: any, baseEstimateNumber?: number | null) {
-    const base = baseEstimateNumber != null ? String(baseEstimateNumber) : '—';
-    const num = opt?.option_number != null ? String(opt.option_number) : '—';
-    return `${base}-${num}`;
+  function safeParseOptionPayload(raw: any): OptionPayload {
+    const text = raw == null ? '' : String(raw);
+    if (!text) return { description: '' };
+    try {
+      const obj = JSON.parse(text);
+      if (obj && typeof obj === 'object') {
+        const desc = typeof obj.description === 'string' ? obj.description : '';
+        const settings = obj.settings && typeof obj.settings === 'object' ? obj.settings : undefined;
+        return { description: desc, settings };
+      }
+    } catch {
+      // ignore
+    }
+    // Back-compat: previously stored plain text.
+    return { description: text };
   }
 
-  const [optionEdits, setOptionEdits] = useState<Record<string, OptionEdits>>({});
+  function buildOptionPayload(description: string, settings: OptionPayload['settings']): string {
+    return JSON.stringify({ description: description ?? '', settings: settings ?? {} });
+  }
+
+  function currentOptionSettingsFromEstimate(est: any): OptionPayload['settings'] {
+    return {
+      job_type_id: est?.job_type_id ?? null,
+      use_admin_rules: Boolean(est?.use_admin_rules ?? false),
+      customer_supplies_materials: Boolean(
+        est?.customer_supplies_materials ?? est?.customer_supplied_materials ?? false,
+      ),
+      apply_discount: Boolean(est?.apply_discount ?? false),
+      discount_percent:
+        est?.discount_percent == null || String(est?.discount_percent).trim() === ''
+          ? null
+          : Number(est?.discount_percent),
+      apply_processing_fees: Boolean(est?.apply_processing_fees ?? false),
+    };
+  }
+
+  const [optionEdits, setOptionEdits] = useState<
+    Record<string, { name: string; description: string; settings?: OptionPayload['settings'] }>
+  >({});
+  const [showOptionsView, setShowOptionsView] = useState(false);
   const [expandedOptions, setExpandedOptions] = useState<Record<string, boolean>>({});
   const [optionItemsCache, setOptionItemsCache] = useState<Record<string, any[]>>({});
 
@@ -149,13 +190,10 @@ export function EstimateEditorPage() {
           setCompanySettings(s);
           setJobTypes(jts);
         }
-      } catch (err: any) {
-      console.error(err);
-      setStatus(String(err?.message ?? err));
-      setTimeout(() => setStatus(""), 3000);
-      return;
-    }
-  })();
+      } catch (err) {
+        console.error(err);
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -219,6 +257,8 @@ export function EstimateEditorPage() {
             // Ensure we have the items for the selected option (getEstimate returns active option items, but we refresh to be safe)
             const items = await (data as any).getEstimateItemsForOption?.(initialActive);
             const optRow = (list ?? []).find((o: any) => String(o.id) === String(initialActive)) ?? null;
+            const payload = safeParseOptionPayload((optRow as any)?.option_description ?? (optRow as any)?.optionDescription);
+            const settings = payload.settings ?? {};
             if (Array.isArray(items)) {
               setE((prev) =>
                 prev
@@ -226,16 +266,17 @@ export function EstimateEditorPage() {
                       ...prev,
                       active_option_id: initialActive,
                       items,
-                      job_type_id: (optRow as any)?.job_type_id ?? null,
-                      use_admin_rules: Boolean((optRow as any)?.use_admin_rules ?? false),
-                      customer_supplies_materials: Boolean((optRow as any)?.customer_supplies_materials ?? false),
-                      customer_supplied_materials: Boolean((optRow as any)?.customer_supplies_materials ?? false),
-                      apply_discount: Boolean((optRow as any)?.apply_discount ?? false),
+                      job_type_id: settings.job_type_id ?? (prev as any).job_type_id ?? null,
+                      use_admin_rules: settings.use_admin_rules ?? Boolean((prev as any).use_admin_rules ?? false),
+                      customer_supplies_materials:
+                        settings.customer_supplies_materials ?? Boolean((prev as any).customer_supplies_materials ?? false),
+                      apply_discount: settings.apply_discount ?? Boolean((prev as any).apply_discount ?? false),
                       discount_percent:
                         settings.discount_percent === undefined
                           ? (prev as any).discount_percent ?? null
                           : settings.discount_percent,
-                      apply_processing_fees: Boolean((optRow as any)?.apply_processing_fees ?? false),
+                      apply_processing_fees:
+                        settings.apply_processing_fees ?? Boolean((prev as any).apply_processing_fees ?? false),
                     } as any)
                   : prev
               );
@@ -244,9 +285,11 @@ export function EstimateEditorPage() {
           // Seed edit buffers
           const edits: any = {};
           for (const o of list) {
+            const payload = safeParseOptionPayload((o as any).option_description ?? (o as any).optionDescription);
             edits[o.id] = {
-              name: (o as any).option_name ?? (o as any).optionName ?? `Option ${(o as any).option_number ?? ''}`,
-              description: String((o as any).option_description ?? ''),
+              name: (o as any).option_name ?? (o as any).optionName ?? 'Option',
+              description: payload.description,
+              settings: payload.settings,
             };
           }
           setOptionEdits(edits);
@@ -503,16 +546,7 @@ export function EstimateEditorPage() {
         await (data as any).updateEstimateOption({
           id: optId,
           option_name: ed.name,
-          option_description: ed.description ?? '',
-          job_type_id: (next as any).job_type_id ?? null,
-          use_admin_rules: Boolean((next as any).use_admin_rules ?? false),
-          customer_supplies_materials: Boolean((next as any).customer_supplies_materials ?? false),
-          apply_discount: Boolean((next as any).apply_discount ?? false),
-          discount_percent:
-            (next as any).discount_percent == null || String((next as any).discount_percent).trim() === ''
-              ? null
-              : Number((next as any).discount_percent),
-          apply_processing_fees: Boolean((next as any).apply_processing_fees ?? false),
+          option_description: buildOptionPayload(ed.description, currentOptionSettingsFromEstimate(next)),
         });
       }
 
@@ -639,53 +673,41 @@ export function EstimateEditorPage() {
   async function switchOption(optionId: string) {
     if (!e) return;
     try {
+      // Save current option name/description (fast) before switching
       const currentId = activeOptionId ?? (e as any).active_option_id ?? null;
-
-      // Save current option (name/description + controls + items) before switching.
-      if (currentId) {
-        const edLocal = optionEdits[currentId];
-        if (edLocal && (data as any).updateEstimateOption) {
-          await (data as any).updateEstimateOption({
-            id: currentId,
-            option_name: edLocal.name,
-            option_description: edLocal.description ?? '',
-            job_type_id: (e as any).job_type_id ?? null,
-            use_admin_rules: Boolean((e as any).use_admin_rules ?? false),
-            customer_supplies_materials: Boolean((e as any).customer_supplies_materials ?? false),
-            apply_discount: Boolean((e as any).apply_discount ?? false),
-            discount_percent:
-              (e as any).discount_percent == null || String((e as any).discount_percent).trim() === ''
-                ? null
-                : Number((e as any).discount_percent),
-            apply_processing_fees: Boolean((e as any).apply_processing_fees ?? false),
-          } as any);
-        }
-
-        if ((data as any).replaceEstimateItemsForOption) {
-          await (data as any).replaceEstimateItemsForOption(currentId, ((e as any).items ?? []) as any);
-        }
+      if (currentId && optionEdits[currentId] && (data as any).updateEstimateOption) {
+        const ed = optionEdits[currentId];
+        await (data as any).updateEstimateOption({
+          id: currentId,
+          option_name: ed.name,
+          option_description: buildOptionPayload(ed.description, currentOptionSettingsFromEstimate(e)),
+        });
       }
 
       const items = await (data as any).getEstimateItemsForOption?.(optionId);
-      const refreshed = await (data as any).listEstimateOptions?.((e as any).id);
-      const list: any[] = Array.isArray(refreshed) ? refreshed : (options ?? []);
-      if (Array.isArray(refreshed)) setOptions(list as any);
 
-      const optRow = (list ?? []).find((o: any) => String(o.id) === String(optionId)) ?? null;
+      // Load per-option settings (job type, discount toggles, etc.) from the option payload
+      // so each option can be priced/configured independently.
+      const optRow = (options ?? []).find((o: any) => String(o.id) === String(optionId)) ?? null;
+      const payload = safeParseOptionPayload((optRow as any)?.option_description);
+      const settings = payload.settings ?? {};
 
       setActiveOptionId(optionId);
       setE({
         ...(e as any),
         active_option_id: optionId,
         items: Array.isArray(items) ? items : [],
-        job_type_id: optRow?.job_type_id ?? null,
-        use_admin_rules: Boolean(optRow?.use_admin_rules ?? false),
-        customer_supplies_materials: Boolean(optRow?.customer_supplies_materials ?? false),
-        customer_supplied_materials: Boolean(optRow?.customer_supplies_materials ?? false),
-        apply_discount: Boolean(optRow?.apply_discount ?? false),
+        job_type_id: settings.job_type_id ?? (e as any).job_type_id ?? null,
+        use_admin_rules: settings.use_admin_rules ?? Boolean((e as any).use_admin_rules ?? false),
+        customer_supplies_materials:
+          settings.customer_supplies_materials ?? Boolean((e as any).customer_supplies_materials ?? false),
+        apply_discount: settings.apply_discount ?? Boolean((e as any).apply_discount ?? false),
         discount_percent:
-          optRow?.discount_percent == null || String(optRow?.discount_percent).trim() === '' ? null : Number(optRow?.discount_percent),
-        apply_processing_fees: Boolean(optRow?.apply_processing_fees ?? false),
+          settings.discount_percent === undefined
+            ? (e as any).discount_percent ?? null
+            : settings.discount_percent,
+        apply_processing_fees:
+          settings.apply_processing_fees ?? Boolean((e as any).apply_processing_fees ?? false),
       } as any);
 
       // Persist the most recently edited option on the estimate header so the estimate list
@@ -702,7 +724,7 @@ export function EstimateEditorPage() {
     }
   }
 
-async function ensureInitialOptionExists() {
+  async function ensureInitialOptionExists() {
     if (!e) return null;
     if (!(data as any).createEstimateOption || !(data as any).replaceEstimateItemsForOption) return null;
     if (options.length > 0) return options[0];
@@ -712,6 +734,18 @@ async function ensureInitialOptionExists() {
     const opt1 = await (data as any).createEstimateOption(e.id, 'Option 1');
     await (data as any).replaceEstimateItemsForOption(opt1.id, ((e as any).items ?? []) as any);
 
+    // Store per-option settings payload so options can be configured independently.
+    if ((data as any).updateEstimateOption) {
+      try {
+        await (data as any).updateEstimateOption({
+          id: opt1.id,
+          option_description: buildOptionPayload('', currentOptionSettingsFromEstimate(e)),
+        });
+      } catch {
+        // ignore
+      }
+    }
+
     const refreshed = await (data as any).listEstimateOptions?.(e.id);
     const list: any[] = Array.isArray(refreshed) ? refreshed : [opt1];
     setOptions(list as any);
@@ -719,7 +753,8 @@ async function ensureInitialOptionExists() {
       ...prev,
       [opt1.id]: {
         name: (opt1 as any).option_name ?? 'Option 1',
-        description: String((opt1 as any).option_description ?? ''),
+        description: safeParseOptionPayload((opt1 as any).option_description).description,
+        settings: currentOptionSettingsFromEstimate(e),
       },
     }));
     setActiveOptionId(opt1.id);
@@ -771,14 +806,31 @@ async function ensureInitialOptionExists() {
 
       if (created?.id) {
         const nextIndex = nextList.length > 0 ? nextList.length : options.length + 1;
+
+        // Per spec: new options start with a blank description, but copy line items.
+        // We also snapshot the current option-level settings into the option payload so
+        // each option can be configured independently.
+        if ((data as any).updateEstimateOption) {
+          try {
+            await (data as any).updateEstimateOption({
+              id: created.id,
+              option_description: buildOptionPayload('', currentOptionSettingsFromEstimate(e)),
+            });
+          } catch {
+            // ignore
+          }
+        }
+
         setOptionEdits((prev) => ({
           ...prev,
           [created.id]: {
             name: (created as any).option_name ?? `Option ${nextIndex}`,
             description: '',
+            settings: currentOptionSettingsFromEstimate(e),
           },
         }));
         await switchOption(created.id);
+        setShowOptionsView(false);
       }
       setStatus('');
     } catch (err) {
@@ -1329,7 +1381,8 @@ async function updateQuantity(itemId: string, quantity: number) {
                   disabled={isActive || isLocked}
                   onClick={async () => {
                     await switchOption(oid);
-                              }}
+                    setShowOptionsView(false);
+                  }}
                 >
                   {label}
                 </Button>
@@ -1474,7 +1527,7 @@ async function updateQuantity(itemId: string, quantity: number) {
         </div>
 
         {/* Option details (when multi-option mode is active) */}
-        {activeOptionId ? (
+        {!showOptionsView && activeOptionId ? (
           <Card title="Option" style={{ marginTop: 8 }}>
             <div style={{ display: 'grid', gap: 8 }}>
               <div className="stack">
@@ -1515,7 +1568,50 @@ async function updateQuantity(itemId: string, quantity: number) {
         ) : null}
 
         {/* Options overview */}
-                                    <div style={{ display: 'grid', gap: 6 }}>
+        {showOptionsView ? (
+          <Card title="Options" style={{ marginTop: 8 }}>
+            {options.length === 0 ? (
+              <div style={{ color: 'var(--muted)' }}>No options yet. Click “Add Option” to create one.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {options
+                  .slice()
+                  .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+                  .map((o: any) => {
+                    const isExpanded = Boolean(expandedOptions[o.id]);
+                    const items = optionItemsCache[o.id] ?? null;
+                    const name = optionEdits[o.id]?.name ?? o.option_name ?? 'Option';
+                    const desc = optionEdits[o.id]?.description ?? o.option_description ?? '';
+
+                    return (
+                      <Card
+                        key={o.id}
+                        title={name}
+                        right={
+                          <div className="row" style={{ gap: 8 }}>
+                            <Button
+                              variant="secondary"
+                              onClick={async () => {
+                                await switchOption(o.id);
+                                setShowOptionsView(false);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button variant="secondary" onClick={() => toggleOptionExpanded(o.id)}>
+                              {isExpanded ? 'Hide' : 'Show'}
+                            </Button>
+                          </div>
+                        }
+                      >
+                        {isExpanded ? (
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            {desc ? (
+                              <div className="muted" style={{ whiteSpace: 'pre-wrap' }}>
+                                {desc}
+                              </div>
+                            ) : null}
+                            <div style={{ display: 'grid', gap: 6 }}>
                               {items == null ? (
                                 <div style={{ color: 'var(--muted)' }}>Loading…</div>
                               ) : (items ?? []).length === 0 ? (
@@ -1559,7 +1655,7 @@ async function updateQuantity(itemId: string, quantity: number) {
           </Card>
         ) : null}
 
-		{true ? (
+        {!showOptionsView ? (
         <div className="mt">
           <div className="muted small">Line Items</div>
 				{showBlankMaterialCard ? (
