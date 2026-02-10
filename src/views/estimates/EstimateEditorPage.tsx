@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
@@ -111,6 +111,27 @@ export function EstimateEditorPage() {
 
   const [options, setOptions] = useState<EstimateOption[]>([]);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
+
+  // Persist the last active option so returning from pickers re-opens the correct option
+  const lastPersistedActiveOptionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const estimateId = (e as any)?.id;
+    if (!estimateId || !activeOptionId) return;
+    if (lastPersistedActiveOptionIdRef.current === activeOptionId) return;
+    lastPersistedActiveOptionIdRef.current = activeOptionId;
+
+    const fn = (data as any).updateEstimateHeader;
+    if (typeof fn !== 'function') return;
+
+    // Fire-and-forget (do not block UI)
+    (async () => {
+      try {
+        await fn({ id: estimateId, active_option_id: activeOptionId } as any);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [activeOptionId, data, (e as any)?.id]);;
   type OptionPayload = {
     description: string;
     settings?: {
@@ -2019,6 +2040,7 @@ async function updateQuantity(itemId: string, quantity: number) {
     </div>
   );
 }
+
 
 
 
