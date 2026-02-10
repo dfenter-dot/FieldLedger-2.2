@@ -1,24 +1,132 @@
-import { createContext, ReactNode, useContext, useMemo } from 'react';
-import type { IDataProvider } from './IDataProvider';
-import { getDataProviderMode } from './providerMode';
-import { LocalDataProvider } from './local/LocalDataProvider';
-import { SupabaseDataProvider } from './supabase/SupabaseDataProvider';
-import { supabase } from '../../supabase/client';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { IDataProvider } from './IDataProvider';
+import { useAuth } from '../auth/AuthContext';
+import { createDataProvider } from './dataProviderFactory';
+import {
+  Assembly,
+  Estimate,
+  JobType,
+  Material,
+  BrandingSettings,
+  CompanySettings,
+  AdminRule,
+} from './types';
 
-const DataContext = createContext<IDataProvider | null>(null);
-
-export function DataProvider({ children }: { children: ReactNode }) {
-  const provider = useMemo<IDataProvider>(() => {
-    const mode = getDataProviderMode();
-    return mode === 'local' ? new LocalDataProvider() : new SupabaseDataProvider(supabase);
-  }, []);
-
-  return <DataContext.Provider value={provider}>{children}</DataContext.Provider>;
+interface DataContextValue {
+  provider: IDataProvider | null;
+  companyId: string | null;
+  estimates: Estimate[];
+  materials: Material[];
+  assemblies: Assembly[];
+  jobTypes: JobType[];
+  branding: BrandingSettings | null;
+  companySettings: CompanySettings | null;
+  rules: AdminRule[];
+  reloadAll: () => Promise<void>;
 }
 
-export function useData() {
+const DataContext = createContext<DataContextValue | null>(null);
+
+export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { session } = useAuth();
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [provider, setProvider] = useState<IDataProvider | null>(null);
+
+  const [estimates, setEstimates] = useState<Estimate[]>([]);
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [assemblies, setAssemblies] = useState<Assembly[]>([]);
+  const [jobTypes, setJobTypes] = useState<JobType[]>([]);
+  const [branding, setBranding] = useState<BrandingSettings | null>(null);
+  const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
+  const [rules, setRules] = useState<AdminRule[]>([]);
+
+  // 🔒 Resolve companyId FIRST
+  useEffect(() => {
+    if (!session) return;
+
+    const resolveCompany = async () => {
+      const supabase = createDataProvider('supabase');
+      const cid = await supabase.getCompanyIdForUser(session.user.id);
+
+      if (!cid) {
+        console.error('Company ID could not be resolved');
+        return;
+      }
+
+      setCompanyId(cid);
+      setProvider(createDataProvider('supabase', cid));
+    };
+
+    resolveCompany();
+  }, [session]);
+
+  // 🔒 HARD GUARD: nothing loads until companyId + provider exist
+  const reloadAll = async () => {
+    if (!provider || !companyId) return;
+
+    const [
+      estimatesRes,
+      materialsRes,
+      assembliesRes,
+      jobTypesRes,
+      brandingRes,
+      companySettingsRes,
+      rulesRes,
+    ] = await Promise.all([
+      provider.getEstimates(),
+      provider.getMaterials(),
+      provider.getAssemblies(),
+      provider.getJobTypes(),
+      provider.getBrandingSettings(),
+      provider.getCompanySettings(),
+      provider.getRules(),
+    ]);
+
+    setEstimates(estimatesRes ?? []);
+    setMaterials(materialsRes ?? []);
+    setAssemblies(assembliesRes ?? []);
+    setJobTypes(jobTypesRes ?? []);
+    setBranding(brandingRes ?? null);
+    setCompanySettings(companySettingsRes ?? null);
+    setRules(rulesRes ?? []);
+  };
+
+  useEffect(() => {
+    if (!provider || !companyId) return;
+    reloadAll();
+  }, [provider, companyId]);
+
+  const value = useMemo(
+    () => ({
+      provider,
+      companyId,
+      estimates,
+      materials,
+      assemblies,
+      jobTypes,
+      branding,
+      companySettings,
+      rules,
+      reloadAll,
+    }),
+    [
+      provider,
+      companyId,
+      estimates,
+      materials,
+      assemblies,
+      jobTypes,
+      branding,
+      companySettings,
+      rules,
+    ]
+  );
+
+  return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
+};
+
+export const useData = () => {
   const ctx = useContext(DataContext);
   if (!ctx) throw new Error('useData must be used within DataProvider');
   return ctx;
-}
-
+};
