@@ -111,7 +111,58 @@ export function EstimateEditorPage() {
 
   const [options, setOptions] = useState<EstimateOption[]>([]);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
-  const [optionEdits, setOptionEdits] = useState<Record<string, { name: string; description: string }>>({});
+  type OptionPayload = {
+    description: string;
+    settings?: {
+      job_type_id?: string | null;
+      use_admin_rules?: boolean;
+      customer_supplies_materials?: boolean;
+      apply_discount?: boolean;
+      discount_percent?: number | null;
+      apply_processing_fees?: boolean;
+    };
+  };
+
+  function safeParseOptionPayload(raw: any): OptionPayload {
+    const text = raw == null ? '' : String(raw);
+    if (!text) return { description: '' };
+    try {
+      const obj = JSON.parse(text);
+      if (obj && typeof obj === 'object') {
+        const desc = typeof obj.description === 'string' ? obj.description : '';
+        const settings = obj.settings && typeof obj.settings === 'object' ? obj.settings : undefined;
+        return { description: desc, settings };
+      }
+    } catch {
+      // ignore
+    }
+    // Back-compat: previously stored plain text.
+    return { description: text };
+  }
+
+  function buildOptionPayload(description: string, settings: OptionPayload['settings']): string {
+    return JSON.stringify({ description: description ?? '', settings: settings ?? {} });
+  }
+
+  function currentOptionSettingsFromEstimate(est: any): OptionPayload['settings'] {
+    return {
+      job_type_id: est?.job_type_id ?? null,
+      use_admin_rules: Boolean(est?.use_admin_rules ?? false),
+      customer_supplies_materials: Boolean(
+        est?.customer_supplies_materials ?? est?.customer_supplied_materials ?? false,
+      ),
+      apply_discount: Boolean(est?.apply_discount ?? false),
+      discount_percent:
+        est?.discount_percent == null || String(est?.discount_percent).trim() === ''
+          ? null
+          : Number(est?.discount_percent),
+      apply_processing_fees: Boolean(est?.apply_processing_fees ?? false),
+    };
+  }
+
+  const [optionEdits, setOptionEdits] = useState<
+    Record<string, { name: string; description: string; settings?: OptionPayload['settings'] }>
+  >({});
   const [showOptionsView, setShowOptionsView] = useState(false);
   const [expandedOptions, setExpandedOptions] = useState<Record<string, boolean>>({});
   const [optionItemsCache, setOptionItemsCache] = useState<Record<string, any[]>>({});
@@ -205,14 +256,40 @@ export function EstimateEditorPage() {
             setActiveOptionId(initialActive);
             // Ensure we have the items for the selected option (getEstimate returns active option items, but we refresh to be safe)
             const items = await (data as any).getEstimateItemsForOption?.(initialActive);
-            if (Array.isArray(items)) setE((prev) => (prev ? ({ ...prev, active_option_id: initialActive, items } as any) : prev));
+            const optRow = (list ?? []).find((o: any) => String(o.id) === String(initialActive)) ?? null;
+            const payload = safeParseOptionPayload((optRow as any)?.option_description ?? (optRow as any)?.optionDescription);
+            const settings = payload.settings ?? {};
+            if (Array.isArray(items)) {
+              setE((prev) =>
+                prev
+                  ? ({
+                      ...prev,
+                      active_option_id: initialActive,
+                      items,
+                      job_type_id: settings.job_type_id ?? (prev as any).job_type_id ?? null,
+                      use_admin_rules: settings.use_admin_rules ?? Boolean((prev as any).use_admin_rules ?? false),
+                      customer_supplies_materials:
+                        settings.customer_supplies_materials ?? Boolean((prev as any).customer_supplies_materials ?? false),
+                      apply_discount: settings.apply_discount ?? Boolean((prev as any).apply_discount ?? false),
+                      discount_percent:
+                        settings.discount_percent === undefined
+                          ? (prev as any).discount_percent ?? null
+                          : settings.discount_percent,
+                      apply_processing_fees:
+                        settings.apply_processing_fees ?? Boolean((prev as any).apply_processing_fees ?? false),
+                    } as any)
+                  : prev
+              );
+            }
           }
           // Seed edit buffers
           const edits: any = {};
           for (const o of list) {
+            const payload = safeParseOptionPayload((o as any).option_description ?? (o as any).optionDescription);
             edits[o.id] = {
               name: (o as any).option_name ?? (o as any).optionName ?? 'Option',
-              description: (o as any).option_description ?? (o as any).optionDescription ?? '',
+              description: payload.description,
+              settings: payload.settings,
             };
           }
           setOptionEdits(edits);
@@ -469,7 +546,7 @@ export function EstimateEditorPage() {
         await (data as any).updateEstimateOption({
           id: optId,
           option_name: ed.name,
-          option_description: ed.description,
+          option_description: buildOptionPayload(ed.description, currentOptionSettingsFromEstimate(next)),
         });
       }
 
@@ -603,13 +680,45 @@ export function EstimateEditorPage() {
         await (data as any).updateEstimateOption({
           id: currentId,
           option_name: ed.name,
-          option_description: ed.description,
+          option_description: buildOptionPayload(ed.description, currentOptionSettingsFromEstimate(e)),
         });
       }
 
       const items = await (data as any).getEstimateItemsForOption?.(optionId);
+
+      // Load per-option settings (job type, discount toggles, etc.) from the option payload
+      // so each option can be priced/configured independently.
+      const optRow = (options ?? []).find((o: any) => String(o.id) === String(optionId)) ?? null;
+      const payload = safeParseOptionPayload((optRow as any)?.option_description);
+      const settings = payload.settings ?? {};
+
       setActiveOptionId(optionId);
-      setE({ ...(e as any), active_option_id: optionId, items: Array.isArray(items) ? items : [] } as any);
+      setE({
+        ...(e as any),
+        active_option_id: optionId,
+        items: Array.isArray(items) ? items : [],
+        job_type_id: settings.job_type_id ?? (e as any).job_type_id ?? null,
+        use_admin_rules: settings.use_admin_rules ?? Boolean((e as any).use_admin_rules ?? false),
+        customer_supplies_materials:
+          settings.customer_supplies_materials ?? Boolean((e as any).customer_supplies_materials ?? false),
+        apply_discount: settings.apply_discount ?? Boolean((e as any).apply_discount ?? false),
+        discount_percent:
+          settings.discount_percent === undefined
+            ? (e as any).discount_percent ?? null
+            : settings.discount_percent,
+        apply_processing_fees:
+          settings.apply_processing_fees ?? Boolean((e as any).apply_processing_fees ?? false),
+      } as any);
+
+      // Persist the most recently edited option on the estimate header so the estimate list
+      // can open the last-used option by default.
+      if ((data as any).updateEstimateHeader) {
+        try {
+          await (data as any).updateEstimateHeader({ id: (e as any).id, active_option_id: optionId } as any);
+        } catch {
+          // ignore
+        }
+      }
     } catch (err) {
       console.error(err);
     }
@@ -625,12 +734,28 @@ export function EstimateEditorPage() {
     const opt1 = await (data as any).createEstimateOption(e.id, 'Option 1');
     await (data as any).replaceEstimateItemsForOption(opt1.id, ((e as any).items ?? []) as any);
 
+    // Store per-option settings payload so options can be configured independently.
+    if ((data as any).updateEstimateOption) {
+      try {
+        await (data as any).updateEstimateOption({
+          id: opt1.id,
+          option_description: buildOptionPayload('', currentOptionSettingsFromEstimate(e)),
+        });
+      } catch {
+        // ignore
+      }
+    }
+
     const refreshed = await (data as any).listEstimateOptions?.(e.id);
     const list: any[] = Array.isArray(refreshed) ? refreshed : [opt1];
     setOptions(list as any);
     setOptionEdits((prev) => ({
       ...prev,
-      [opt1.id]: { name: (opt1 as any).option_name ?? 'Option 1', description: (opt1 as any).option_description ?? '' },
+      [opt1.id]: {
+        name: (opt1 as any).option_name ?? 'Option 1',
+        description: safeParseOptionPayload((opt1 as any).option_description).description,
+        settings: currentOptionSettingsFromEstimate(e),
+      },
     }));
     setActiveOptionId(opt1.id);
     setE((prev) => (prev ? ({ ...(prev as any), active_option_id: opt1.id } as any) : prev));
@@ -681,11 +806,27 @@ export function EstimateEditorPage() {
 
       if (created?.id) {
         const nextIndex = nextList.length > 0 ? nextList.length : options.length + 1;
+
+        // Per spec: new options start with a blank description, but copy line items.
+        // We also snapshot the current option-level settings into the option payload so
+        // each option can be configured independently.
+        if ((data as any).updateEstimateOption) {
+          try {
+            await (data as any).updateEstimateOption({
+              id: created.id,
+              option_description: buildOptionPayload('', currentOptionSettingsFromEstimate(e)),
+            });
+          } catch {
+            // ignore
+          }
+        }
+
         setOptionEdits((prev) => ({
           ...prev,
           [created.id]: {
             name: (created as any).option_name ?? `Option ${nextIndex}`,
-            description: (created as any).option_description ?? '',
+            description: '',
+            settings: currentOptionSettingsFromEstimate(e),
           },
         }));
         await switchOption(created.id);
@@ -1282,19 +1423,18 @@ async function updateQuantity(itemId: string, quantity: number) {
             variant="secondary"
             disabled={!e}
             onClick={async () => {
-              // If no options exist yet, create the first option from the current estimate
-              // so the Options view has something to show.
-              if (!showOptionsView && options.length === 0) {
+              // Ensure at least Option 1 exists so the Options page always has something to show.
+              if (options.length === 0) {
                 try {
                   await ensureInitialOptionExists();
                 } catch (err) {
                   console.error(err);
                 }
               }
-              setShowOptionsView((v) => !v);
+              nav(`/estimates/${(e as any).id}/options`);
             }}
           >
-            {showOptionsView ? 'Back to Estimate' : 'View Options'}
+            View Options
           </Button>
 
 
@@ -1879,6 +2019,7 @@ async function updateQuantity(itemId: string, quantity: number) {
     </div>
   );
 }
+
 
 
 
