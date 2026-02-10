@@ -132,9 +132,13 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           }
           setSelectedQtyByMaterialId(map);
         } else if (mode.type === 'add-materials-to-estimate') {
-          const est = await data.getEstimate(mode.estimateId);
+          // Options are the source of truth for line items.
+          // In picker mode, we must load items for the active option (not the estimate group).
+          const optionId = (mode as any).optionId ?? null;
+          const items = optionId ? await data.getEstimateItemsForOption(optionId) : ((await data.getEstimate(mode.estimateId))?.items ?? []);
+
           const map: Record<string, string> = {};
-          for (const it of (est?.items ?? []) as any[]) {
+          for (const it of (items ?? []) as any[]) {
             if (!it?.material_id) continue;
             map[it.material_id] = String(it.quantity ?? 1);
           }
@@ -598,10 +602,10 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
       }
 
       if (mode.type === 'add-materials-to-estimate') {
-        const est = await data.getEstimate(mode.estimateId);
-        if (!est) throw new Error('Estimate not found');
+        const optionId = (mode as any).optionId ?? null;
+        if (!optionId) throw new Error('Missing optionId for estimate picker mode');
 
-        const items = [...((est.items ?? []) as any[])];
+        const items = [...((await data.getEstimateItemsForOption(optionId)) ?? []) as any[]];
         const idx = items.findIndex((it) => it.material_id === materialId);
 
         if (qty == null) {
@@ -622,7 +626,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           });
         }
 
-        await data.upsertEstimate({ ...est, items } as any);
+        await data.replaceEstimateItemsForOption(optionId, items as any);
       }
     } catch (e: any) {
       console.error(e);
@@ -643,10 +647,10 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     const qty = trimmed === '' ? null : clampAssemblyQty(Number(trimmed));
 
     try {
-      const est = await data.getEstimate(mode.estimateId);
-      if (!est) throw new Error('Estimate not found');
+      const optionId = (mode as any).optionId ?? null;
+      if (!optionId) throw new Error('Missing optionId for estimate picker mode');
 
-      const items = [...((est.items ?? []) as any[])];
+      const items = [...(((await data.getEstimateItemsForOption(optionId)) ?? []) as any[])];
 
       // Find the parent assembly row (top-level)
       const parentIdx = items.findIndex(
@@ -672,8 +676,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
         if (parentIdx >= 0) items.splice(parentIdx, 1);
         removeChildren(parentGroupId);
 
-        const saved = await data.upsertEstimate({ ...est, active_option_id: (mode as any).optionId ?? (est as any).active_option_id ?? null, items } as any);
-        setSelectedEstimateItems((saved?.items ?? items) as any[]);
+        await data.replaceEstimateItemsForOption(optionId, items as any);
+        setSelectedEstimateItems(items as any[]);
         return;
       }
 
@@ -744,8 +748,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           // We intentionally skip here to avoid creating broken rows.
         }
 
-        const saved = await data.upsertEstimate({ ...est, active_option_id: (mode as any).optionId ?? (est as any).active_option_id ?? null, items } as any);
-        setSelectedEstimateItems((saved?.items ?? items) as any[]);
+        await data.replaceEstimateItemsForOption(optionId, items as any);
+        setSelectedEstimateItems(items as any[]);
         return;
       }
 
@@ -771,8 +775,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
         }
       }
 
-      const saved = await data.upsertEstimate({ ...est, active_option_id: (mode as any).optionId ?? (est as any).active_option_id ?? null, items } as any);
-      setSelectedEstimateItems((saved?.items ?? items) as any[]);
+      await data.replaceEstimateItemsForOption(optionId, items as any);
+      setSelectedEstimateItems(items as any[]);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
@@ -1249,4 +1253,5 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
 
