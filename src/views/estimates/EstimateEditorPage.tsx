@@ -1559,7 +1559,7 @@ async function updateQuantity(itemId: string, quantity: number) {
           </Card>
         ) : null}
 
-        {(
+		{true ? (
         <div className="mt">
           <div className="muted small">Line Items</div>
 				{showBlankMaterialCard ? (
