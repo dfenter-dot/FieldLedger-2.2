@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { IDataProvider } from './IDataProvider';
 import { useAuth } from '../auth/AuthContext';
-import { createDataProvider } from './dataProviderFactory';
+import { createDataProvider } from './dataProviderFactory.ts';
 import {
   Assembly,
   Estimate,
@@ -40,13 +40,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [rules, setRules] = useState<AdminRule[]>([]);
 
-  // 🔒 Resolve companyId FIRST
+  // Resolve company FIRST
   useEffect(() => {
     if (!session) return;
 
     const resolveCompany = async () => {
-      const supabase = createDataProvider('supabase');
-      const cid = await supabase.getCompanyIdForUser(session.user.id);
+      const baseProvider = createDataProvider('supabase');
+      const cid = await baseProvider.getCompanyIdForUser(session.user.id);
 
       if (!cid) {
         console.error('Company ID could not be resolved');
@@ -60,7 +60,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     resolveCompany();
   }, [session]);
 
-  // 🔒 HARD GUARD: nothing loads until companyId + provider exist
+  // HARD GUARD: never query without company + provider
   const reloadAll = async () => {
     if (!provider || !companyId) return;
 
