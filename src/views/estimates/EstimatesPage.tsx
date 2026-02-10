@@ -12,6 +12,7 @@ export function EstimatesPage() {
   const { mode, setMode } = useSelection();
 
   const [rows, setRows] = useState<Estimate[]>([]);
+  const [optionCounts, setOptionCounts] = useState<Record<string, number>>({});
   const [jobTypes, setJobTypes] = useState<JobType[]>([]);
   const [filter, setFilter] = useState<'active' | 'approved' | 'declined' | 'archived'>('active');
   const [status, setStatus] = useState<string>('');
@@ -25,7 +26,38 @@ export function EstimatesPage() {
       });
   }, [data]);
 
-  
+  // Load option counts so the list can show "X options" per estimate.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!rows || rows.length === 0) {
+          if (!cancelled) setOptionCounts({});
+          return;
+        }
+        if (!(data as any).listEstimateOptions) return;
+        const pairs = await Promise.all(
+          rows.map(async (r: any) => {
+            try {
+              const opts = await (data as any).listEstimateOptions(String(r.id));
+              const count = Math.max(0, (Array.isArray(opts) ? opts.length : 0) - 1);
+              return [String(r.id), count] as const;
+            } catch {
+              return [String(r.id), 0] as const;
+            }
+          })
+        );
+        if (!cancelled) setOptionCounts(Object.fromEntries(pairs));
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data, rows]);
+
+
   const jobTypeName = (id?: string | null) => {
     if (!id) return '—';
     const jt = jobTypes.find((j) => j.id === id);
@@ -92,7 +124,9 @@ return (
             >
               <div className="listMain">
                 <div className="listTitle">#{e.estimate_number} • {e.name}</div>
-                <div className="listSub">Job Type: {jobTypeName(e.job_type_id)}</div>
+                <div className="listSub">
+                  Job Type: {jobTypeName(e.job_type_id)} • {(optionCounts[String(e.id)] ?? 0)} options
+                </div>
               </div>
               <div className="listRight">
                 <div className="pill">{new Date(e.created_at).toLocaleDateString()}</div>
@@ -111,5 +145,6 @@ return (
     </div>
   );
 }
+
 
 
