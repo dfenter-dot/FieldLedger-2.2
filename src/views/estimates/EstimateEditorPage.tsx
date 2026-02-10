@@ -81,6 +81,22 @@ function safeFixed(v: any, digits = 2) {
   return n.toFixed(digits);
 }
 
+function getSortedOptions(list: EstimateOption[]) {
+  // Stable ordering for display and option-number suffix.
+  // Primary: sort_order. Secondary: created_at. Tertiary: id.
+  return (list ?? [])
+    .slice()
+    .sort((a: any, b: any) => {
+      const ao = toNum(a?.sort_order ?? (a as any)?.sortOrder, 0);
+      const bo = toNum(b?.sort_order ?? (b as any)?.sortOrder, 0);
+      if (ao !== bo) return ao - bo;
+      const ac = String(a?.created_at ?? (a as any)?.createdAt ?? '');
+      const bc = String(b?.created_at ?? (b as any)?.createdAt ?? '');
+      if (ac !== bc) return ac.localeCompare(bc);
+      return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
+    });
+}
+
 export function EstimateEditorPage() {
   const { estimateId } = useParams();
   const data = useData();
@@ -271,6 +287,19 @@ export function EstimateEditorPage() {
       })
       .filter(Boolean) as ItemRow[];
   }, [e]);
+
+  const sortedOptions = useMemo(() => getSortedOptions(options), [options]);
+  const currentOptionId = (activeOptionId ?? (e as any)?.active_option_id ?? null) as string | null;
+  const currentOptionIndex = useMemo(() => {
+    if (!currentOptionId) return -1;
+    return sortedOptions.findIndex((o) => String(o.id) === String(currentOptionId));
+  }, [sortedOptions, currentOptionId]);
+  const displayEstimateNumber = useMemo(() => {
+    const base = String((e as any)?.estimate_number ?? '');
+    // Only suffix when options exist and we can resolve the active option index.
+    if (sortedOptions.length > 0 && currentOptionIndex >= 0) return `${base}-${currentOptionIndex + 1}`;
+    return base;
+  }, [e, sortedOptions.length, currentOptionIndex]);
 
   const renderRows = useMemo(() => {
     const top = rows.filter((r) => !(r as any).parentGroupId);
@@ -1014,7 +1043,7 @@ async function updateQuantity(itemId: string, quantity: number) {
   return (
     <div className="stack">
       <Card
-        title={`Estimate • #${(e as any).estimate_number} • ${(e as any).name}`}
+        title={`Estimate • #${displayEstimateNumber} • ${(e as any).name}`}
         right={
           <div className="row">
             <Button onClick={() => nav('/estimates')}>Back</Button>
@@ -1194,6 +1223,32 @@ async function updateQuantity(itemId: string, quantity: number) {
             />
           </div>
         </div>
+
+        {/* Option switcher (quick navigation between options) */}
+        {sortedOptions.length > 1 ? (
+          <div className="row mt" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div className="muted small">Options:</div>
+            {sortedOptions.map((o, idx) => {
+              const oid = String((o as any).id);
+              const isActive = oid === String(currentOptionId ?? '');
+              const label =
+                optionEdits[oid]?.name ?? (o as any).option_name ?? (o as any).optionName ?? `Option ${idx + 1}`;
+              return (
+                <Button
+                  key={oid}
+                  variant={isActive ? 'primary' : 'secondary'}
+                  disabled={isActive || isLocked}
+                  onClick={async () => {
+                    await switchOption(oid);
+                    setShowOptionsView(false);
+                  }}
+                >
+                  {label}
+                </Button>
+              );
+            })}
+          </div>
+        ) : null}
 
         <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
           <Button
