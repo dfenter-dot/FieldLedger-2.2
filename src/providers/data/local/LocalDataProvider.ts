@@ -33,6 +33,7 @@ export class LocalDataProvider implements IDataProvider {
   private assemblyItems: Record<string, any[]> = [];
 
   private estimates: Estimate[] = [];
+  private estimateOptionItems: Record<string, any[]> = {};
 
   private appMaterialOverrides: AppMaterialOverride[] = [];
 
@@ -349,15 +350,37 @@ export class LocalDataProvider implements IDataProvider {
   }
 
   async createEstimateOption(estimateId: string, optionName: string): Promise<EstimateOption> {
-    const estIdx = this.estimates.findIndex(e => e.id === estimateId);
+    const estIdx = this.estimates.findIndex(e => (e as any).id === estimateId);
     if (estIdx < 0) throw new Error('Estimate not found');
     const est: any = this.estimates[estIdx] as any;
-    const nextSort = Array.isArray(est.options) ? est.options.length + 1 : 1;
-    const opt: any = { id: crypto.randomUUID(), estimate_id: estimateId, option_name: optionName, sort_order: nextSort };
-    est.options = [...(est.options ?? []), opt];
+
+    const existing: any[] = Array.isArray(est.options) ? est.options : [];
+    const nextSort = existing.reduce((mx, o) => Math.max(mx, Number(o.sort_order ?? 0)), 0) + 1;
+    const nextNum = existing.reduce((mx, o) => Math.max(mx, Number(o.option_number ?? 0)), 0) + 1;
+
+    const opt: any = {
+      id: crypto.randomUUID(),
+      estimate_id: estimateId,
+      option_number: nextNum,
+      option_name: optionName,
+      option_description: null,
+      sort_order: nextSort,
+
+      job_type_id: null,
+      use_admin_rules: false,
+      customer_supplies_materials: false,
+      apply_discount: false,
+      discount_percent: null,
+      apply_processing_fees: false,
+    };
+
+    est.options = [...existing, opt];
+    est.active_option_id = opt.id;
     this.estimates[estIdx] = est;
+    this.estimateOptionItems[opt.id] = [];
     return opt as EstimateOption;
   }
+
 
   async updateEstimateOption(option: Partial<EstimateOption> & { id: string }): Promise<EstimateOption> {
     // Local provider: options stored in-memory on the estimate.
@@ -374,25 +397,53 @@ export class LocalDataProvider implements IDataProvider {
   }
 
   async getEstimateItemsForOption(optionId: string): Promise<EstimateItem[]> {
-    // Local provider: items stored on estimate (single-option legacy).
-    const est: any = this.estimates.find(e => (e as any).active_option_id === optionId) ?? null;
-    return (est?.items ?? []) as EstimateItem[];
+    return (this.estimateOptionItems[optionId] ?? []) as any;
   }
 
   async replaceEstimateItemsForOption(optionId: string, items: EstimateItem[]): Promise<void> {
-    // Local provider: items stored on estimate (single-option legacy).
-    const idx = this.estimates.findIndex(e => (e as any).active_option_id === optionId);
-    if (idx >= 0) {
-      (this.estimates[idx] as any).items = items as any;
-      (this.estimates[idx] as any).updated_at = new Date().toISOString();
-      return;
-    }
-    // If no estimate tracks active_option_id, do nothing (local-only mode used for dev).
+    this.estimateOptionItems[optionId] = Array.isArray(items) ? [...items] : [];
   }
 
   async copyEstimateOption(estimateId: string, fromOptionId: string): Promise<EstimateOption> {
-    // Minimal local implementation: create new option row.
-    return this.createEstimateOption(estimateId, 'Option');
+    const estIdx = this.estimates.findIndex(e => (e as any).id === estimateId);
+    if (estIdx < 0) throw new Error('Estimate not found');
+    const est: any = this.estimates[estIdx] as any;
+
+    const existing: any[] = Array.isArray(est.options) ? est.options : [];
+    if (existing.length === 0) {
+      this.createEstimateOption(estimateId, 'Option 1');
+    }
+
+    const refreshed: any[] = Array.isArray(est.options) ? est.options : [];
+    const nextSort = refreshed.reduce((mx, o) => Math.max(mx, Number(o.sort_order ?? 0)), 0) + 1;
+    const nextNum = refreshed.reduce((mx, o) => Math.max(mx, Number(o.option_number ?? 0)), 0) + 1;
+
+    const src = refreshed.find(o => String(o.id) === String(fromOptionId)) ?? null;
+
+    const opt: any = {
+      id: crypto.randomUUID(),
+      estimate_id: estimateId,
+      option_number: nextNum,
+      option_name: `Option ${nextNum}`,
+      option_description: null,
+      sort_order: nextSort,
+
+      job_type_id: src?.job_type_id ?? null,
+      use_admin_rules: Boolean(src?.use_admin_rules ?? false),
+      customer_supplies_materials: Boolean(src?.customer_supplies_materials ?? false),
+      apply_discount: Boolean(src?.apply_discount ?? false),
+      discount_percent: src?.discount_percent ?? null,
+      apply_processing_fees: Boolean(src?.apply_processing_fees ?? false),
+    };
+
+    est.options = [...refreshed, opt];
+    est.active_option_id = opt.id;
+    this.estimates[estIdx] = est;
+
+    const srcItems = this.estimateOptionItems[fromOptionId] ?? [];
+    this.estimateOptionItems[opt.id] = srcItems.map((x: any) => ({ ...x, id: crypto.randomUUID() }));
+
+    return Promise.resolve(opt as any);
   }
 async deleteEstimate(id: string): Promise<void> {
     this.estimates = this.estimates.filter(e => e.id !== id);
@@ -418,6 +469,7 @@ async deleteEstimate(id: string): Promise<void> {
     return settings as BrandingSettings;
   }
 }
+
 
 
 
