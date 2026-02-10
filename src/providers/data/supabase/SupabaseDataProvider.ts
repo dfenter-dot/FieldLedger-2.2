@@ -45,30 +45,21 @@ export class SupabaseDataProvider implements IDataProvider {
      Helpers
   ============================ */
 
-  private
-  async currentCompanyId(): Promise<string> {
-    // Always resolve company_id from the logged-in user explicitly.
-    const { data: authData, error: authErr } = await this.supabase.auth.getUser();
-    if (authErr || !authData?.user?.id) throw new Error('Not authenticated');
+  private async currentCompanyId(): Promise<string> {
+    const { data: authData, error: authError } = await this.supabase.auth.getUser();
+    if (authError || !authData?.user?.id) throw new Error('Not authenticated');
 
     const userId = authData.user.id;
 
     const { data, error } = await this.supabase
       .from('profiles')
       .select('company_id')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .maybeSingle();
 
-    const companyId = (data as any)?.company_id ?? null;
-
-    // Hard guard to prevent PostgREST 400 (uuid filter with undefined/blank)
-    if (error || !companyId || typeof companyId !== 'string' || companyId.trim().length < 10) {
-      throw new Error('No company context available (profiles.company_id missing)');
-    }
-
-    return companyId;
+    if (error || !data?.company_id) throw new Error('No company context available (profiles.company_id missing)');
+    return data.company_id;
   }
-
 
   async getCurrentCompanyId(): Promise<string> {
     return this.currentCompanyId();
