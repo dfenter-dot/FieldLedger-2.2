@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
@@ -101,6 +101,7 @@ export function EstimateEditorPage() {
   const { estimateId } = useParams();
   const data = useData();
   const nav = useNavigate();
+  const location = useLocation();
   const { setMode } = useSelection();
   const dialogs = useDialogs();
 
@@ -111,6 +112,13 @@ export function EstimateEditorPage() {
 
   const [options, setOptions] = useState<EstimateOption[]>([]);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
+
+  // If we were returned from a picker, force-open the same option.
+  useEffect(() => {
+    const st: any = (location as any)?.state ?? null;
+    const fromPicker = st?.activeOptionId ?? null;
+    if (fromPicker) setActiveOptionId(String(fromPicker));
+  }, [location]);
 
   // Persist the last active option so returning from pickers re-opens the correct option
   const lastPersistedActiveOptionIdRef = useRef<string | null>(null);
@@ -2040,6 +2048,7 @@ async function updateQuantity(itemId: string, quantity: number) {
     </div>
   );
 }
+
 
 
 
