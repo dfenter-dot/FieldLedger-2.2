@@ -21,3 +21,4 @@ export function useData() {
   if (!ctx) throw new Error('useData must be used within DataProvider');
   return ctx;
 }
+
