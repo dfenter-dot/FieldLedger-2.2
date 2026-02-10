@@ -11,6 +11,23 @@ import { useDialogs } from '../../providers/dialogs/DialogContext';
 import { computeEstimatePricing } from '../../providers/data/pricing';
 import { TechCostBreakdownCard } from '../shared/TechCostBreakdownCard';
 
+function uuidv4(): string {
+  // Use native when available.
+  const c: any = (globalThis as any)?.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  // Otherwise generate v4 using crypto.getRandomValues if possible.
+  const bytes = new Uint8Array(16);
+  if (c?.getRandomValues) c.getRandomValues(bytes);
+  else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  // Per RFC4122 section 4.4
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 type ItemRow =
   | {
       id: string;
@@ -95,6 +112,11 @@ function getSortedOptions(list: EstimateOption[]) {
       if (ac !== bc) return ac.localeCompare(bc);
       return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
     });
+}
+
+function optionSuffix(opt: any, fallbackIndex: number) {
+  const n = toNum(opt?.option_number ?? opt?.optionNumber, 0);
+  return n >= 1 ? n : fallbackIndex;
 }
 
 export function EstimateEditorPage() {
@@ -193,7 +215,7 @@ export function EstimateEditorPage() {
           const nextNum = Math.max(starting, maxNum + 1);
 
           const draft: Estimate = {
-            id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
+            id: uuidv4(),
             company_id: null,
             name: 'New Estimate',
             estimate_number: nextNum,
@@ -353,16 +375,20 @@ export function EstimateEditorPage() {
 
   const sortedOptions = useMemo(() => getSortedOptions(options), [options]);
   const currentOptionId = (activeOptionId ?? (e as any)?.active_option_id ?? null) as string | null;
-  const currentOptionIndex = useMemo(() => {
-    if (!currentOptionId) return -1;
-    return sortedOptions.findIndex((o) => String(o.id) === String(currentOptionId));
+  const currentOptionMeta = useMemo(() => {
+    if (!currentOptionId) return { index: -1, optionNumber: null as number | null };
+    const idx = sortedOptions.findIndex((o) => String(o.id) === String(currentOptionId));
+    const row: any = idx >= 0 ? (sortedOptions[idx] as any) : null;
+    const num = row?.option_number ?? row?.optionNumber ?? null;
+    return { index: idx, optionNumber: typeof num === 'number' ? num : num != null ? Number(num) : null };
   }, [sortedOptions, currentOptionId]);
   const displayEstimateNumber = useMemo(() => {
     const base = String((e as any)?.estimate_number ?? '');
-    // Only suffix when options exist and we can resolve the active option index.
-    if (sortedOptions.length > 0 && currentOptionIndex >= 0) return `${base}-${currentOptionIndex + 1}`;
+    // Suffix is stable identity: option_number (monotonic). Reorder MUST NOT change this.
+    if (sortedOptions.length > 0 && currentOptionMeta.optionNumber && currentOptionMeta.optionNumber > 0)
+      return `${base}-${currentOptionMeta.optionNumber}`;
     return base;
-  }, [e, sortedOptions.length, currentOptionIndex]);
+  }, [e, sortedOptions.length, currentOptionMeta.optionNumber]);
 
   const renderRows = useMemo(() => {
     const top = rows.filter((r) => !(r as any).parentGroupId);
@@ -672,8 +698,20 @@ export function EstimateEditorPage() {
 
       const items = await (data as any).getEstimateItemsForOption?.(optionId);
 
+      // Find the option row (prefer the current in-memory list; fall back to refetch).
+      let optRow: any = (options ?? []).find((o: any) => String(o.id) === String(optionId)) ?? null;
+      if (!optRow && (data as any).listEstimateOptions && e?.id) {
+        try {
+          const refreshed = await (data as any).listEstimateOptions(String(e.id));
+          const list: any[] = Array.isArray(refreshed) ? refreshed : [];
+          setOptions(list as any);
+          optRow = list.find((o: any) => String(o.id) === String(optionId)) ?? null;
+        } catch {
+          // ignore
+        }
+      }
+
       // Load per-option settings (job type, discount toggles, etc.) from option columns (NOT from description).
-      const payload = safeParseOptionPayload((optRow as any)?.option_description);
       const settings = {
         job_type_id: (optRow as any)?.job_type_id ?? null,
         use_admin_rules: Boolean((optRow as any)?.use_admin_rules ?? false),
@@ -794,7 +832,8 @@ export function EstimateEditorPage() {
       setOptions(nextList as any);
 
       if (created?.id) {
-        const nextIndex = nextList.length > 0 ? nextList.length : options.length + 1;
+        const createdNumRaw = (created as any).option_number ?? (created as any).optionNumber;
+        const createdNum = createdNumRaw != null ? Number(createdNumRaw) : null;
 
         // Per spec: new options start with a blank description, but copy line items.
         // We also snapshot the current option-level settings into the option payload so
@@ -813,7 +852,7 @@ export function EstimateEditorPage() {
         setOptionEdits((prev) => ({
           ...prev,
           [created.id]: {
-            name: (created as any).option_name ?? `Option ${nextIndex}`,
+            name: (created as any).option_name ?? `Option ${createdNum ?? (options.length + 1)}`,
             description: '',          },
         }));
         await switchOption(created.id);
@@ -1359,8 +1398,10 @@ async function updateQuantity(itemId: string, quantity: number) {
             {sortedOptions.map((o, idx) => {
               const oid = String((o as any).id);
               const isActive = oid === String(currentOptionId ?? '');
+              const onumRaw = (o as any).option_number ?? (o as any).optionNumber;
+              const onum = onumRaw != null ? Number(onumRaw) : null;
               const label =
-                optionEdits[oid]?.name ?? (o as any).option_name ?? (o as any).optionName ?? `Option ${idx + 1}`;
+                optionEdits[oid]?.name ?? (o as any).option_name ?? (o as any).optionName ?? `Option ${onum ?? idx + 1}`;
               return (
                 <Button
                   key={oid}
