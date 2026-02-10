@@ -1,0 +1,51 @@
+-- FieldLedger Options Migration
+-- Adds option-scoped pricing controls + stable option_number identity.
+-- Run this in Supabase SQL editor (or via supabase migrations).
+
+BEGIN;
+
+-- 1) Ensure estimate_options has stable identity + pricing controls
+ALTER TABLE IF EXISTS public.estimate_options
+  ADD COLUMN IF NOT EXISTS option_number integer,
+  ADD COLUMN IF NOT EXISTS job_type_id uuid,
+  ADD COLUMN IF NOT EXISTS use_admin_rules boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS customer_supplies_materials boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS apply_discount boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS discount_percent numeric,
+  ADD COLUMN IF NOT EXISTS apply_processing_fees boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+
+-- 2) Backfill option_number where missing
+-- Uses created_at (fallback sort_order) ordering per estimate_id.
+WITH ranked AS (
+  SELECT
+    id,
+    estimate_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY estimate_id
+      ORDER BY
+        created_at NULLS LAST,
+        sort_order NULLS LAST,
+        id
+    ) AS rn
+  FROM public.estimate_options
+)
+UPDATE public.estimate_options eo
+SET option_number = r.rn
+FROM ranked r
+WHERE eo.id = r.id
+  AND (eo.option_number IS NULL OR eo.option_number < 1);
+
+-- 3) Uniqueness: one option_number per estimate group
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='estimate_options_estimate_id_option_number_key'
+  ) THEN
+    CREATE UNIQUE INDEX estimate_options_estimate_id_option_number_key
+      ON public.estimate_options(estimate_id, option_number);
+  END IF;
+END$$;
+
+COMMIT;
+
