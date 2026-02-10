@@ -113,11 +113,19 @@ export function EstimateEditorPage() {
   const [options, setOptions] = useState<EstimateOption[]>([]);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
 
+  // When returning from picker routes, ensure the picker-selected option wins over
+  // the estimate-load initializer (which otherwise falls back to the first option).
+  const pickerPreferredOptionIdRef = useRef<string | null>(null);
+
   // If we were returned from a picker, force-open the same option.
   useEffect(() => {
     const st: any = (location as any)?.state ?? null;
     const fromPicker = st?.activeOptionId ?? null;
-    if (fromPicker) setActiveOptionId(String(fromPicker));
+    if (fromPicker) {
+      const id = String(fromPicker);
+      pickerPreferredOptionIdRef.current = id;
+      setActiveOptionId(id);
+    }
   }, [location]);
 
   // Persist the last active option so returning from pickers re-opens the correct option
@@ -279,8 +287,18 @@ export function EstimateEditorPage() {
           const opts = await (data as any).listEstimateOptions?.(est?.id ?? estimateId);
           const list: any[] = Array.isArray(opts) ? opts : [];
           setOptions(list as any);
+          // Prefer picker-selected option id when returning from Materials/Assemblies pickers.
+          const pickerPreferred = pickerPreferredOptionIdRef.current;
+          const pickerExists = pickerPreferred
+            ? (list ?? []).some((o: any) => String(o.id) === String(pickerPreferred))
+            : false;
+
           const initialActive =
-            (est as any)?.active_option_id ?? (est as any)?.activeOptionId ?? (list?.[0]?.id ?? null);
+            (pickerExists ? pickerPreferred : null) ??
+            (activeOptionId ?? null) ??
+            (est as any)?.active_option_id ??
+            (est as any)?.activeOptionId ??
+            (list?.[0]?.id ?? null);
           if (initialActive) {
             setActiveOptionId(initialActive);
             // Ensure we have the items for the selected option (getEstimate returns active option items, but we refresh to be safe)
