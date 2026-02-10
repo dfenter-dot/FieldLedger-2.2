@@ -404,7 +404,7 @@ export function EstimateOptionsPage() {
                                 <div className="muted">Qty {qty}</div>
                               </div>
                             );
-                          })}})}
+                          })}
                         </div>
                       )}
                     </div>
