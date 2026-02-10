@@ -13,6 +13,40 @@ function previewText(desc: string) {
   return s.slice(0, 110) + '…';
 }
 
+
+function cleanOptionDescription(opt: any) {
+  // Preferred new column
+  const directRaw = (opt?.option_description ?? '').toString().trim();
+  if (directRaw) {
+    if (directRaw.startsWith('{') && directRaw.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(directRaw);
+        const d = (parsed?.description ?? '').toString().trim();
+        if (d) return d;
+      } catch {
+        // fall through
+      }
+    } else {
+      return directRaw;
+    }
+  }
+
+  // Legacy: some builds stored a JSON payload in "description"
+  const legacyRaw = (opt?.description ?? opt?.optionDescription ?? '').toString().trim();
+  if (!legacyRaw) return '';
+  if (legacyRaw.startsWith('{') && legacyRaw.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(legacyRaw);
+      const d = (parsed?.description ?? '').toString().trim();
+      return d || '';
+    } catch {
+      return legacyRaw;
+    }
+  }
+  return legacyRaw;
+}
+
+
 export function EstimateOptionsPage() {
   const data = useData();
   const nav = useNavigate();
@@ -69,7 +103,78 @@ export function EstimateOptionsPage() {
     };
   }, [data, estimateId]);
 
-  // Stable numbering: prefer option_number from DB; fallback to created_at order.
+  
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!estimateId) return;
+        if (!options || options.length === 0) return;
+
+        // Load items for ALL options so pricing totals can be computed on this overview page.
+        const entries = await Promise.all(
+          options.map(async (opt) => {
+            const oid = String((opt as any).id);
+            const items = await data.getEstimateItemsForOption(oid);
+            return [oid, Array.isArray(items) ? items : []] as const;
+          }),
+        );
+
+        if (cancelled) return;
+
+        setItemsByOptionId((prev) => {
+          const next = { ...prev };
+          for (const [oid, items] of entries) next[oid] = items;
+          return next;
+        });
+
+        // Best-effort: load referenced materials/assemblies so names + labor time are available to pricing engine & preview.
+        const matIds = new Set<string>();
+        const asmIds = new Set<string>();
+        for (const [, items] of entries) {
+          for (const it of items ?? []) {
+            const mid = (it as any).material_id ?? (it as any).materialId;
+            const aid = (it as any).assembly_id ?? (it as any).assemblyId;
+            if (mid) matIds.add(String(mid));
+            if (aid) asmIds.add(String(aid));
+          }
+        }
+
+        await Promise.all(
+          Array.from(matIds)
+            .filter((id) => !materialsById[id])
+            .map(async (id) => {
+              try {
+                const m = await data.getMaterial(id);
+                if (m) setMaterialsById((prev) => ({ ...prev, [id]: m }));
+              } catch {
+                // ignore
+              }
+            }),
+        );
+
+        await Promise.all(
+          Array.from(asmIds)
+            .filter((id) => !assembliesById[id])
+            .map(async (id) => {
+              try {
+                const a = await data.getAssembly(id);
+                if (a) setAssembliesById((prev) => ({ ...prev, [id]: a }));
+              } catch {
+                // ignore
+              }
+            }),
+        );
+      } catch (err: any) {
+        if (!cancelled) setStatus(String(err?.message ?? err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data, estimateId, options]);
+
+// Stable numbering: prefer option_number from DB; fallback to created_at order.
   const optionFallbackNumberById = useMemo(() => {
     const sorted = options
       .slice()
@@ -241,7 +346,7 @@ export function EstimateOptionsPage() {
                       {name}{' '}
                       <span className="muted">• #{(estimate as any)?.estimate_number}-{optionNumber}</span>
                     </div>
-                    <div className="listSub">{previewText((opt as any).option_description) || '—'}</div>
+                    <div className="listSub">{previewText(cleanOptionDescription(opt)) || '—'}</div>
                   </div>
 
                   <div className="listRight" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -299,7 +404,7 @@ export function EstimateOptionsPage() {
                                 className="row"
                                 style={{ justifyContent: 'space-between' }}
                               >
-                                <div>{label}</div>
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><span className="pill" style={{ padding: '2px 8px' }}>{type || 'item'}</span><span>{label}</span></div>
                                 <div className="muted">x{qty}</div>
                               </div>
                             );
@@ -317,4 +422,5 @@ export function EstimateOptionsPage() {
     </div>
   );
 }
+
 
