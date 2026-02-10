@@ -979,6 +979,8 @@ export class SupabaseDataProvider implements IDataProvider {
       customer_address: (estimate as any).customer_address ?? null,
       private_notes: (estimate as any).private_notes ?? null,
 
+      active_option_id: (estimate as any).active_option_id ?? (estimate as any).activeOptionId ?? null,
+
       job_type_id: (estimate as any).job_type_id ?? null,
       use_admin_rules: Boolean((estimate as any).use_admin_rules ?? false),
 
@@ -1138,43 +1140,14 @@ export class SupabaseDataProvider implements IDataProvider {
     const payload: any = {
       id: (estimate as any).id,
       company_id: companyId,
-      estimate_number: (estimate as any).estimate_number ?? null,
-      name: (estimate as any).name ?? null,
-
-      customer_name: (estimate as any).customer_name ?? null,
-      customer_phone: (estimate as any).customer_phone ?? null,
-      customer_email: (estimate as any).customer_email ?? null,
-      customer_address: (estimate as any).customer_address ?? null,
-      private_notes: (estimate as any).private_notes ?? null,
-
-      job_type_id: (estimate as any).job_type_id ?? null,
-      use_admin_rules: Boolean((estimate as any).use_admin_rules ?? false),
-
-      customer_supplies_materials: Boolean(
-        (estimate as any).customer_supplies_materials ??
-          (estimate as any).customer_supplied_materials ??
-          false
-      ),
-
-      apply_discount: Boolean((estimate as any).apply_discount ?? false),
-      discount_percent:
-        (estimate as any).discount_percent == null || String((estimate as any).discount_percent).trim() === ''
-          ? null
-          : Number((estimate as any).discount_percent),
-      apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
-
-      status: (estimate as any).status ?? 'draft',
-      sent_at: (estimate as any).sent_at ?? null,
-      approved_at: (estimate as any).approved_at ?? null,
-      declined_at: (estimate as any).declined_at ?? null,
-      valid_until: (estimate as any).valid_until ?? null,
-
-      created_by: (estimate as any).created_by ?? null,
-      created_at: (estimate as any).created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    if (!payload.id) delete payload.id;
+    // Only patch fields that are explicitly provided (avoid nulling existing data)
+    if ((estimate as any).active_option_id !== undefined || (estimate as any).activeOptionId !== undefined) {
+      payload.active_option_id = (estimate as any).active_option_id ?? (estimate as any).activeOptionId ?? null;
+    }
+if (!payload.id) delete payload.id;
 
     const { data, error } = await this.supabase.from('estimates').upsert(payload).select('*').single();
     if (error) throw error;
@@ -1505,6 +1478,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
