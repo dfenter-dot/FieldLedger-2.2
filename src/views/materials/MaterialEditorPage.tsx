@@ -264,7 +264,7 @@ export function MaterialEditorPage() {
 
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Description</label>
-            <textarea className="input textarea" value={m.description ?? \'\'} disabled={readOnlyBase} onChange={(e) => setM({ ...m, description: e.target.value })} />
+            <textarea className="input textarea" value={m.description ?? ''} disabled={readOnlyBase} onChange={(e) => setM({ ...m, description: e.target.value })} />
           </div>
         </div>
 
