@@ -133,16 +133,7 @@ export function TechCostBreakdownCard(props: {
             </Button>
           </div>
 
-          {showAdvanced ? (
-            <div className="grid2" style={{ marginTop: 8 }}>
-              <div className="stack">
-                <label className="label">Required Revenue / Billable Hour (Labor-only baseline)</label>
-                <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-                  {money(tech.requiredRevenuePerBillableHour)}/hr
-                </div>
-              </div>
-            </div>
-          ) : null}
+          {/* Advanced "Required Revenue / Billable Hour" hidden */}{showAdvanced ? null : null}
         </div>
       </div>
 
