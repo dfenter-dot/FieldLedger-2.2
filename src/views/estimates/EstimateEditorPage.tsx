@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
-import { Textarea } from '../../ui/components/Textarea';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Estimate, EstimateOption, Material } from '../../providers/data/types';
@@ -1620,20 +1619,7 @@ async function updateQuantity(itemId: string, quantity: number) {
 
               <div className="stack">
                 <label className="label">Option Description</label>
-                <Textarea
-                  disabled={isLocked}
-                  rows={4}
-                  value={optionEdits[activeOptionId]?.description ?? ''}
-                  onChange={(ev) =>
-                    setOptionEdits((prev) => ({
-                      ...prev,
-                      [activeOptionId]: {
-                        ...(prev[activeOptionId] ?? { name: '', description: '' }),
-                        description: ev.target.value,
-                      },
-                    }))
-                  }
-                />
+                <textarea className="input textarea" disabled={isLocked} value={optionEdits[activeOptionId]?.description ?? ''} onChange={(ev) => setOptionEdits((p) => ({ ...p, [activeOptionId]: { ...(p[activeOptionId] ?? {}), description: ev.target.value } }))} />
               </div>
             </div>
           </Card>
@@ -1761,7 +1747,7 @@ async function updateQuantity(itemId: string, quantity: number) {
 
 							<div className="stack" style={{ gridColumn: '1 / -1' }}>
 								<label className="label">Description</label>
-								<Input value={blankMat.description} onChange={(ev) => setBlankMat((p) => ({ ...p, description: ev.target.value }))} />
+								<textarea className="input textarea" value={blankMat.description} onChange={(ev) => setBlankMat((p) => ({ ...p, description: ev.target.value }))} />
 							</div>
 
 							<div className="stack">
