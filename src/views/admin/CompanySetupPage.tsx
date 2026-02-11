@@ -1245,7 +1245,6 @@ export function CompanySetupPage() {
 
 
 
-
           <div className="stack">
             <label className="label">Revenue Goal (Monthly, Derived)</label>
             <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
