@@ -585,7 +585,7 @@ export function AssemblyEditorPage() {
 
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Description</label>
-            <textarea className="input textarea" value={a.description ?? \'\'} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
+            <textarea className="input textarea" value={a.description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
           </div>
         </div>
 
