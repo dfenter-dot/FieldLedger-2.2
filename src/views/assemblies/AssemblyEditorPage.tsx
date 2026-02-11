@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
+import { Textarea } from '../../ui/components/Textarea';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Material } from '../../providers/data/types';
@@ -585,7 +586,7 @@ export function AssemblyEditorPage() {
 
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Description</label>
-            <Input value={a.description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
+            <Textarea rows={4} value={a.description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
           </div>
         </div>
 
@@ -1060,6 +1061,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
