@@ -449,6 +449,25 @@ async deleteEstimate(id: string): Promise<void> {
     this.estimates = this.estimates.filter(e => e.id !== id);
   }
 
+  async deleteEstimateOption(optionId: string): Promise<void> {
+    // Local provider: remove items + option, keep estimate.
+    const opt = this.estimateOptions.find(o => (o as any).id === optionId) as any;
+    if (!opt) return;
+    const estimateId = opt.estimate_id;
+
+    const remaining = this.estimateOptions.filter(o => (o as any).estimate_id === estimateId && (o as any).id !== optionId);
+    if (remaining.length === 0) throw new Error('Cannot delete the last option.');
+
+    this.estimateItems = this.estimateItems.filter(i => (i as any).estimate_option_id !== optionId);
+    this.estimateOptions = this.estimateOptions.filter(o => (o as any).id !== optionId);
+
+    // Fix active option if needed
+    const est = this.estimates.find(e => (e as any).id === estimateId) as any;
+    if (est && est.active_option_id === optionId) {
+      est.active_option_id = (remaining[0] as any).id;
+    }
+  }
+
   /* ============================
      CSV / Branding (later)
   ============================ */
@@ -469,6 +488,7 @@ async deleteEstimate(id: string): Promise<void> {
     return settings as BrandingSettings;
   }
 }
+
 
 
 
