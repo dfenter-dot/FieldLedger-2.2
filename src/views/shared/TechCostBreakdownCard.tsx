@@ -1,6 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Card } from '../../ui/components/Card';
-import { Button } from '../../ui/components/Button';
 import type { CompanySettings, JobType } from '../../providers/data/types';
 import { computeTechCostBreakdown } from '../../providers/data/techCostBreakdown';
 
@@ -24,6 +23,7 @@ export function TechCostBreakdownCard(props: {
   jobType: JobType | null;
 }) {
   const { title = 'Tech View Cost Breakdown', company, jobType } = props;
+
   const tech = useMemo(() => computeTechCostBreakdown(company, jobType), [company, jobType]);
 
   // Mirror Company Setup derived helpers
@@ -120,9 +120,11 @@ export function TechCostBreakdownCard(props: {
           </div>
         </div>
 
-            </div>
-          ) : null}
-        </div>
+        {/** UI-only: hide Average Job Goal (Derived) in Estimates tech breakdown view */}
+        {null}
+
+        {/** Advanced section intentionally hidden */}
+        {null}
       </div>
 
       <div className="muted small">
