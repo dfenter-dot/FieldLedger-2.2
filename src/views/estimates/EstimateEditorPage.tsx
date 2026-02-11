@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
@@ -101,7 +101,6 @@ export function EstimateEditorPage() {
   const { estimateId } = useParams();
   const data = useData();
   const nav = useNavigate();
-  const location = useLocation();
   const { setMode } = useSelection();
   const dialogs = useDialogs();
 
@@ -112,21 +111,6 @@ export function EstimateEditorPage() {
 
   const [options, setOptions] = useState<EstimateOption[]>([]);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
-
-  // When returning from picker routes, ensure the picker-selected option wins over
-  // the estimate-load initializer (which otherwise falls back to the first option).
-  const pickerPreferredOptionIdRef = useRef<string | null>(null);
-
-  // If we were returned from a picker, force-open the same option.
-  useEffect(() => {
-    const st: any = (location as any)?.state ?? null;
-    const fromPicker = st?.activeOptionId ?? null;
-    if (fromPicker) {
-      const id = String(fromPicker);
-      pickerPreferredOptionIdRef.current = id;
-      setActiveOptionId(id);
-    }
-  }, [location]);
 
   // Persist the last active option so returning from pickers re-opens the correct option
   const lastPersistedActiveOptionIdRef = useRef<string | null>(null);
@@ -287,18 +271,8 @@ export function EstimateEditorPage() {
           const opts = await (data as any).listEstimateOptions?.(est?.id ?? estimateId);
           const list: any[] = Array.isArray(opts) ? opts : [];
           setOptions(list as any);
-          // Prefer picker-selected option id when returning from Materials/Assemblies pickers.
-          const pickerPreferred = pickerPreferredOptionIdRef.current;
-          const pickerExists = pickerPreferred
-            ? (list ?? []).some((o: any) => String(o.id) === String(pickerPreferred))
-            : false;
-
           const initialActive =
-            (pickerExists ? pickerPreferred : null) ??
-            (activeOptionId ?? null) ??
-            (est as any)?.active_option_id ??
-            (est as any)?.activeOptionId ??
-            (list?.[0]?.id ?? null);
+            (est as any)?.active_option_id ?? (est as any)?.activeOptionId ?? (list?.[0]?.id ?? null);
           if (initialActive) {
             setActiveOptionId(initialActive);
             // Ensure we have the items for the selected option (getEstimate returns active option items, but we refresh to be safe)
@@ -696,7 +670,48 @@ export function EstimateEditorPage() {
 		}
 	}
 
-  async function removeEstimate() {
+  
+  async function removeActiveOption() {
+    if (!e) return;
+    if (!activeOptionId) return;
+
+    const ok = await dialogs.confirm({
+      title: 'Delete Option',
+      message: 'Delete this option only? This cannot be undone.',
+      confirmText: 'Delete Option',
+      danger: true,
+    });
+    if (!ok) return;
+
+    try {
+      setStatus('Deleting option…');
+      if ((data as any).deleteEstimateOption) {
+        await (data as any).deleteEstimateOption(activeOptionId);
+      } else if ((data as any).deleteEstimateOptionId) {
+        await (data as any).deleteEstimateOptionId(activeOptionId);
+      } else {
+        throw new Error('deleteEstimateOption is not available');
+      }
+
+      // Reload estimate to refresh options + active_option_id
+      const refreshed = await data.getEstimate((e as any).id);
+      setE(refreshed as any);
+
+      // Ensure UI points at a valid option
+      const nextActive = (refreshed as any)?.active_option_id ?? (refreshed as any)?.activeOptionId ?? null;
+      if (nextActive) {
+        setActiveOptionId(nextActive);
+      } else if ((refreshed as any)?.options?.length) {
+        setActiveOptionId((refreshed as any).options[0].id);
+      }
+      setStatus('');
+    } catch (err: any) {
+      console.error(err);
+      setStatus(String(err?.message ?? err));
+    }
+  }
+
+async function removeEstimate() {
     if (!e) return;
     const ok = await dialogs.confirm({
       title: 'Delete Estimate',
@@ -1464,6 +1479,14 @@ async function updateQuantity(itemId: string, quantity: number) {
 
           <Button variant="secondary" disabled={!e || isLocked} onClick={addOption}>
             Add Option
+          </Button>
+
+          <Button
+            variant="secondary"
+            disabled={!e || isLocked || options.length <= 1 || !activeOptionId}
+            onClick={removeActiveOption}
+          >
+            Delete Option
           </Button>
 
           <Button
