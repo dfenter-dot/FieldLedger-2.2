@@ -164,9 +164,13 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
 
     laborSell = effectiveRate * (expectedMinutes / 60);
   } else {
-    // Hourly handled later (Phase 2)
+    // Hourly mode — Job-wide gross margin on the entire job.
+    // Rule: (labor_cost + material_sell + misc_material) / (1 - GM) = job sell total before discount/fees.
+    // IMPORTANT: Hourly mode must NOT use overhead/hour recovery math.
     baseRate = company.tech_wage;
     laborCost = baseRate * (actualMinutes / 60);
+
+    // We compute labor_sell later once marginSubtotal is known.
   }
 
   // --- SUBTOTALS ---
@@ -176,9 +180,17 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
   if (jobType.mode === 'flat_rate') {
     marginSubtotal = laborSell + materialSell + miscMaterial;
   } else {
-    rawSubtotal = laborCost + materialSell;
-    marginSubtotal = rawSubtotal / (1 - jobType.gross_margin_percent / 100);
-    laborSell = marginSubtotal - materialSell;
+    const gmRate = clampPct(jobType.gross_margin_percent) / 100;
+
+    // Hourly GM applies to the full job (labor cost + material sell + misc).
+    rawSubtotal = laborCost + materialSell + miscMaterial;
+    marginSubtotal = rawSubtotal / Math.max(1 - gmRate, 0.0001);
+
+    // Component allocation for display:
+    // - materialSell + miscMaterial remain as computed
+    // - laborSell is the remainder of the job total
+    laborSell = marginSubtotal - materialSell - miscMaterial;
+    effectiveRate = actualMinutes > 0 ? laborSell / (actualMinutes / 60) : 0;
   }
 
   // --- DISCOUNT BUFFER + APPLIED DISCOUNT ---
@@ -739,6 +751,7 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
