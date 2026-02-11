@@ -70,7 +70,6 @@ export function CompanySetupPage() {
 
   // Save button feedback
   const [saveUi, setSaveUi] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Numeric drafts (strings while typing) so decimals + backspace-to-empty work
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -1246,25 +1245,6 @@ export function CompanySetupPage() {
 
 
 
-          <div className="stack" style={{ gridColumn: '1 / -1' }}>
-            <div className="rowBetween" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <div className="muted">Advanced</div>
-              <Button variant="secondary" onClick={() => setShowAdvanced((v) => !v)}>
-                {showAdvanced ? 'Hide advanced' : 'Show advanced'}
-              </Button>
-            </div>
-
-            {showAdvanced ? (
-              <div className="grid2" style={{ marginTop: 8 }}>
-                <div className="stack">
-                  <label className="label">Required Revenue / Billable Hour (Labor-only baseline)</label>
-                  <div className="input" style={{ display: 'flex', alignItems: 'center' }}>
-                    {money(requiredRevenuePerBillableHour)}/hr
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </div>
 
           <div className="stack">
             <label className="label">Revenue Goal (Monthly, Derived)</label>
@@ -1295,6 +1275,7 @@ export function CompanySetupPage() {
     </div>
   );
 }
+
 
 
 
