@@ -24,8 +24,6 @@ export function TechCostBreakdownCard(props: {
   jobType: JobType | null;
 }) {
   const { title = 'Tech View Cost Breakdown', company, jobType } = props;
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
   const tech = useMemo(() => computeTechCostBreakdown(company, jobType), [company, jobType]);
 
   // Mirror Company Setup derived helpers
@@ -122,18 +120,8 @@ export function TechCostBreakdownCard(props: {
           </div>
         </div>
 
-        {/** UI-only: hide Average Job Goal (Derived) in Estimates tech breakdown view */}
-        {null}
-
-        <div className="stack" style={{ gridColumn: '1 / -1' }}>
-          <div className="rowBetween" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <div className="muted">Advanced</div>
-            <Button variant="secondary" onClick={() => setShowAdvanced((v) => !v)}>
-              {showAdvanced ? 'Hide advanced' : 'Show advanced'}
-            </Button>
-          </div>
-
-          {/* Advanced "Required Revenue / Billable Hour" hidden */}{showAdvanced ? null : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
