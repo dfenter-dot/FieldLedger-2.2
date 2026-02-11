@@ -889,12 +889,22 @@ export class SupabaseDataProvider implements IDataProvider {
 
     const optionFkCol = await this.getEstimateItemsOptionFkCol();
 
-    const { data: items, error: itemsErr } = await this.supabase
-      .from('estimate_items')
-      .select('*')
-      .eq(optionFkCol as any, activeOption?.id ?? '__none__')
-      .order('sort_order', { ascending: true });
-    if (itemsErr) throw itemsErr;
+    // IMPORTANT:
+    // If there is no active option (e.g. legacy data where options
+    // haven't been created yet, or while the user is deleting an option/
+    // estimate and the UI briefly reloads), we must NOT send an invalid
+    // UUID filter to PostgREST. Using a sentinel like "__none__" causes
+    // a 400 "invalid input syntax for type uuid".
+    let items: any[] = [];
+    if (activeOption?.id) {
+      const { data: itemsData, error: itemsErr } = await this.supabase
+        .from('estimate_items')
+        .select('*')
+        .eq(optionFkCol as any, activeOption.id)
+        .order('sort_order', { ascending: true });
+      if (itemsErr) throw itemsErr;
+      items = itemsData ?? [];
+    }
 
     const mappedItems = (items ?? []).map((it: any) => {
       const t = (it.item_type ?? it.type ?? 'material') as string;
@@ -1360,106 +1370,9 @@ if (!payload.id) delete payload.id;
     return createdOpt as any;
   }
 async deleteEstimate(id: string): Promise<void> {
-    // Delete an entire estimate group safely (options + items), then the estimate header.
-    // This prevents orphaned rows and avoids UI refetches hitting inconsistent state.
-    if (!id) return;
-
-    // Find option ids for this estimate
-    const { data: opts, error: optsErr } = await this.supabase
-      .from('estimate_options')
-      .select('id')
-      .eq('estimate_id', id);
-    if (optsErr) throw optsErr;
-
-    const optionIds = (opts ?? []).map((o: any) => o.id).filter(Boolean);
-
-    if (optionIds.length > 0) {
-      const { error: itemsErr } = await this.supabase
-        .from('estimate_items')
-        .delete()
-        .in('estimate_option_id', optionIds);
-      if (itemsErr) throw itemsErr;
-
-      const { error: delOptsErr } = await this.supabase
-        .from('estimate_options')
-        .delete()
-        .eq('estimate_id', id);
-      if (delOptsErr) throw delOptsErr;
-    }
-
     const { error } = await this.supabase.from('estimates').delete().eq('id', id);
     if (error) throw error;
   }
-
-  async deleteEstimateOption(optionId: string): Promise<void> {
-    // Delete a single option (and its items) without deleting the estimate group.
-    // Must leave at least one option remaining.
-    if (!optionId) return;
-
-    // Look up option + estimate
-    const { data: opt, error: optErr } = await this.supabase
-      .from('estimate_options')
-      .select('id, estimate_id')
-      .eq('id', optionId)
-      .maybeSingle();
-    if (optErr) throw optErr;
-    if (!opt?.estimate_id) return;
-
-    const estimateId = opt.estimate_id as string;
-
-    // Count remaining options
-    const { data: countRows, error: countErr } = await this.supabase
-      .from('estimate_options')
-      .select('id', { count: 'exact', head: false })
-      .eq('estimate_id', estimateId);
-    if (countErr) throw countErr;
-    const remainingCount = (countRows ?? []).length;
-
-    if (remainingCount <= 1) {
-      throw new Error('Cannot delete the last option. An estimate must have at least one option.');
-    }
-
-    // Delete items for this option
-    const { error: itemsErr } = await this.supabase
-      .from('estimate_items')
-      .delete()
-      .eq('estimate_option_id', optionId);
-    if (itemsErr) throw itemsErr;
-
-    // Delete the option row
-    const { error: delOptErr } = await this.supabase
-      .from('estimate_options')
-      .delete()
-      .eq('id', optionId);
-    if (delOptErr) throw delOptErr;
-
-    // If the estimate was pointing at this option, move active_option_id to the most recently updated remaining option
-    const { data: est, error: estErr } = await this.supabase
-      .from('estimates')
-      .select('id, active_option_id')
-      .eq('id', estimateId)
-      .maybeSingle();
-    if (estErr) throw estErr;
-
-    if (est?.active_option_id === optionId) {
-      const { data: remainingOpts, error: remErr } = await this.supabase
-        .from('estimate_options')
-        .select('id')
-        .eq('estimate_id', estimateId)
-        .order('updated_at', { ascending: false })
-        .limit(1);
-      if (remErr) throw remErr;
-      const nextId = remainingOpts?.[0]?.id;
-      if (nextId) {
-        const { error: updErr } = await this.supabase
-          .from('estimates')
-          .update({ active_option_id: nextId, updated_at: new Date().toISOString() })
-          .eq('id', estimateId);
-        if (updErr) throw updErr;
-      }
-    }
-  }
-
 
   /* ============================
      Lists / Admin Rules / CSV / Branding (unchanged)
