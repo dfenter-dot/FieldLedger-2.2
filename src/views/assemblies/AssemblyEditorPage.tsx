@@ -3,7 +3,6 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
-import { Textarea } from '../../ui/components/Textarea';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Material } from '../../providers/data/types';
@@ -577,16 +576,16 @@ export function AssemblyEditorPage() {
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
-          </div>
+          </div>{/* Assembly Labor Minutes hidden */}{false && (
 
           <div className="stack">
             <label className="label">Assembly Labor Minutes</label>
             <Input type="text" inputMode="decimal" value={laborMinutesText} onChange={(e) => setLaborMinutesText(e.target.value)} />
-          </div>
+          </div>)}
 
           <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Description</label>
-            <Textarea rows={4} value={a.description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
+            <textarea className="input textarea" value={a.description ?? \'\'} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
           </div>
         </div>
 
