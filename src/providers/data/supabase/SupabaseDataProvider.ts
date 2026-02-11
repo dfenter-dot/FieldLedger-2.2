@@ -39,6 +39,7 @@ type DbLibrary = 'materials' | 'assemblies';
 export class SupabaseDataProvider implements IDataProvider {
   constructor(private supabase: SupabaseClient) {}
 
+  private _companyId: string | null = null;
   private _isAppOwner: boolean | null = null;
   private _estimateItemsOptionFkCol: string | null = null;
 
@@ -84,6 +85,8 @@ export class SupabaseDataProvider implements IDataProvider {
   ============================ */
 
   private async currentCompanyId(): Promise<string> {
+    if (this._companyId) return this._companyId;
+
     const { data: authData, error: authError } = await this.supabase.auth.getUser();
     if (authError || !authData?.user?.id) throw new Error('Not authenticated');
 
@@ -96,10 +99,11 @@ export class SupabaseDataProvider implements IDataProvider {
       .maybeSingle();
 
     if (error || !data?.company_id) throw new Error('No company context available (profiles.company_id missing)');
+    this._companyId = data.company_id;
     return data.company_id;
   }
 
-  async getCurrentCompanyId(): Promise<string> {
+async getCurrentCompanyId(): Promise<string> {
     return this.currentCompanyId();
   }
 
@@ -1370,9 +1374,37 @@ if (!payload.id) delete payload.id;
     return createdOpt as any;
   }
 async deleteEstimate(id: string): Promise<void> {
-    const { error } = await this.supabase.from('estimates').delete().eq('id', id);
-    if (error) throw error;
+    // Delete in dependency order to avoid orphaned rows and transient reload errors.
+    // 1) load option ids for this estimate
+    const { data: opts, error: optsErr } = await this.supabase
+      .from('estimate_options')
+      .select('id')
+      .eq('estimate_id', id);
+    if (optsErr) throw optsErr;
+
+    const optionIds = (opts ?? []).map((o: any) => o.id).filter(Boolean);
+    if (optionIds.length) {
+      const optionFkCol = await this.getEstimateItemsOptionFkCol();
+      const { error: itemsErr } = await this.supabase.from('estimate_items').delete().in(optionFkCol, optionIds as any);
+      if (itemsErr) throw itemsErr;
+
+      const { error: delOptsErr } = await this.supabase.from('estimate_options').delete().in('id', optionIds as any);
+      if (delOptsErr) throw delOptsErr;
+    }
+
+    const { error: delEstErr } = await this.supabase.from('estimates').delete().eq('id', id);
+    if (delEstErr) throw delEstErr;
   }
+
+  async deleteEstimateOption(optionId: string): Promise<void> {
+    const optionFkCol = await this.getEstimateItemsOptionFkCol();
+    const { error: itemsErr } = await this.supabase.from('estimate_items').delete().eq(optionFkCol, optionId);
+    if (itemsErr) throw itemsErr;
+
+    const { error: optErr } = await this.supabase.from('estimate_options').delete().eq('id', optionId);
+    if (optErr) throw optErr;
+  }
+
 
   /* ============================
      Lists / Admin Rules / CSV / Branding (unchanged)
@@ -1488,6 +1520,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
