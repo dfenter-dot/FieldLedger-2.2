@@ -22,3 +22,12 @@
 .inputWrap:focus-within{
   border-color: rgba(212,175,55,0.45);
 }
+
+
+/* Multi-line descriptions */
+.input.textarea{
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
