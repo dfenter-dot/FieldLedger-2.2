@@ -6,8 +6,19 @@
   border-radius: 12px;
   cursor:pointer;
   font-weight: 650;
+  transition: transform 70ms ease, box-shadow 70ms ease, filter 70ms ease, border-color 120ms ease, background 120ms ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 .btn:hover{ border-color: rgba(212,175,55,0.25); }
+.btn:active:not(:disabled){
+  transform: translateY(1px);
+  filter: brightness(1.08);
+}
+.btn:focus-visible{
+  outline: 2px solid rgba(212,175,55,0.55);
+  outline-offset: 2px;
+}
 .btn:disabled{ opacity: 0.55; cursor:not-allowed; }
 .btn-primary{
   background: rgba(212,175,55,0.12);
