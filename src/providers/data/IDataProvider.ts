@@ -120,6 +120,8 @@ export interface IDataProvider {
   copyEstimateOption(estimateId: string, fromOptionId: string): Promise<EstimateOption>;
   deleteEstimate(id: string): Promise<void>;
 
+  deleteEstimateOption(optionId: string): Promise<void>;
+
   /* ============================
      CSV / Branding (later)
   ============================ */
@@ -129,5 +131,6 @@ export interface IDataProvider {
   getBrandingSettings(): Promise<BrandingSettings>;
   saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings>;
 }
+
 
 
