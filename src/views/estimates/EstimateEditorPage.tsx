@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
+import { Textarea } from '../../ui/components/Textarea';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Estimate, EstimateOption, Material } from '../../providers/data/types';
@@ -1619,15 +1620,16 @@ async function updateQuantity(itemId: string, quantity: number) {
 
               <div className="stack">
                 <label className="label">Option Description</label>
-                <Input
+                <Textarea
                   disabled={isLocked}
+                  rows={4}
                   value={optionEdits[activeOptionId]?.description ?? ''}
                   onChange={(ev) =>
                     setOptionEdits((prev) => ({
                       ...prev,
                       [activeOptionId]: {
                         ...(prev[activeOptionId] ?? { name: '', description: '' }),
-                        description: (ev as any).target.value,
+                        description: ev.target.value,
                       },
                     }))
                   }
@@ -2089,6 +2091,7 @@ async function updateQuantity(itemId: string, quantity: number) {
     </div>
   );
 }
+
 
 
 
