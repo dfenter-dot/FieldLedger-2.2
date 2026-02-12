@@ -25,6 +25,45 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
+function downloadMaterialTemplate() {
+  // Template columns match what the importer accepts.
+  // - Provide job_type by NAME (recommended). job_type_id also supported.
+  // - labor_decimal_hours is decimal hours (e.g., 1.5 = 1h 30m)
+  const header = [
+    'path',
+    'name',
+    'sku',
+    'description',
+    'base_cost',
+    'custom_cost',
+    'use_custom_cost',
+    'taxable',
+    'labor_decimal_hours',
+    'job_type',
+    'job_type_id',
+    'labor_only',
+    'order_index',
+  ];
+
+  const example = [
+    'Electrical/Lighting',
+    '4\" LED Recessed Retrofit',
+    'LED-4R-RETRO',
+    'Retrofit LED trim kit. Include any notes here.',
+    '24.50',
+    '',
+    'false',
+    'true',
+    '0.5',
+    'Install',
+    '',
+    'false',
+    '0',
+  ];
+
+  downloadText('materials_import_template.csv', `${header.join(',')}\n${example.map(escapeCsv).join(',')}\n`);
+}
+
 function parseCsv(text: string): CsvRow[] {
   // Minimal CSV parser (handles quotes). Assumes first row is header.
   const rows: string[][] = [];
@@ -277,6 +316,15 @@ export function CsvPage() {
       const text = await file.text();
       const rows = parseCsv(text);
 
+      // Support job_type by NAME (recommended) or job_type_id.
+      // This prevents failed imports when users paste job type names instead of UUIDs.
+      const jobTypes = await data.listJobTypes().catch(() => [] as any[]);
+      const jobTypeIdByName = new Map<string, string>();
+      for (const jt of jobTypes as any[]) {
+        const name = String(jt?.name ?? '').trim().toLowerCase();
+        if (name && jt?.id) jobTypeIdByName.set(name, jt.id);
+      }
+
       const isOwner = await (data as any).isAppOwner?.().catch?.(() => false) ?? false;
       const libraryType: LibraryType = isOwner ? 'personal' : 'company';
 
@@ -292,6 +340,13 @@ export function CsvPage() {
         const folderId = await ensureFolderPath(data, 'materials', libraryType, folderPath, folders);
         const laborDecimal = Number(r.labor_decimal_hours ?? 0);
         const laborMinutes = Number.isFinite(laborDecimal) ? Math.round(laborDecimal * 60) : 0;
+
+        const jobTypeIdFromName = ((): string | null => {
+          const raw = String((r as any).job_type ?? '').trim();
+          if (!raw) return null;
+          return jobTypeIdByName.get(raw.toLowerCase()) ?? null;
+        })();
+
         const mat: Partial<Material> = {
           // Let the DB generate UUIDs when inserting new rows. If a matching material already exists
           // (same folder + name), we will set id below before upsert.
@@ -303,7 +358,7 @@ export function CsvPage() {
           use_custom_cost: String(r.use_custom_cost ?? '').toLowerCase() === 'true',
           taxable: String(r.taxable ?? '').toLowerCase() === 'true',
           labor_minutes: laborMinutes,
-          job_type_id: r.job_type_id ? r.job_type_id : null,
+          job_type_id: r.job_type_id ? r.job_type_id : jobTypeIdFromName,
           folder_id: folderId,
           labor_only: String(r.labor_only ?? '').toLowerCase() === 'true',
           order_index: Number(r.order_index ?? r.sort_order ?? 0) || 0,
@@ -328,28 +383,54 @@ export function CsvPage() {
       setStatus('Importing assemblies...');
       const text = await file.text();
       const rows = parseCsv(text);
-      const folders = await collectAllFolders(data, 'assemblies', 'company');
+
+      const isOwner = await (data as any).isAppOwner?.().catch?.(() => false) ?? false;
+      const libraryType: LibraryType = isOwner ? 'personal' : 'company';
+
+      // Allow CSV to specify job type by name (job_type) or id (job_type_id)
+      const jobTypes = await data.listJobTypes().catch(() => [] as any[]);
+      const jobTypeIdByName = new Map<string, string>();
+      for (const jt of jobTypes as any[]) {
+        const name = String(jt?.name ?? '').trim().toLowerCase();
+        if (name && jt?.id) jobTypeIdByName.set(name, jt.id);
+      }
+
+      const folders = await collectAllFolders(data, 'assemblies', libraryType);
+      const existing = await collectAllAssemblies(data, libraryType, folders);
+      const assemblyIdByFolderAndName = new Map<string, string>();
+      for (const a of existing) {
+        const key = `${a.folder_id ?? 'root'}::${(a.name ?? '').trim().toLowerCase()}`;
+        if (!assemblyIdByFolderAndName.has(key)) assemblyIdByFolderAndName.set(key, a.id);
+      }
 
       for (const r of rows) {
-          const folderId = await ensureFolderPath(data, 'assemblies', libraryType, r.path ?? '', folders);
+        const folderId = await ensureFolderPath(data, 'assemblies', libraryType, r.path ?? '', folders);
+
         let items: any[] = [];
         try {
           items = r.items_json ? JSON.parse(r.items_json) : [];
         } catch {
           items = [];
         }
+
+        const jobTypeIdFromName = ((): string | null => {
+          const raw = String((r as any).job_type ?? '').trim();
+          if (!raw) return null;
+          return jobTypeIdByName.get(raw.toLowerCase()) ?? null;
+        })();
+
         const asm: any = {
-          // Let DB generate UUID for new rows; if a matching assembly exists (same folder + name),
-          // we set id below to update it.
           name: (r.name ?? '').trim(),
           description: (r.description ?? '').trim() || null,
           use_admin_rules: String(r.use_admin_rules ?? '').toLowerCase() === 'true',
-          job_type_id: r.job_type_id ? r.job_type_id : null,
+          job_type_id: r.job_type_id ? r.job_type_id : jobTypeIdFromName,
           customer_supplies_materials: String(r.customer_supplies_materials ?? '').toLowerCase() === 'true',
+          labor_minutes: Number(r.labor_minutes ?? 0) || 0,
           folder_id: folderId,
           library_type: libraryType,
           items: Array.isArray(items) ? (items as any) : [],
         };
+
         const key = `${folderId ?? 'root'}::${(asm.name ?? '').trim().toLowerCase()}`;
         const existingId = assemblyIdByFolderAndName.get(key);
         if (existingId) asm.id = existingId;
@@ -377,6 +458,7 @@ export function CsvPage() {
       <Card title="Materials">
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           <Button onClick={exportMaterials}>Export Materials</Button>
+          <Button onClick={downloadMaterialTemplate}>Download Material CSV Template</Button>
           <Button onClick={() => matInputRef.current?.click()} disabled={!allowMaterialImport}>Import Materials CSV</Button>
           <input
             ref={matInputRef}
@@ -418,6 +500,7 @@ export function CsvPage() {
     </div>
   );
 }
+
 
 
 
