@@ -770,12 +770,8 @@ export function AssemblyEditorPage() {
                       value={r._ui_qty_text ?? String(r.quantity ?? 1)}
                       onChange={(e) => {
                         const raw = e.target.value;
+                        // Allow free typing. Commit numeric quantity on blur.
                         updateItemQuantityText(r.itemId, raw);
-                        const trimmed = raw.trim();
-                        if (trimmed === '') return; // allow clearing while editing
-                        const n = Number(trimmed);
-                        if (!Number.isFinite(n)) return;
-                        updateItemQuantity(r.itemId, Math.max(1, Math.floor(n)));
                       }}
                       onBlur={() => commitItemQuantityFromText(r.itemId, 1)}
                     />
@@ -846,18 +842,8 @@ export function AssemblyEditorPage() {
                         value={it._ui_qty_text ?? String(it.quantity ?? 1)}
                         onChange={(e) => {
                           const raw = e.target.value;
+                          // Allow free typing. We commit the numeric quantity on blur.
                           updateItem(it.id, { _ui_qty_text: raw });
-
-                          const trimmed = raw.trim();
-                          if (trimmed === '') return; // allow clearing while editing
-
-                          const n = Number(trimmed);
-                          if (!Number.isFinite(n)) return;
-                          const q = Math.max(1, Math.floor(n));
-                          const nextItems = (a.items ?? []).map((x: any) =>
-                            x.id === it.id ? { ...x, quantity: q } : x
-                          );
-                          setA({ ...a, items: nextItems } as any);
                         }}
                         onBlur={() => commitItemQuantityFromText(it.id, 1)}
                       />
@@ -948,18 +934,8 @@ export function AssemblyEditorPage() {
                         value={it._ui_qty_text ?? String(it.quantity ?? 1)}
                         onChange={(e) => {
                           const raw = e.target.value;
+                          // Allow free typing. We commit the numeric quantity on blur.
                           updateItem(it.id, { _ui_qty_text: raw });
-
-                          const trimmed = raw.trim();
-                          if (trimmed === '') return; // allow clearing while editing
-
-                          const n = Number(trimmed);
-                          if (!Number.isFinite(n)) return;
-                          const q = Math.max(1, Math.floor(n));
-                          const nextItems = (a.items ?? []).map((x: any) =>
-                            x.id === it.id ? { ...x, quantity: q } : x
-                          );
-                          setA({ ...a, items: nextItems } as any);
                         }}
                         onBlur={() => commitItemQuantityFromText(it.id, 1)}
                       />
