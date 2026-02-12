@@ -60,14 +60,6 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   const [draftQtyByMaterialId, setDraftQtyByMaterialId] = useState<Record<string, string>>({});
   const [draftQtyByAssemblyId, setDraftQtyByAssemblyId] = useState<Record<string, string>>({});
 
-  // Picker mode persistence guard (Assemblies): ensure material picks finish saving before returning.
-  // Without this, a fast "Add" + "Return" can navigate back before the upsert completes,
-  // causing the Assembly editor to re-load before items exist.
-  const pickerWriteChainRef = useRef<Promise<void>>(Promise.resolve());
-  const [pickerSavingCount, setPickerSavingCount] = useState(0);
-  const pickerIsSaving = pickerSavingCount > 0;
-
-
   // Global search (materials only)
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState<Material[]>([]);
@@ -96,11 +88,14 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   }, [kind, mode.type]);
 
   const returnToPath = useMemo(() => {
-    if (mode.type === 'add-materials-to-assembly') return `/assemblies/user/${mode.assemblyId}`;
-    if (mode.type === 'add-materials-to-estimate') return `/estimates/${mode.estimateId}`;
-    if (mode.type === 'add-assemblies-to-estimate') return `/estimates/${mode.estimateId}`;
+    const rt = (location.state as any)?.returnTo ?? null;
+    // Prefer explicit returnTo when provided by the caller via navigation state.
+    // Fallbacks preserve older flows.
+    if (mode.type === 'add-materials-to-assembly') return rt ?? `/assemblies/user/${mode.assemblyId}`;
+    if (mode.type === 'add-materials-to-estimate') return rt ?? `/estimates/${mode.estimateId}`;
+    if (mode.type === 'add-assemblies-to-estimate') return rt ?? `/estimates/${mode.estimateId}`;
     return null;
-  }, [mode]);
+  }, [location.state, mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,8 +130,9 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           const asm = await data.getAssembly(mode.assemblyId);
           const map: Record<string, string> = {};
           for (const it of (asm?.items ?? []) as any[]) {
-            if (!it?.material_id) continue;
-            map[it.material_id] = String(it.quantity ?? 1);
+            const mid = it?.material_id ?? it?.materialId;
+            if (!mid) continue;
+            map[mid] = String(it.quantity ?? 1);
           }
           setSelectedQtyByMaterialId(map);
         } else if (mode.type === 'add-materials-to-estimate') {
@@ -580,45 +576,53 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
 
     try {
       if (mode.type === 'add-materials-to-assembly') {
-        // Serialize writes so "Add" clicks cannot race with the Return navigation.
-        // This keeps the Assembly editor consistent when the user returns quickly.
-        setPickerSavingCount((c) => c + 1);
-        const op = pickerWriteChainRef.current.then(async () => {
-          const asm = await data.getAssembly(mode.assemblyId);
-          if (!asm) throw new Error('Assembly not found');
+        const asm = await data.getAssembly(mode.assemblyId);
+        if (!asm) throw new Error('Assembly not found');
 
-          const items = [...((asm.items ?? []) as any[])];
-          const idx = items.findIndex((it) => it.material_id === materialId);
+        // Defensive repair:
+        // Some legacy/bad assemblies can exist without a folder_id (older versions, failed migrations).
+        // Supabase provider enforces folder_id on upsert, which would block adding items.
+        // To keep behavior stable for valid assemblies and only repair broken ones,
+        // we auto-assign an "Unfiled" folder in the SAME library only when folder_id is missing.
+        if (!(asm.folder_id ?? asm.folderId)) {
+          const asmLib: any = asm.library_type ?? asm.libraryType ?? (asm.owner_type === 'app' ? 'app' : 'company');
+          const folderLibType = asmLib === 'app' || asmLib === 'personal' ? 'personal' : 'company';
 
-          if (qty == null) {
-            // remove
-            if (idx >= 0) items.splice(idx, 1);
-          } else if (idx >= 0) {
-            items[idx] = {
-              ...items[idx],
-              type: items[idx]?.type ?? 'material',
-              material_id: items[idx]?.material_id ?? materialId,
-              quantity: qty,
-            };
-          } else {
-            items.push({
-              id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
-              type: 'material',
-              material_id: materialId,
-              quantity: qty,
-            });
+          const existingFolders = await data.listFolders({ kind: 'assemblies', libraryType: folderLibType, parentId: null } as any);
+          let targetFolder = (existingFolders ?? []).find((f: any) => String(f.name ?? '').trim().toLowerCase() === 'unfiled');
+          if (!targetFolder) {
+            targetFolder = await data.createFolder({ kind: 'assemblies', libraryType: folderLibType, parentId: null, name: 'Unfiled' } as any);
           }
 
-          await data.upsertAssembly({ ...asm, items } as any);
-        });
-
-        // Keep the chain alive even if one op fails, and always await the current op.
-        pickerWriteChainRef.current = op.catch(() => {});
-        try {
-          await op;
-        } finally {
-          setPickerSavingCount((c) => Math.max(0, c - 1));
+          // Ensure the assembly can be saved by setting folder_id.
+          if (targetFolder?.id) {
+            asm.folder_id = targetFolder.id;
+          }
         }
+
+        const items = [...((asm.items ?? []) as any[])];
+        const idx = items.findIndex((it) => it.material_id === materialId);
+
+        if (qty == null) {
+          // remove
+          if (idx >= 0) items.splice(idx, 1);
+        } else if (idx >= 0) {
+          items[idx] = {
+            ...items[idx],
+            type: items[idx]?.type ?? 'material',
+            material_id: items[idx]?.material_id ?? materialId,
+            quantity: qty,
+          };
+        } else {
+          items.push({
+            id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
+            type: 'material',
+            material_id: materialId,
+            quantity: qty,
+          });
+        }
+
+        await data.upsertAssembly({ ...asm, items } as any);
         return;
       }
 
@@ -881,15 +885,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                 {returnToPath ? (
                   <Button
                     variant="primary"
-                    disabled={mode.type === 'add-materials-to-assembly' && pickerIsSaving}
-                    onClick={async () => {
-                      if (mode.type === 'add-materials-to-assembly') {
-                        try {
-                          await pickerWriteChainRef.current;
-                        } catch {
-                          // ignore
-                        }
-                      }
+                    onClick={() => {
                       setMode({ type: 'none' });
                       if (mode.type === 'add-materials-to-estimate' || mode.type === 'add-assemblies-to-estimate') {
                         nav(returnToPath, { state: { activeOptionId: (mode as any).optionId ?? null } });
