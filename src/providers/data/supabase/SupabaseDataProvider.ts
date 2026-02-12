@@ -49,6 +49,7 @@ export class SupabaseDataProvider implements IDataProvider {
 
   private _isAppOwner: boolean | null = null;
   private _estimateItemsOptionFkCol: string | null = null;
+  private _assemblyItemsTypeCol: 'item_type' | 'type' | null = null;
 
   /**
    * Estimate line items live in `estimate_items` and are scoped to a single option.
@@ -650,8 +651,8 @@ export class SupabaseDataProvider implements IDataProvider {
         id: it.id,
         assembly_id: it.assembly_id,
         // Support both provider styles (some UI code expects `type`, some expects `item_type`)
-        item_type: it.item_type,
-        type: it.item_type,
+        item_type: it.item_type ?? it.type,
+        type: it.item_type ?? it.type,
         material_id: it.material_id ?? null,
         name: it.name ?? null,
         quantity: Number(it.quantity ?? 1),
@@ -742,76 +743,112 @@ export class SupabaseDataProvider implements IDataProvider {
         );
       }
 
-      const rows = (Array.isArray(items) ? items : []).map((it, idx) => {
-        const type = it.type ?? it.item_type ?? 'material';
+      const typeCol: 'item_type' | 'type' = this._assemblyItemsTypeCol ?? 'item_type';
 
-        const group_id = it.group_id ?? it.groupId ?? null;
-        const parent_group_id = it.parent_group_id ?? it.parentGroupId ?? null;
-        const quantity_factor =
-          it.quantity_factor != null || it.quantityFactor != null ? Number(it.quantity_factor ?? it.quantityFactor) : null;
+      const buildRows = (col: 'item_type' | 'type', includeGroups: boolean) =>
+        (Array.isArray(items) ? items : []).map((it, idx) => {
+          const type = it.type ?? it.item_type ?? 'material';
 
-        if (type === 'labor') {
-          const laborMinutes = Number.isFinite(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes))
-            ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
-            : 0;
+          const group_id = includeGroups ? (it.group_id ?? it.groupId ?? null) : undefined;
+          const parent_group_id = includeGroups ? (it.parent_group_id ?? it.parentGroupId ?? null) : undefined;
+          const quantity_factor =
+            includeGroups && (it.quantity_factor != null || it.quantityFactor != null)
+              ? Number(it.quantity_factor ?? it.quantityFactor)
+              : undefined;
+
+          if (type === 'labor') {
+            const laborMinutes = Number.isFinite(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes))
+              ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
+              : 0;
+            return {
+              assembly_id: data.id,
+              [col]: 'labor',
+              name: it.name ?? 'Labor',
+              description: it.description ?? null,
+              quantity: 1,
+              labor_minutes: laborMinutes,
+              sort_order: idx,
+
+              group_id,
+              parent_group_id,
+              quantity_factor,
+            } as any;
+          }
+
+          // Assemblies do not contain other assemblies in the current app.
+          // If a stray `assembly` type appears (e.g. legacy data), persist it as a one-off
+          // material line (material_id null) so it still saves and renders.
+          if (type === 'assembly') {
+            return {
+              assembly_id: data.id,
+              [col]: 'material',
+              material_id: null,
+              quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+              labor_minutes: 0,
+              sort_order: idx,
+
+              // Snapshot for UI
+              name: it.name ?? 'Assembly Line',
+              description: it.description ?? null,
+
+              group_id,
+              parent_group_id,
+              quantity_factor,
+            } as any;
+          }
+
           return {
             assembly_id: data.id,
-            item_type: 'labor',
-            name: it.name ?? 'Labor',
-            description: it.description ?? null,
-            quantity: 1,
-            labor_minutes: laborMinutes,
-            sort_order: idx,
-
-            group_id,
-            parent_group_id,
-            quantity_factor,
-          };
-        }
-
-        // Assemblies do not contain other assemblies in the current app.
-        // If a stray `assembly` type appears (e.g. legacy data), persist it as a one-off
-        // material line (material_id null) so it still saves and renders.
-        if (type === 'assembly') {
-          return {
-            assembly_id: data.id,
-            item_type: 'material',
-            material_id: null,
+            [col]: 'material',
+            material_id: it.material_id ?? it.materialId ?? it.material_id,
             quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
             labor_minutes: 0,
             sort_order: idx,
 
-            // Snapshot for UI
-            name: it.name ?? 'Assembly Line',
+            // Optional snapshot for UI
+            name: it.name ?? null,
             description: it.description ?? null,
 
             group_id,
             parent_group_id,
             quantity_factor,
-          };
-        }
+          } as any;
+        });
 
-        return {
-          assembly_id: data.id,
-          item_type: 'material',
-          material_id: it.material_id ?? it.materialId ?? it.material_id,
-          quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
-          labor_minutes: 0,
-          sort_order: idx,
-
-          // Optional snapshot for UI
-          name: it.name ?? null,
-          description: it.description ?? null,
-
-          group_id,
-          parent_group_id,
-          quantity_factor,
-        };
-      });
-
-      if (rows.length) {
+      const tryInsert = async (col: 'item_type' | 'type', includeGroups: boolean) => {
+        const rows = buildRows(col, includeGroups);
+        if (!rows.length) return;
         const { error: insErr } = await this.supabase.from('assembly_items').insert(rows as any);
         if (insErr) throw insErr;
+      };
+
+      try {
+        await tryInsert(typeCol, true);
+        this._assemblyItemsTypeCol = typeCol;
+      } catch (e: any) {
+        const msg = String(e?.message ?? '');
+        // Fallback for schemas where the type column is named `type` instead of `item_type`.
+        if (typeCol === 'item_type' && /column .*item_type.* does not exist/i.test(msg)) {
+          try {
+            await tryInsert('type', true);
+          } catch (e2: any) {
+            const msg2 = String(e2?.message ?? '');
+            if (/column .*group_id.* does not exist/i.test(msg2) || /column .*parent_group_id.* does not exist/i.test(msg2) || /column .*quantity_factor.* does not exist/i.test(msg2)) {
+              await tryInsert('type', false);
+            } else {
+              throw e2;
+            }
+          }
+          this._assemblyItemsTypeCol = 'type';
+        } else if (
+          /column .*group_id.* does not exist/i.test(msg) ||
+          /column .*parent_group_id.* does not exist/i.test(msg) ||
+          /column .*quantity_factor.* does not exist/i.test(msg)
+        ) {
+          await tryInsert(typeCol, false);
+        } else {
+          throw e;
+        }
       }
     }
 
@@ -1524,6 +1561,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
