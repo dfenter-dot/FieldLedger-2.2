@@ -49,7 +49,6 @@ export class SupabaseDataProvider implements IDataProvider {
 
   private _isAppOwner: boolean | null = null;
   private _estimateItemsOptionFkCol: string | null = null;
-  private _assemblyItemsTypeCol: 'item_type' | 'type' | null = null;
 
   /**
    * Estimate line items live in `estimate_items` and are scoped to a single option.
@@ -624,12 +623,34 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error) throw error;
     if (!data) return null;
 
-    const { data: items, error: itemsErr } = await this.supabase
-      .from('assembly_items')
-      .select('*')
-      .eq('assembly_id', id)
-      .order('sort_order', { ascending: true });
-    if (itemsErr) throw itemsErr;
+    // Assembly line items have existed with a few different column names over the life of the project.
+    // Some DB schemas use `sort_order`, others use `order_index`, and some have no order column.
+    // We MUST be tolerant here because a 400 from PostgREST will prevent materials from ever being added.
+    let items: any[] | null = null;
+    {
+      const base = this.supabase.from('assembly_items').select('*').eq('assembly_id', id);
+      const orderCandidates = ['sort_order', 'order_index', 'order'];
+      let lastErr: any = null;
+
+      for (const col of orderCandidates) {
+        const { data: rows, error } = await base.order(col as any, { ascending: true });
+        if (!error) {
+          items = (rows ?? []) as any[];
+          lastErr = null;
+          break;
+        }
+        lastErr = error;
+      }
+
+      if (items == null) {
+        // Fallback: no ordering.
+        const { data: rows, error } = await base;
+        if (error) throw error;
+        items = (rows ?? []) as any[];
+      }
+
+      if (lastErr && items == null) throw lastErr;
+    }
 
     return {
       id: data.id,
@@ -650,7 +671,7 @@ export class SupabaseDataProvider implements IDataProvider {
       items: (items ?? []).map((it: any) => ({
         id: it.id,
         assembly_id: it.assembly_id,
-        // Support both provider styles (some UI code expects `type`, some expects `item_type`)
+        // Support both DB styles (`item_type` vs `type`) and both UI styles (`type` vs `item_type`).
         item_type: it.item_type ?? it.type,
         type: it.item_type ?? it.type,
         material_id: it.material_id ?? null,
@@ -662,7 +683,7 @@ export class SupabaseDataProvider implements IDataProvider {
         // DB does not store taxable per item; default to true so UI doesn't flip unexpectedly.
         taxable: true,
         labor_minutes: Number(it.labor_minutes ?? 0),
-        sort_order: Number(it.sort_order ?? 0),
+        sort_order: Number(it.sort_order ?? it.order_index ?? it.order ?? 0),
       })),
     };
   }
@@ -743,112 +764,107 @@ export class SupabaseDataProvider implements IDataProvider {
         );
       }
 
-      const typeCol: 'item_type' | 'type' = this._assemblyItemsTypeCol ?? 'item_type';
+      const inputItems = Array.isArray(items) ? items : [];
 
-      const buildRows = (col: 'item_type' | 'type', includeGroups: boolean) =>
-        (Array.isArray(items) ? items : []).map((it, idx) => {
+      // NOTE: Some deployments have a minimal `assembly_items` schema. We must not assume
+      // optional columns exist (e.g. group_id / parent_group_id / quantity_factor / sort_order).
+      // We'll insert with the richest payload first and retry with a smaller payload if PostgREST
+      // rejects unknown columns.
+      function buildRows(opts: {
+        typeCol: 'item_type' | 'type';
+        orderCol: 'sort_order' | 'order_index' | null;
+        includeSnapshot: boolean;
+      }) {
+        return inputItems.map((it, idx) => {
           const type = it.type ?? it.item_type ?? 'material';
 
-          const group_id = includeGroups ? (it.group_id ?? it.groupId ?? null) : undefined;
-          const parent_group_id = includeGroups ? (it.parent_group_id ?? it.parentGroupId ?? null) : undefined;
-          const quantity_factor =
-            includeGroups && (it.quantity_factor != null || it.quantityFactor != null)
-              ? Number(it.quantity_factor ?? it.quantityFactor)
-              : undefined;
-
-          if (type === 'labor') {
-            const laborMinutes = Number.isFinite(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes))
-              ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
-              : 0;
-            return {
-              assembly_id: data.id,
-              [col]: 'labor',
-              name: it.name ?? 'Labor',
-              description: it.description ?? null,
-              quantity: 1,
-              labor_minutes: laborMinutes,
-              sort_order: idx,
-
-              group_id,
-              parent_group_id,
-              quantity_factor,
-            } as any;
-          }
-
-          // Assemblies do not contain other assemblies in the current app.
-          // If a stray `assembly` type appears (e.g. legacy data), persist it as a one-off
-          // material line (material_id null) so it still saves and renders.
-          if (type === 'assembly') {
-            return {
-              assembly_id: data.id,
-              [col]: 'material',
-              material_id: null,
-              quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
-              labor_minutes: 0,
-              sort_order: idx,
-
-              // Snapshot for UI
-              name: it.name ?? 'Assembly Line',
-              description: it.description ?? null,
-
-              group_id,
-              parent_group_id,
-              quantity_factor,
-            } as any;
-          }
-
-          return {
+        if (type === 'labor') {
+          const laborMinutes = Number.isFinite(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes))
+            ? Math.max(0, Math.floor(Number(it.labor_minutes ?? it.laborMinutes ?? it.minutes)))
+            : 0;
+          const row: any = {
             assembly_id: data.id,
-            [col]: 'material',
-            material_id: it.material_id ?? it.materialId ?? it.material_id,
+            [opts.typeCol]: 'labor',
+            quantity: 1,
+            labor_minutes: laborMinutes,
+          };
+          if (opts.includeSnapshot) {
+            row.name = it.name ?? 'Labor';
+            row.description = it.description ?? null;
+          }
+          if (opts.orderCol) row[opts.orderCol] = idx;
+          return row;
+        }
+
+        // Assemblies do not contain other assemblies in the current app.
+        // If a stray `assembly` type appears (e.g. legacy data), persist it as a one-off
+        // material line (material_id null) so it still saves and renders.
+        if (type === 'assembly') {
+          const row: any = {
+            assembly_id: data.id,
+            [opts.typeCol]: 'material',
+            material_id: null,
             quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
             labor_minutes: 0,
-            sort_order: idx,
-
-            // Optional snapshot for UI
-            name: it.name ?? null,
-            description: it.description ?? null,
-
-            group_id,
-            parent_group_id,
-            quantity_factor,
-          } as any;
-        });
-
-      const tryInsert = async (col: 'item_type' | 'type', includeGroups: boolean) => {
-        const rows = buildRows(col, includeGroups);
-        if (!rows.length) return;
-        const { error: insErr } = await this.supabase.from('assembly_items').insert(rows as any);
-        if (insErr) throw insErr;
-      };
-
-      try {
-        await tryInsert(typeCol, true);
-        this._assemblyItemsTypeCol = typeCol;
-      } catch (e: any) {
-        const msg = String(e?.message ?? '');
-        // Fallback for schemas where the type column is named `type` instead of `item_type`.
-        if (typeCol === 'item_type' && /column .*item_type.* does not exist/i.test(msg)) {
-          try {
-            await tryInsert('type', true);
-          } catch (e2: any) {
-            const msg2 = String(e2?.message ?? '');
-            if (/column .*group_id.* does not exist/i.test(msg2) || /column .*parent_group_id.* does not exist/i.test(msg2) || /column .*quantity_factor.* does not exist/i.test(msg2)) {
-              await tryInsert('type', false);
-            } else {
-              throw e2;
-            }
+          };
+          if (opts.includeSnapshot) {
+            // Snapshot for UI (optional in DB)
+            row.name = it.name ?? 'Assembly Line';
+            row.description = it.description ?? null;
           }
-          this._assemblyItemsTypeCol = 'type';
-        } else if (
-          /column .*group_id.* does not exist/i.test(msg) ||
-          /column .*parent_group_id.* does not exist/i.test(msg) ||
-          /column .*quantity_factor.* does not exist/i.test(msg)
-        ) {
-          await tryInsert(typeCol, false);
-        } else {
-          throw e;
+          if (opts.orderCol) row[opts.orderCol] = idx;
+          return row;
         }
+
+        const row: any = {
+          assembly_id: data.id,
+          [opts.typeCol]: 'material',
+          material_id: it.material_id ?? it.materialId ?? it.material_id,
+          quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+          labor_minutes: 0,
+        };
+        if (opts.includeSnapshot) {
+          // Optional snapshot for UI
+          row.name = it.name ?? null;
+          row.description = it.description ?? null;
+        }
+        if (opts.orderCol) row[opts.orderCol] = idx;
+        return row;
+      });
+
+      }
+
+      // Try the most common schema first: item_type + sort_order.
+      // Then gracefully fall back to alternate schemas.
+      const insertAttempts: Array<{ typeCol: 'item_type' | 'type'; orderCol: 'sort_order' | 'order_index' | null; includeSnapshot: boolean }> = [
+        // Rich payload first
+        { typeCol: 'item_type', orderCol: 'sort_order', includeSnapshot: true },
+        { typeCol: 'item_type', orderCol: 'order_index', includeSnapshot: true },
+        { typeCol: 'item_type', orderCol: null, includeSnapshot: true },
+        { typeCol: 'type', orderCol: 'sort_order', includeSnapshot: true },
+        { typeCol: 'type', orderCol: 'order_index', includeSnapshot: true },
+        { typeCol: 'type', orderCol: null, includeSnapshot: true },
+        // Minimal schema fallback (no name/description columns)
+        { typeCol: 'item_type', orderCol: 'sort_order', includeSnapshot: false },
+        { typeCol: 'item_type', orderCol: 'order_index', includeSnapshot: false },
+        { typeCol: 'item_type', orderCol: null, includeSnapshot: false },
+        { typeCol: 'type', orderCol: 'sort_order', includeSnapshot: false },
+        { typeCol: 'type', orderCol: 'order_index', includeSnapshot: false },
+        { typeCol: 'type', orderCol: null, includeSnapshot: false },
+      ];
+
+      if (inputItems.length) {
+        let lastErr: any = null;
+        for (const attempt of insertAttempts) {
+          const rows = buildRows(attempt);
+          const { error: insErr } = await this.supabase.from('assembly_items').insert(rows as any);
+          if (!insErr) {
+            lastErr = null;
+            break;
+          }
+          lastErr = insErr;
+        }
+        if (lastErr) throw lastErr;
       }
     }
 
