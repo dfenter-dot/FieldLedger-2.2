@@ -61,6 +61,7 @@ function sumItemizedMonthly(items: ExpenseItem[]) {
 export function CompanySetupPage() {
   const data = useData();
   const [s, setS] = useState<CompanySettings | null>(null);
+  const [loadError, setLoadError] = useState<string>('');
 
   // Default job type (for efficiency + margin target)
   const [defaultJobType, setDefaultJobType] = useState<JobType | null>(null);
@@ -161,7 +162,9 @@ export function CompanySetupPage() {
       })
       .catch((e) => {
         console.error(e);
-        setStatus(String((e as any)?.message ?? e));
+        const msg = String((e as any)?.message ?? e);
+        setStatus(msg);
+        setLoadError(msg);
       });
   }, [data]);
 
@@ -513,6 +516,16 @@ export function CompanySetupPage() {
       setStatus(String(e?.message ?? e));
       setTimeout(() => setSaveUi('idle'), 1500);
     }
+  }
+
+  if (loadError) {
+    return (
+      <div className="stack">
+        <div className="muted">You don’t have access to Company Setup with this account.</div>
+        <div className="muted small">Log in as an admin/owner to view this page.</div>
+        <div className="muted small">{loadError}</div>
+      </div>
+    );
   }
 
   if (!s) return <div className="muted">Loading…</div>;
@@ -1274,6 +1287,7 @@ export function CompanySetupPage() {
     </div>
   );
 }
+
 
 
 
