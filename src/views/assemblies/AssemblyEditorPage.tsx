@@ -15,6 +15,7 @@ type AssemblyMaterialRow = {
   itemId: string;
   materialId: string;
   quantity: number;
+  _ui_qty_text?: string;
   material?: Material | null;
 };
 
@@ -143,6 +144,7 @@ export function AssemblyEditorPage() {
         itemId: it.id,
         materialId: it.material_id ?? it.materialId,
         quantity: Number(it.quantity ?? 1) || 1,
+        _ui_qty_text: it._ui_qty_text,
       }));
   }, [a?.items]);
 
@@ -407,7 +409,8 @@ export function AssemblyEditorPage() {
     if (!a) return;
     const nextItems = (a.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
     setA({ ...a, items: nextItems } as any);
-  
+  }
+
   function updateItemQuantityText(itemId: string, text: string) {
     updateItem(itemId, { _ui_qty_text: text });
   }
@@ -424,7 +427,6 @@ export function AssemblyEditorPage() {
     const q = Number.isFinite(n) ? Math.max(fallback, Math.floor(n)) : fallback;
     updateItem(itemId, { quantity: q, _ui_qty_text: undefined });
   }
-}
 
   function removeItem(itemId: string) {
     if (!a) return;
@@ -534,14 +536,17 @@ export function AssemblyEditorPage() {
             <Input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
           </div>
 
-          <div className="stack">
-            <label className="label">Use Admin Rules</label>
-            <Toggle
-              checked={Boolean(a.use_admin_rules)}
-              onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
-              label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
-            />
-          </div>
+          {/* Use Admin Rules (hidden in Assemblies UI only; do not remove feature/state) */}
+          {false && (
+            <div className="stack">
+              <label className="label">Use Admin Rules</label>
+              <Toggle
+                checked={Boolean(a.use_admin_rules)}
+                onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
+                label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
+              />
+            </div>
+          )}
 
           <div className="stack">
             <label className="label">Job Type</label>
@@ -593,10 +598,8 @@ export function AssemblyEditorPage() {
           <Button
             variant="primary"
             onClick={() => {
-              // Picker mode: add materials to this assembly, then return here.
-              // IMPORTANT: navigate to the Materials HOME (not a specific library) so the user can choose
-              // App vs User materials intentionally.
-              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, returnTo: location.pathname });
+              const lt = libraryType === 'app' ? 'app' : 'user';
+              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, returnTo: `/assemblies/${lt}/${a.id}` });
               nav('/materials');
             }}
           >
