@@ -9,11 +9,14 @@ export function MaterialsHomePage() {
 
   const inPickerMode = mode.type === 'add-materials-to-assembly' || mode.type === 'add-materials-to-estimate';
   const returnLabel = mode.type === 'add-materials-to-assembly' ? 'Return to Assembly' : 'Return to Estimate';
+  // When picker mode is entered from a specific editor, that editor should pass a returnTo
+  // via navigation state. If missing, fall back to legacy routes.
+  const state = (history.state?.usr ?? null) as any;
   const returnPath =
     mode.type === 'add-materials-to-assembly'
-      ? `/assemblies/user/${mode.assemblyId}`
+      ? state?.returnTo ?? `/assemblies/user/${mode.assemblyId}`
       : mode.type === 'add-materials-to-estimate'
-        ? `/estimates/${mode.estimateId}`
+        ? state?.returnTo ?? `/estimates/${mode.estimateId}`
         : null;
 
   return (
@@ -53,4 +56,5 @@ export function MaterialsHomePage() {
     </div>
   );
 }
+
 
