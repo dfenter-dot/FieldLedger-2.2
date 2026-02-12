@@ -88,14 +88,15 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   }, [kind, mode.type]);
 
   const returnToPath = useMemo(() => {
-    const rt = (location.state as any)?.returnTo ?? null;
-    // Prefer explicit returnTo when provided by the caller via navigation state.
-    // Fallbacks preserve older flows.
-    if (mode.type === 'add-materials-to-assembly') return rt ?? `/assemblies/user/${mode.assemblyId}`;
-    if (mode.type === 'add-materials-to-estimate') return rt ?? `/estimates/${mode.estimateId}`;
-    if (mode.type === 'add-assemblies-to-estimate') return rt ?? `/estimates/${mode.estimateId}`;
+    // Picker flows may pass an explicit return route (e.g. current option, or app/user library context).
+    // Prefer it when present.
+    const explicit = (mode as any)?.returnTo;
+    if (explicit) return explicit;
+    if (mode.type === 'add-materials-to-assembly') return `/assemblies/user/${mode.assemblyId}`;
+    if (mode.type === 'add-materials-to-estimate') return `/estimates/${mode.estimateId}`;
+    if (mode.type === 'add-assemblies-to-estimate') return `/estimates/${mode.estimateId}`;
     return null;
-  }, [location.state, mode]);
+  }, [mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,9 +131,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           const asm = await data.getAssembly(mode.assemblyId);
           const map: Record<string, string> = {};
           for (const it of (asm?.items ?? []) as any[]) {
-            const mid = it?.material_id ?? it?.materialId;
-            if (!mid) continue;
-            map[mid] = String(it.quantity ?? 1);
+            if (!it?.material_id) continue;
+            map[it.material_id] = String(it.quantity ?? 1);
           }
           setSelectedQtyByMaterialId(map);
         } else if (mode.type === 'add-materials-to-estimate') {
@@ -578,27 +578,6 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
       if (mode.type === 'add-materials-to-assembly') {
         const asm = await data.getAssembly(mode.assemblyId);
         if (!asm) throw new Error('Assembly not found');
-
-        // Defensive repair:
-        // Some legacy/bad assemblies can exist without a folder_id (older versions, failed migrations).
-        // Supabase provider enforces folder_id on upsert, which would block adding items.
-        // To keep behavior stable for valid assemblies and only repair broken ones,
-        // we auto-assign an "Unfiled" folder in the SAME library only when folder_id is missing.
-        if (!(asm.folder_id ?? asm.folderId)) {
-          const asmLib: any = asm.library_type ?? asm.libraryType ?? (asm.owner_type === 'app' ? 'app' : 'company');
-          const folderLibType = asmLib === 'app' || asmLib === 'personal' ? 'personal' : 'company';
-
-          const existingFolders = await data.listFolders({ kind: 'assemblies', libraryType: folderLibType, parentId: null } as any);
-          let targetFolder = (existingFolders ?? []).find((f: any) => String(f.name ?? '').trim().toLowerCase() === 'unfiled');
-          if (!targetFolder) {
-            targetFolder = await data.createFolder({ kind: 'assemblies', libraryType: folderLibType, parentId: null, name: 'Unfiled' } as any);
-          }
-
-          // Ensure the assembly can be saved by setting folder_id.
-          if (targetFolder?.id) {
-            asm.folder_id = targetFolder.id;
-          }
-        }
 
         const items = [...((asm.items ?? []) as any[])];
         const idx = items.findIndex((it) => it.material_id === materialId);
