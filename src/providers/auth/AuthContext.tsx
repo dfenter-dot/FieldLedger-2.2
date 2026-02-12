@@ -109,6 +109,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) return { ok: false, message: error.message };
 
+        // Best-effort: ensure a profile row exists for this user.
+        // Some Supabase setups may not return a session (e.g., email confirmation enabled),
+        // or may have stricter RLS. We treat failures here as non-fatal because the user
+        // account has already been created in auth.
+        try {
+          const uid = data?.user?.id;
+          if (uid) {
+            await supabase
+              .from('profiles')
+              .upsert(
+                {
+                  user_id: uid,
+                  email,
+                  access_status: 'pending',
+                  is_app_owner: false,
+                },
+                { onConflict: 'user_id' },
+              );
+          }
+        } catch {
+          // ignore
+        }
+
         // Best-effort: record an access request row if the table exists.
         // This is safe to ignore if the project isn't configured yet.
         try {
@@ -136,6 +159,7 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
+
 
 
 
