@@ -15,6 +15,9 @@ export type PricingInput = {
      */
     min_billable_labor_minutes_per_job: number;
     purchase_tax_percent: number;
+    // Material markup configuration (Company Setup)
+    material_markup_mode?: 'tiered' | 'fixed';
+    material_markup_fixed_percent?: number;
     material_markup_tiers: Array<{ min: number; max: number; percent: number }>;
     misc_material_percent: number;
     allow_misc_with_customer_materials: boolean;
@@ -26,6 +29,9 @@ export type PricingInput = {
     gross_margin_percent: number;
     efficiency_percent: number;
     allow_discounts: boolean;
+    // Hourly-only material markup override (Job Type)
+    hourly_material_markup_mode?: 'tiered' | 'fixed';
+    hourly_material_markup_fixed_percent?: number;
   };
   lineItems: {
     materials: Array<{
@@ -81,11 +87,40 @@ export type PricingBreakdown = {
   };
 };
 
-function resolveMarkup(cost: number, tiers: PricingInput['company']['material_markup_tiers']) {
+function resolveTieredMarkupPercent(cost: number, tiers: PricingInput['company']['material_markup_tiers']) {
   for (const t of tiers) {
     if (cost >= t.min && cost <= t.max) return t.percent;
   }
   return 0;
+}
+
+function resolveEffectiveMaterialMarkupPercent(
+  taxedCost: number,
+  company: PricingInput['company'],
+  jobType: PricingInput['jobType']
+): number {
+  // Rule summary (as requested):
+  // - Company Setup controls material markup as either 'tiered' or 'fixed'.
+  // - For HOURLY job types only, Job Type may override Company tiered markup
+  //   by applying a fixed markup when enabled.
+  const companyMode = company.material_markup_mode ?? 'tiered';
+
+  // Hourly-only Job Type override
+  if (jobType.mode === 'hourly') {
+    const jtMode = jobType.hourly_material_markup_mode;
+    if (jtMode === 'fixed') {
+      const fixed = Number(jobType.hourly_material_markup_fixed_percent ?? NaN);
+      if (Number.isFinite(fixed)) return fixed;
+    }
+    // If explicitly set to tiered (or missing/invalid fixed), fall through to company rules.
+  }
+
+  if (companyMode === 'fixed') {
+    const fixed = Number(company.material_markup_fixed_percent ?? NaN);
+    return Number.isFinite(fixed) ? fixed : 0;
+  }
+
+  return resolveTieredMarkupPercent(taxedCost, company.material_markup_tiers);
 }
 
 export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
@@ -128,7 +163,7 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
     const taxedCost = m.taxable
       ? baseCost * (1 + company.purchase_tax_percent / 100)
       : baseCost;
-    const markup = resolveMarkup(taxedCost, company.material_markup_tiers);
+    const markup = resolveEffectiveMaterialMarkupPercent(taxedCost, company, jobType);
     const sell = taxedCost * (1 + markup / 100);
     rawMaterialSell += sell * m.quantity;
   }
@@ -353,6 +388,12 @@ function toEngineCompany(s: any) {
       0,
     ),
     purchase_tax_percent: toNum(s?.material_purchase_tax_percent ?? s?.purchase_tax_percent, 0),
+    // Company-wide material markup settings
+    material_markup_mode: (s?.material_markup_mode === 'fixed' ? 'fixed' : 'tiered'),
+    material_markup_fixed_percent: toNum(
+      s?.material_markup_fixed_percent ?? s?.material_markup_percent ?? s?.fixed_material_markup_percent,
+      0,
+    ),
     material_markup_tiers: tiers,
     misc_material_percent: toNum(s?.misc_material_percent, 0),
     // Admin toggle label: "Apply misc material when customer supplies materials"
@@ -376,6 +417,16 @@ function toEngineJobType(jobType: any) {
     gross_margin_percent: clampPct(toNum(jobType?.profit_margin_percent, 0)),
     efficiency_percent: clampPct(toNum(jobType?.efficiency_percent ?? 100, 100)),
     allow_discounts: Boolean(jobType?.allow_discounts ?? true),
+    hourly_material_markup_mode:
+      jobType?.hourly_material_markup_mode === 'fixed'
+        ? 'fixed'
+        : jobType?.hourly_material_markup_mode === 'tiered'
+          ? 'tiered'
+          : undefined,
+    hourly_material_markup_fixed_percent: toNum(
+      jobType?.hourly_material_markup_fixed_percent,
+      undefined as any
+    ),
   } as PricingInput['jobType'];
 }
 
@@ -751,6 +802,7 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
