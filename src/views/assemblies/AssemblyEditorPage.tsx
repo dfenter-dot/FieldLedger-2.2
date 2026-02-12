@@ -593,11 +593,11 @@ export function AssemblyEditorPage() {
           <Button
             variant="primary"
             onClick={() => {
-              const lt = libraryType === 'app' ? 'app' : 'user';
-              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id } as any);
-              // Go directly into the target library to avoid landing on the Materials home page,
-              // and pass an explicit returnTo so Return buttons always navigate back to this editor.
-              nav(`/materials/${lt}`, { state: { returnTo: `/assemblies/${lt}/${a.id}` } });
+              // Picker mode: add materials to this assembly, then return here.
+              // IMPORTANT: navigate to the Materials HOME (not a specific library) so the user can choose
+              // App vs User materials intentionally.
+              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, returnTo: location.pathname });
+              nav('/materials');
             }}
           >
             Add From Materials
