@@ -64,9 +64,16 @@ export function JobTypesPage() {
   async function save(jt: JobType) {
     try {
       setStatus('Saving...');
-      const saved = await data.upsertJobType(jt);
-      if (saved.is_default) {
-        await data.setDefaultJobType(saved.id);
+      // Default is managed ONLY via setDefaultJobType().
+      // Prevent accidental removal or reassignment of the default flag via the edit form.
+      const existing = rows.find((x) => x.id === jt.id);
+      const enforcedIsDefault = existing?.is_default ?? false;
+      const payload = { ...jt, is_default: enforcedIsDefault };
+
+      const saved = await data.upsertJobType(payload);
+
+      // If this job type is the default, refresh from the server to ensure the default flag stays consistent.
+      if (enforcedIsDefault) {
         const fresh = await data.listJobTypes();
         setRows(fresh);
       } else {
@@ -77,6 +84,27 @@ export function JobTypesPage() {
         return rest;
       });
       setStatus('Saved.');
+      setTimeout(() => setStatus(''), 1500);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(String(e?.message ?? e));
+    }
+  }
+
+  async function remove(jt: JobType) {
+    if (jt.is_default) {
+      setStatus('Cannot delete the default job type. Set a different default first.');
+      setTimeout(() => setStatus(''), 2500);
+      return;
+    }
+    const ok = window.confirm(`Delete job type "${jt.name}"? This cannot be undone.`);
+    if (!ok) return;
+    try {
+      setStatus('Deleting...');
+      await data.deleteJobType(jt.id);
+      const fresh = await data.listJobTypes();
+      setRows(fresh);
+      setStatus('Deleted.');
       setTimeout(() => setStatus(''), 1500);
     } catch (e: any) {
       console.error(e);
@@ -128,11 +156,14 @@ export function JobTypesPage() {
                       <>
                         <Button onClick={() => startEdit(jt)}>Edit</Button>
                         {!jt.is_default ? <Button onClick={() => setDefault(jt.id)}>Set Default</Button> : null}
+                        {!jt.is_default ? <Button variant="danger" onClick={() => remove(jt)}>Delete</Button> : null}
                       </>
                     ) : (
                       <>
                         <Button variant="primary" onClick={() => save(row)}>Save</Button>
                         <Button onClick={() => setEditing((prev) => { const { [jt.id]: _, ...rest } = prev; return rest; })}>Cancel</Button>
+                        {!jt.is_default ? <Button onClick={() => setDefault(jt.id)}>Make Default</Button> : null}
+                        {!jt.is_default ? <Button variant="danger" onClick={() => remove(jt)}>Delete</Button> : null}
                       </>
                     )}
                   </div>
@@ -147,7 +178,10 @@ export function JobTypesPage() {
 
                     <div className="stack">
                       <label className="label">Default</label>
-                      <Toggle checked={row.is_default} onChange={(v) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, is_default: v } }))} label={row.is_default ? 'Yes' : 'No'} />
+                      <div className="row" style={{ alignItems: 'center', gap: 10 }}>
+                        {jt.is_default ? <span className="pill">Default</span> : <span className="muted">No</span>}
+                        <span className="muted small">Default is set using “Set Default / Make Default”.</span>
+                      </div>
                     </div>
 
                     <div className="stack">
@@ -268,6 +302,7 @@ export function JobTypesPage() {
     </div>
   );
 }
+
 
 
 
