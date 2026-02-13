@@ -27,64 +27,48 @@ export function MaterialEditorPage() {
 
   useEffect(() => {
     if (!materialId) return;
-    let cancelled = false;
 
     (async () => {
       try {
-        let mat: any = await data.getMaterial(materialId);
+        const base = await data.getMaterial(materialId);
+        if (!base) {
+          setM(null);
+          return;
+        }
 
-        // App materials store overrides (including `use_custom_cost`) in a separate table.
-        // IMPORTANT: When re-opening a material, we must re-hydrate from app_material_overrides,
-        // otherwise the editor can "bounce back" to the base app values.
-        if (mat?.is_app_material && (data as any)?.getCurrentCompanyId && (data as any)?.getAppMaterialOverride) {
-          const companyId = await (data as any).getCurrentCompanyId();
-          if (companyId) {
-            // If no job type is currently set, prefer the company default.
-            let jobTypeIdToUse: string | null = (mat as any).job_type_id ?? null;
-            if (!jobTypeIdToUse && (data as any)?.listJobTypes) {
-              try {
-                const jts = await (data as any).listJobTypes();
-                const def = Array.isArray(jts) ? jts.find((j: any) => j?.is_default) : null;
-                jobTypeIdToUse = def?.id ?? null;
-              } catch {
-                // ignore
-              }
+        // IMPORTANT:
+        // For app-owned materials, the per-company override row is the source of truth for
+        // custom_cost / use_custom_cost / job_type_id / taxable. Some flows reload the base
+        // material without merging the override, causing the UI to "snap back".
+        let merged: any = { ...base };
+        if (isAppLibrary && !isOwner) {
+          try {
+            const ov = await (data as any).getAppMaterialOverride?.(materialId);
+            if (ov) {
+              if (ov.custom_cost !== undefined) merged.custom_cost = ov.custom_cost;
+              if (ov.use_custom_cost !== undefined) merged.use_custom_cost = ov.use_custom_cost;
+              if (ov.job_type_id !== undefined) merged.job_type_id = ov.job_type_id;
+              if (ov.taxable !== undefined) merged.taxable = ov.taxable;
             }
-
-            const ov = await (data as any).getAppMaterialOverride(materialId, companyId, jobTypeIdToUse);
-            // Always keep job_type_id stable in the editor (default if needed), even if there is no override row yet.
-            mat = {
-              ...mat,
-              job_type_id: (ov?.job_type_id ?? jobTypeIdToUse ?? (mat as any).job_type_id ?? null) as any,
-              custom_cost: (ov?.custom_cost ?? (mat as any).custom_cost ?? null) as any,
-              use_custom_cost: (ov?.use_custom_cost ?? (mat as any).use_custom_cost ?? false) as any,
-            };
+          } catch {
+            // ignore; show base
           }
         }
 
-        if (cancelled) return;
-
-        setM(mat);
-        // NOTE: Our Material model stores the editable cost as `base_cost`.
-        // If this input is blank on load, clicking Save will overwrite the DB value with 0.
-        setUnitCostText(mat.base_cost === null || mat.base_cost === undefined ? '' : String(mat.base_cost));
-        setCustomCostText(mat.custom_cost === null || mat.custom_cost === undefined ? '' : String(mat.custom_cost));
-        const lm = Number(mat.labor_minutes ?? 0) || 0;
+        setM(merged);
+        setUnitCostText(merged.base_cost === null || merged.base_cost === undefined ? '' : String(merged.base_cost));
+        setCustomCostText(merged.custom_cost === null || merged.custom_cost === undefined ? '' : String(merged.custom_cost));
+        const lm = Number(merged.labor_minutes ?? 0) || 0;
         const h = Math.floor(lm / 60);
         const min = Math.round(lm % 60);
-        setLaborHoursText(mat.labor_minutes == null ? '' : String(h));
-        setLaborMinutesText(mat.labor_minutes == null ? '' : String(min));
+        setLaborHoursText(merged.labor_minutes == null ? '' : String(h));
+        setLaborMinutesText(merged.labor_minutes == null ? '' : String(min));
       } catch (e) {
-        if (cancelled) return;
         console.error(e);
         setStatus(String((e as any)?.message ?? e));
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [data, materialId]);
+  }, [data, materialId, isOwner, isAppLibrary]);
 
   useEffect(() => {
     data.listJobTypes().then(setJobTypes).catch(console.error);
@@ -134,40 +118,32 @@ export function MaterialEditorPage() {
 
         await (data as any).upsertAppMaterialOverride(patch);
 
-        // Refresh merged view, but ensure we also pull the override row directly.
-        // (Some material fetch paths do not include override-only fields like use_custom_cost.)
-        let refreshed: any = await data.getMaterial(materialId);
+        // refresh merged view (force-merge override after save)
+        const refreshedBase = await data.getMaterial(materialId);
+        let refreshed: any = refreshedBase ? { ...refreshedBase } : null;
         try {
-          const companyId = await (data as any).getCurrentCompanyId?.();
-          if (companyId) {
-            const ov = await (data as any).getAppMaterialOverride?.(
-              materialId,
-              companyId,
-              (m as any)?.job_type_id ?? null
-            );
-            if (ov) {
-              refreshed = {
-                ...refreshed,
-                custom_cost: ov.custom_cost ?? refreshed.custom_cost ?? null,
-                use_custom_cost: ov.use_custom_cost ?? refreshed.use_custom_cost ?? false,
-                job_type_id: ov.job_type_id ?? refreshed.job_type_id ?? null,
-                taxable: ov.taxable ?? refreshed.taxable,
-              };
-            }
+          const ov = await (data as any).getAppMaterialOverride?.(materialId);
+          if (ov && refreshed) {
+            if (ov.custom_cost !== undefined) refreshed.custom_cost = ov.custom_cost;
+            if (ov.use_custom_cost !== undefined) refreshed.use_custom_cost = ov.use_custom_cost;
+            if (ov.job_type_id !== undefined) refreshed.job_type_id = ov.job_type_id;
+            if (ov.taxable !== undefined) refreshed.taxable = ov.taxable;
           }
         } catch {
-          // ignore override refresh errors; base material refresh already succeeded
+          // ignore
         }
 
-        setM(refreshed);
+        if (refreshed) {
+          setM(refreshed);
+          setUnitCostText(refreshed.base_cost === null || refreshed.base_cost === undefined ? '' : String(refreshed.base_cost));
+          setCustomCostText(refreshed.custom_cost === null || refreshed.custom_cost === undefined ? '' : String(refreshed.custom_cost));
+        }
 
-        setUnitCostText(refreshed.base_cost === null || refreshed.base_cost === undefined ? '' : String(refreshed.base_cost));
-        setCustomCostText(refreshed.custom_cost === null || refreshed.custom_cost === undefined ? '' : String(refreshed.custom_cost));
-        const savedLm = Number(refreshed.labor_minutes ?? 0) || 0;
+        const savedLm = Number(refreshed?.labor_minutes ?? 0) || 0;
         const sh = Math.floor(savedLm / 60);
         const smin = Math.round(savedLm % 60);
-        setLaborHoursText(refreshed.labor_minutes == null ? '' : String(sh));
-        setLaborMinutesText(refreshed.labor_minutes == null ? '' : String(smin));
+        setLaborHoursText(refreshed?.labor_minutes == null ? '' : String(sh));
+        setLaborMinutesText(refreshed?.labor_minutes == null ? '' : String(smin));
 
         setStatus('Saved.');
         setTimeout(() => setStatus(''), 1500);
