@@ -563,9 +563,7 @@ export class SupabaseDataProvider implements IDataProvider {
     const material = this.mapMaterialFromDb(data);
 
     // Merge per-company overrides for app-owned materials so custom cost/toggles persist.
-    // Only app library materials use per-company overrides. User/company materials store cost directly.
-    // NOTE: Material is mapped with `library_type` ("app" or "user").
-    if (material.library_type !== 'app') return material;
+    if (owner !== 'app') return material;
 
     try {
       const companyId2 = await this.currentCompanyId();
@@ -980,7 +978,8 @@ export class SupabaseDataProvider implements IDataProvider {
     return {
       ...material,
       use_custom_cost: overrideRow.use_custom_cost ?? material.use_custom_cost,
-      custom_cost: overrideRow.override_custom_cost ?? material.custom_cost,
+      // Table column is `custom_cost` (some older code paths used `override_custom_cost`).
+      custom_cost: (overrideRow.custom_cost ?? overrideRow.override_custom_cost) ?? material.custom_cost,
       override_job_type_id: overrideRow.job_type_id ?? material.override_job_type_id,
     };
   }
