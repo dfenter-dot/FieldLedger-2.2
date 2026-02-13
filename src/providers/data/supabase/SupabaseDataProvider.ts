@@ -563,6 +563,7 @@ export class SupabaseDataProvider implements IDataProvider {
     const material = this.mapMaterialFromDb(data);
 
     // Merge per-company overrides for app-owned materials so custom cost/toggles persist.
+    const owner = (material as any)?.owner;
     if (owner !== 'app') return material;
 
     try {
@@ -975,11 +976,18 @@ export class SupabaseDataProvider implements IDataProvider {
   private applyAppMaterialOverride(material: any, overrideRow: any) {
     if (!overrideRow) return material;
 
+    // DB column is `custom_cost` (older migrations briefly used `override_custom_cost`).
+    const overrideCost =
+      overrideRow.custom_cost ??
+      overrideRow.override_custom_cost ??
+      null;
+
     return {
       ...material,
       use_custom_cost: overrideRow.use_custom_cost ?? material.use_custom_cost,
-      // Table column is `custom_cost` (some older code paths used `override_custom_cost`).
-      custom_cost: (overrideRow.custom_cost ?? overrideRow.override_custom_cost) ?? material.custom_cost,
+      custom_cost: overrideCost ?? material.custom_cost,
+      // UI expects this field name in some screens
+      override_custom_cost: overrideCost ?? material.override_custom_cost,
       override_job_type_id: overrideRow.job_type_id ?? material.override_job_type_id,
     };
   }
