@@ -523,13 +523,64 @@ export class SupabaseDataProvider implements IDataProvider {
 
     const { data, error } = await q;
     if (error) throw error;
-    return (data ?? []).map((r: any) => this.mapMaterialFromDb(r));
+
+    const base = (data ?? []).map((r: any) => this.mapMaterialFromDb(r));
+
+    // For app-owned materials, merge this company's overrides so the UI loads/saves correctly.
+    if (owner !== 'app') return base;
+
+    const ids = base.map((m: any) => m?.id).filter(Boolean) as string[];
+    if (ids.length === 0) return base;
+
+    try {
+      const companyId = await this.currentCompanyId();
+      if (!companyId) return base;
+
+      const { data: odata, error: oerr } = await this.supabase
+        .from('app_material_overrides')
+        .select('*')
+        .eq('company_id', companyId)
+        .in('material_id', ids)
+        .order('updated_at', { ascending: false });
+
+      if (oerr || !odata) return base;
+
+      const latestByMaterial = new Map<string, any>();
+      for (const row of odata) {
+        if (!latestByMaterial.has(row.material_id)) latestByMaterial.set(row.material_id, row);
+      }
+
+      return base.map((m: any) => this.applyAppMaterialOverride(m, latestByMaterial.get(m.id)));
+    } catch {
+      return base;
+    }
   }
 
   async getMaterial(id: string): Promise<Material | null> {
     const { data, error } = await this.supabase.from('materials').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
-    return data ? this.mapMaterialFromDb(data) : null;
+    if (!data) return null;
+    const material = this.mapMaterialFromDb(data);
+
+    // Merge per-company overrides for app-owned materials so custom cost/toggles persist.
+    if (owner !== 'app') return material;
+
+    try {
+      const companyId2 = await this.currentCompanyId();
+      if (!companyId2 || !material?.id) return material;
+
+      const { data: override, error: oerr } = await this.supabase
+        .from('app_material_overrides')
+        .select('*')
+        .eq('company_id', companyId2)
+        .eq('material_id', material.id)
+        .maybeSingle();
+
+      if (oerr) return material;
+      return this.applyAppMaterialOverride(material, override);
+    } catch {
+      return material;
+    }
   }
 
   async upsertMaterial(material: Partial<Material>): Promise<Material> {
@@ -920,7 +971,19 @@ export class SupabaseDataProvider implements IDataProvider {
    *   - upsertAppMaterialOverride(materialId, patch)
    *   - upsertAppMaterialOverride(overrideObject)
    */
-  async upsertAppMaterialOverride(
+  
+  private applyAppMaterialOverride(material: any, overrideRow: any) {
+    if (!overrideRow) return material;
+
+    return {
+      ...material,
+      use_custom_cost: overrideRow.use_custom_cost ?? material.use_custom_cost,
+      custom_cost: overrideRow.override_custom_cost ?? material.custom_cost,
+      override_job_type_id: overrideRow.job_type_id ?? material.override_job_type_id,
+    };
+  }
+
+async upsertAppMaterialOverride(
     materialIdOrOverride: string | Partial<AppMaterialOverride>,
     patch?: Partial<AppMaterialOverride>
   ): Promise<AppMaterialOverride> {
