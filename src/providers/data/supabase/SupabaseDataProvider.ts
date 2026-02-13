@@ -521,15 +521,75 @@ export class SupabaseDataProvider implements IDataProvider {
     q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
     q = args.folderId ? q.eq('folder_id', args.folderId) : q.is('folder_id', null);
 
-    const { data, error } = await q;
-    if (error) throw error;
-    return (data ?? []).map((r: any) => this.mapMaterialFromDb(r));
+	    const { data, error } = await q;
+	    if (error) throw error;
+
+	    const materials = (data ?? []).map((r: any) => this.mapMaterialFromDb(r));
+
+	    // For app-owned materials, apply company-specific overrides so the UI reflects saved overrides
+	    // (custom cost, taxable, job type, etc.) for the current company.
+	    if (owner === 'app' && materials.length > 0) {
+	      const isOwner = await this.isAppOwner();
+	      if (!isOwner) {
+	        const materialIds = materials.map((m) => m.id);
+	        const { data: overrides, error: oErr } = await this.supabase
+	          .from('app_material_overrides')
+	          .select('material_id, job_type_id, taxable, use_custom_cost, custom_cost')
+	          .eq('company_id', companyId)
+	          .in('material_id', materialIds);
+	        if (oErr) throw oErr;
+	        const byMaterialId = new Map<string, any>();
+	        (overrides ?? []).forEach((o: any) => byMaterialId.set(o.material_id, o));
+	        return materials.map((m) => {
+	          const o = byMaterialId.get(m.id);
+	          if (!o) return m;
+	          return {
+	            ...m,
+	            job_type_id: o.job_type_id ?? m.job_type_id,
+	            taxable: typeof o.taxable === 'boolean' ? o.taxable : m.taxable,
+	            use_custom_cost: typeof o.use_custom_cost === 'boolean' ? o.use_custom_cost : m.use_custom_cost,
+	            custom_cost: o.custom_cost ?? m.custom_cost,
+	          };
+	        });
+	      }
+	    }
+
+	    return materials;
   }
 
   async getMaterial(id: string): Promise<Material | null> {
-    const { data, error } = await this.supabase.from('materials').select('*').eq('id', id).maybeSingle();
-    if (error) throw error;
-    return data ? this.mapMaterialFromDb(data) : null;
+	    const companyId = await this.currentCompanyId();
+	    const { data, error } = await this.supabase.from('materials').select('*').eq('id', id).maybeSingle();
+	    if (error) throw error;
+	    if (!data) return null;
+
+	    const base = this.mapMaterialFromDb(data);
+
+	    // Apply app-material override for this company (non app-owner only)
+	    if (base.owner === 'app' && base.company_id === null) {
+	      const isOwner = await this.isAppOwner();
+	      if (!isOwner) {
+	        const { data: o, error: oErr } = await this.supabase
+	          .from('app_material_overrides')
+	          .select('material_id, job_type_id, taxable, use_custom_cost, custom_cost')
+	          .eq('company_id', companyId)
+	          .eq('material_id', base.id)
+	          .maybeSingle();
+	        if (oErr) throw oErr;
+	        if (o) {
+	          return {
+	            ...base,
+	            job_type_id: (o as any).job_type_id ?? base.job_type_id,
+	            taxable: typeof (o as any).taxable === 'boolean' ? (o as any).taxable : base.taxable,
+	            use_custom_cost:
+	              typeof (o as any).use_custom_cost === 'boolean' ? (o as any).use_custom_cost : base.use_custom_cost,
+	            custom_cost: (o as any).custom_cost ?? base.custom_cost,
+	          };
+	        }
+	      }
+	    }
+
+	    return base;
   }
 
   async upsertMaterial(material: Partial<Material>): Promise<Material> {
@@ -1630,6 +1690,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
