@@ -563,7 +563,9 @@ export class SupabaseDataProvider implements IDataProvider {
     const material = this.mapMaterialFromDb(data);
 
     // Merge per-company overrides for app-owned materials so custom cost/toggles persist.
-    if (owner !== 'app') return material;
+    // Only app library materials use per-company overrides. User/company materials store cost directly.
+    // NOTE: Material is mapped with `library_type` ("app" or "user").
+    if (material.library_type !== 'app') return material;
 
     try {
       const companyId2 = await this.currentCompanyId();
@@ -1693,6 +1695,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
