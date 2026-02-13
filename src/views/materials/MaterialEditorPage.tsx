@@ -81,14 +81,19 @@ export function MaterialEditorPage() {
 
       // App Materials (normal companies): save ONLY overrides
       if (isAppLibrary && !isOwner) {
+        // NOTE: App materials are global (company_id = null). Companies store their
+        // own overrides in app_material_overrides scoped by current_company_id().
+        // Do NOT pass (materialId, patch) here; upsertAppMaterialOverride expects
+        // a single object matching the table schema.
         const patch: any = {
+          material_id: materialId,
           job_type_id: m.job_type_id ?? null,
           taxable: Boolean(m.taxable),
           custom_cost: Number.isFinite(custom_cost as any) ? (custom_cost as any) : null,
           use_custom_cost: Boolean(m.use_custom_cost),
         };
 
-        await (data as any).upsertAppMaterialOverride(materialId, patch);
+        await (data as any).upsertAppMaterialOverride(patch);
 
         // refresh merged view
         const refreshed = await data.getMaterial(materialId);
