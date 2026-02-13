@@ -912,44 +912,66 @@ export class SupabaseDataProvider implements IDataProvider {
     return (data as any) ?? null;
   }
 
+  /**
+   * App Material Overrides
+   *
+   * NOTE: Historically this method was called with different signatures.
+   * To avoid breaking existing UI code, support BOTH:
+   *   - upsertAppMaterialOverride(materialId, patch)
+   *   - upsertAppMaterialOverride(overrideObject)
+   */
   async upsertAppMaterialOverride(
-  materialIdOrOverride: string | Partial<AppMaterialOverride>,
-  patch: Partial<AppMaterialOverride> = {}
-): Promise<AppMaterialOverride> {
-  const companyId = await this.currentCompanyId();
+    materialIdOrOverride: string | Partial<AppMaterialOverride>,
+    patch?: Partial<AppMaterialOverride>
+  ): Promise<AppMaterialOverride> {
+    const companyId = await this.currentCompanyId();
+    if (!companyId) throw new Error('No company');
 
-  // Backwards/forwards compatible:
-  // - UI calls: upsertAppMaterialOverride(materialId, patch)
-  // - Internal calls (if any): upsertAppMaterialOverride({ material_id, ... })
-  const materialId =
-    typeof materialIdOrOverride === 'string'
-      ? materialIdOrOverride
-      : (materialIdOrOverride as any).material_id ?? (materialIdOrOverride as any).materialId;
+    let payload: any;
+    if (typeof materialIdOrOverride === 'string') {
+      payload = {
+        company_id: companyId,
+        material_id: materialIdOrOverride,
+        ...(patch ?? {}),
+        updated_at: new Date().toISOString(),
+      };
+    } else {
+      payload = {
+        ...materialIdOrOverride,
+        company_id: (materialIdOrOverride as any).company_id ?? companyId,
+        // tolerate alternative key
+        material_id:
+          (materialIdOrOverride as any).material_id ??
+          (materialIdOrOverride as any).materialId ??
+          (materialIdOrOverride as any).app_material_id ??
+          null,
+        updated_at: new Date().toISOString(),
+      };
+    }
 
-  const baseOverride = typeof materialIdOrOverride === 'string' ? {} : (materialIdOrOverride as any);
+    // Normalize legacy "override_*" keys to actual DB column names.
+    if (payload.override_job_type_id !== undefined && payload.job_type_id === undefined) payload.job_type_id = payload.override_job_type_id;
+    if (payload.override_taxable !== undefined && payload.taxable === undefined) payload.taxable = payload.override_taxable;
+    if (payload.override_custom_cost !== undefined && payload.custom_cost === undefined) payload.custom_cost = payload.override_custom_cost;
+    if (payload.override_use_custom_cost !== undefined && payload.use_custom_cost === undefined) payload.use_custom_cost = payload.override_use_custom_cost;
+    delete payload.override_job_type_id;
+    delete payload.override_taxable;
+    delete payload.override_custom_cost;
+    delete payload.override_use_custom_cost;
 
-  if (!materialId) {
-    throw new Error('upsertAppMaterialOverride: materialId is required');
+    if (!payload.material_id) throw new Error('Missing material_id for app material override');
+
+    // Avoid sending undefined values to PostgREST.
+    Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+
+    const { data, error } = await this.supabase
+      .from('app_material_overrides')
+      .upsert(payload as any, { onConflict: 'company_id,material_id' })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as any;
   }
-
-  const payload = {
-    ...baseOverride,
-    ...patch,
-    material_id: materialId,
-    company_id: (patch as any).company_id ?? baseOverride.company_id ?? companyId,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { data, error } = await this.supabase
-    .from('app_material_overrides')
-    .upsert(payload as any)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return data as any;
-}
-
 
   /* ============================
      Estimates
