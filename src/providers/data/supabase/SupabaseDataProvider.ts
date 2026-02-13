@@ -914,12 +914,22 @@ export class SupabaseDataProvider implements IDataProvider {
 
   async upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride> {
     const companyId = await this.currentCompanyId();
-    const payload = { ...override, company_id: override.company_id ?? companyId, updated_at: new Date().toISOString() };
-    // IMPORTANT:
-    // Some Supabase/PostgREST combinations can produce a malformed `select=*,0` when
-    // `select()` is called with no explicit column list, which then triggers:
-    // "Could not find the '0' column of 'app_material_overrides' in the schema cache".
-    // Being explicit here avoids that class of request serialization issues.
+    // Defensive: some callers may accidentally pass an array (e.g., from list updates).
+    // Spreading an array creates numeric keys ('0', '1', ...), which PostgREST then interprets
+    // as column names, producing: "Could not find the '0' column ...".
+    const overrideObj: any = Array.isArray(override) ? (override as any[])[0] ?? {} : (override as any);
+
+    // Strip any numeric keys just in case (prevents PostgREST schema-cache '0 column' errors).
+    for (const k of Object.keys(overrideObj)) {
+      if (/^\d+$/.test(k)) delete overrideObj[k];
+    }
+
+    const payload = {
+      ...overrideObj,
+      company_id: overrideObj.company_id ?? companyId,
+      updated_at: new Date().toISOString(),
+    };
+
     const { data, error } = await this.supabase
       .from('app_material_overrides')
       .upsert(payload as any)
