@@ -912,21 +912,36 @@ export class SupabaseDataProvider implements IDataProvider {
     return (data as any) ?? null;
   }
 
-  async upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride> {
+  async upsertAppMaterialOverride(override: Partial<AppMaterialOverride> | any): Promise<AppMaterialOverride> {
     const companyId = await this.currentCompanyId();
-    // Defensive: some callers may accidentally pass an array (e.g., from list updates).
-    // Spreading an array creates numeric keys ('0', '1', ...), which PostgREST then interprets
-    // as column names, producing: "Could not find the '0' column ...".
-    const overrideObj: any = Array.isArray(override) ? (override as any[])[0] ?? {} : (override as any);
 
-    // Strip any numeric keys just in case (prevents PostgREST schema-cache '0 column' errors).
-    for (const k of Object.keys(overrideObj)) {
-      if (/^\d+$/.test(k)) delete overrideObj[k];
+    // Defensive normalization:
+    // - Some callers have accidentally passed JSON strings or arrays, which can create numeric keys like "0"
+    //   and cause PostgREST errors like: "Could not find the '0' column ...".
+    let raw: any = override;
+
+    if (typeof raw === 'string') {
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        raw = {};
+      }
+    }
+
+    if (Array.isArray(raw)) raw = raw[0] ?? {};
+
+    if (!raw || typeof raw !== 'object') raw = {};
+
+    // Strip numeric keys ("0", "1", ...) safely by rebuilding the object
+    const cleaned: Record<string, any> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (/^\d+$/.test(k)) continue;
+      cleaned[k] = v;
     }
 
     const payload = {
-      ...overrideObj,
-      company_id: overrideObj.company_id ?? companyId,
+      ...cleaned,
+      company_id: cleaned.company_id ?? companyId,
       updated_at: new Date().toISOString(),
     };
 
@@ -935,9 +950,11 @@ export class SupabaseDataProvider implements IDataProvider {
       .upsert(payload as any)
       .select('*')
       .single();
+
     if (error) throw error;
     return data as any;
   }
+
 
   /* ============================
      Estimates
