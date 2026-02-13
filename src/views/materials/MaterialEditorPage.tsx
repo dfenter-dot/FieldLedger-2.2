@@ -82,10 +82,10 @@ export function MaterialEditorPage() {
       // App Materials (normal companies): save ONLY overrides
       if (isAppLibrary && !isOwner) {
         const patch: any = {
-          override_job_type_id: m.job_type_id ?? null,
-          override_taxable: Boolean(m.taxable),
-          override_custom_cost: Number.isFinite(custom_cost as any) ? (custom_cost as any) : null,
-          override_use_custom_cost: Boolean(m.use_custom_cost),
+          job_type_id: m.job_type_id ?? null,
+          taxable: Boolean(m.taxable),
+          custom_cost: Number.isFinite(custom_cost as any) ? (custom_cost as any) : null,
+          use_custom_cost: Boolean(m.use_custom_cost),
         };
 
         await (data as any).upsertAppMaterialOverride(materialId, patch);
@@ -273,6 +273,7 @@ export function MaterialEditorPage() {
     </div>
   );
 }
+
 
 
 
