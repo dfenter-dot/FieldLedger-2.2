@@ -912,48 +912,43 @@ export class SupabaseDataProvider implements IDataProvider {
     return (data as any) ?? null;
   }
 
-  async upsertAppMaterialOverride(override: Partial<AppMaterialOverride> | any): Promise<AppMaterialOverride> {
-    const companyId = await this.currentCompanyId();
+  async upsertAppMaterialOverride(
+  materialIdOrOverride: string | Partial<AppMaterialOverride>,
+  patch: Partial<AppMaterialOverride> = {}
+): Promise<AppMaterialOverride> {
+  const companyId = await this.currentCompanyId();
 
-    // Defensive normalization:
-    // - Some callers have accidentally passed JSON strings or arrays, which can create numeric keys like "0"
-    //   and cause PostgREST errors like: "Could not find the '0' column ...".
-    let raw: any = override;
+  // Backwards/forwards compatible:
+  // - UI calls: upsertAppMaterialOverride(materialId, patch)
+  // - Internal calls (if any): upsertAppMaterialOverride({ material_id, ... })
+  const materialId =
+    typeof materialIdOrOverride === 'string'
+      ? materialIdOrOverride
+      : (materialIdOrOverride as any).material_id ?? (materialIdOrOverride as any).materialId;
 
-    if (typeof raw === 'string') {
-      try {
-        raw = JSON.parse(raw);
-      } catch {
-        raw = {};
-      }
-    }
+  const baseOverride = typeof materialIdOrOverride === 'string' ? {} : (materialIdOrOverride as any);
 
-    if (Array.isArray(raw)) raw = raw[0] ?? {};
-
-    if (!raw || typeof raw !== 'object') raw = {};
-
-    // Strip numeric keys ("0", "1", ...) safely by rebuilding the object
-    const cleaned: Record<string, any> = {};
-    for (const [k, v] of Object.entries(raw)) {
-      if (/^\d+$/.test(k)) continue;
-      cleaned[k] = v;
-    }
-
-    const payload = {
-      ...cleaned,
-      company_id: cleaned.company_id ?? companyId,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await this.supabase
-      .from('app_material_overrides')
-      .upsert(payload as any)
-      .select('*')
-      .single();
-
-    if (error) throw error;
-    return data as any;
+  if (!materialId) {
+    throw new Error('upsertAppMaterialOverride: materialId is required');
   }
+
+  const payload = {
+    ...baseOverride,
+    ...patch,
+    material_id: materialId,
+    company_id: (patch as any).company_id ?? baseOverride.company_id ?? companyId,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await this.supabase
+    .from('app_material_overrides')
+    .upsert(payload as any)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data as any;
+}
 
 
   /* ============================
