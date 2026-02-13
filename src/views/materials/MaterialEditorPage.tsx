@@ -25,33 +25,28 @@ export function MaterialEditorPage() {
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
-  const applyAppOverride = (base: Material, ov: any | null): Material => {
-    if (!ov) return base;
-    return {
-      ...base,
-      // For app-owned materials, these fields are stored per-company in app_material_overrides.
-      use_custom_cost: ov.enabled ?? base.use_custom_cost,
-      custom_cost: ov.custom_cost ?? base.custom_cost,
-      job_type_id: ov.job_type_id ?? base.job_type_id,
-    };
-  };
-
   useEffect(() => {
     if (!materialId) return;
     let cancelled = false;
+
     (async () => {
       try {
-        let mat = await data.getMaterial(materialId);
+        let mat: any = await data.getMaterial(materialId);
 
-        // For app-owned materials, load the per-company override (if any) and project it
-        // into the editor state. Without this, saving an override appears to "revert"
-        // because the editor reloads the base app material row (which intentionally
-        // does not store company-specific fields).
-        if (mat?.owner_type === 'app') {
-          const cid = await data.getCurrentCompanyId();
-          if (cid) {
-            const ov = await data.getAppMaterialOverride(materialId, cid);
-            mat = applyAppOverride(mat, ov);
+        // App materials store overrides (including `use_custom_cost`) in a separate table.
+        // Some queries/views only include `custom_cost`, so we explicitly merge the override row here.
+        if (mat?.is_app_material && (data as any)?.getCurrentCompanyId && (data as any)?.getAppMaterialOverride) {
+          const companyId = await (data as any).getCurrentCompanyId();
+          if (companyId) {
+            const ov = await (data as any).getAppMaterialOverride(materialId, companyId);
+            if (ov) {
+              mat = {
+                ...mat,
+                custom_cost: ov.custom_cost ?? mat.custom_cost ?? null,
+                use_custom_cost: ov.use_custom_cost ?? mat.use_custom_cost ?? false,
+                job_type_id: ov.job_type_id ?? mat.job_type_id ?? null,
+              };
+            }
           }
         }
 
@@ -68,8 +63,8 @@ export function MaterialEditorPage() {
         setLaborHoursText(mat.labor_minutes == null ? '' : String(h));
         setLaborMinutesText(mat.labor_minutes == null ? '' : String(min));
       } catch (e) {
-        console.error(e);
         if (cancelled) return;
+        console.error(e);
         setStatus(String((e as any)?.message ?? e));
       }
     })();
@@ -127,20 +122,36 @@ export function MaterialEditorPage() {
 
         await (data as any).upsertAppMaterialOverride(patch);
 
-        // Refresh a merged view (base app material + this company's override values).
-        const base = await data.getMaterial(materialId);
-        const cid = await data.getCurrentCompanyId();
-        const ov = cid ? await data.getAppMaterialOverride(materialId, cid) : null;
-        const merged = applyAppOverride(base, ov);
-        setM(merged);
+        // Refresh merged view, but ensure we also pull the override row directly.
+        // (Some material fetch paths do not include override-only fields like use_custom_cost.)
+        let refreshed: any = await data.getMaterial(materialId);
+        try {
+          const companyId = await (data as any).getCurrentCompanyId?.();
+          if (companyId) {
+            const ov = await (data as any).getAppMaterialOverride?.(materialId, companyId);
+            if (ov) {
+              refreshed = {
+                ...refreshed,
+                custom_cost: ov.custom_cost ?? refreshed.custom_cost ?? null,
+                use_custom_cost: ov.use_custom_cost ?? refreshed.use_custom_cost ?? false,
+                job_type_id: ov.job_type_id ?? refreshed.job_type_id ?? null,
+                taxable: ov.taxable ?? refreshed.taxable,
+              };
+            }
+          }
+        } catch {
+          // ignore override refresh errors; base material refresh already succeeded
+        }
 
-        setUnitCostText(merged.base_cost === null || merged.base_cost === undefined ? '' : String(merged.base_cost));
-        setCustomCostText(merged.custom_cost === null || merged.custom_cost === undefined ? '' : String(merged.custom_cost));
-        const savedLm = Number(merged.labor_minutes ?? 0) || 0;
+        setM(refreshed);
+
+        setUnitCostText(refreshed.base_cost === null || refreshed.base_cost === undefined ? '' : String(refreshed.base_cost));
+        setCustomCostText(refreshed.custom_cost === null || refreshed.custom_cost === undefined ? '' : String(refreshed.custom_cost));
+        const savedLm = Number(refreshed.labor_minutes ?? 0) || 0;
         const sh = Math.floor(savedLm / 60);
         const smin = Math.round(savedLm % 60);
-        setLaborHoursText(merged.labor_minutes == null ? '' : String(sh));
-        setLaborMinutesText(merged.labor_minutes == null ? '' : String(smin));
+        setLaborHoursText(refreshed.labor_minutes == null ? '' : String(sh));
+        setLaborMinutesText(refreshed.labor_minutes == null ? '' : String(smin));
 
         setStatus('Saved.');
         setTimeout(() => setStatus(''), 1500);
