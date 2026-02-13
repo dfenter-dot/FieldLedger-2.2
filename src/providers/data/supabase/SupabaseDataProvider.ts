@@ -46,6 +46,16 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
 
+private sanitizeOrderColumn(col: any): string | null {
+  if (typeof col !== 'string') return null;
+  // Supabase/PostgREST will 400 on invalid order column. Strip quotes and allow safe identifiers only.
+  const cleaned = col.trim().replace(/^"+|"+$/g, '');
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(cleaned)) return null;
+  return cleaned;
+}
+
+
+
 
   private _isAppOwner: boolean | null = null;
   private _estimateItemsOptionFkCol: string | null = null;
@@ -364,24 +374,41 @@ export class SupabaseDataProvider implements IDataProvider {
      Folders
   ============================ */
 
-  async listFolders(args: { kind: 'materials' | 'assemblies'; libraryType: LibraryType; parentId: string | null }): Promise<Folder[]> {
-    const companyId = await this.currentCompanyId();
-    const owner = this.toDbOwner(args.libraryType);
 
-    let q = this.supabase
-      .from('folders')
-      .select('*')
-      .eq('library', args.kind)
-      .eq('owner', owner)
-      .order('sort_order', { ascending: true });
+async listFolders(args: { libraryType: LibraryType; parentId: string | null }): Promise<Folder[]> {
+  const companyId = await this.currentCompanyId();
 
-    q = args.parentId ? q.eq('parent_id', args.parentId) : q.is('parent_id', null);
-    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
+  const parentId = args.parentId;
+  const resolvedParentId = parentId === 'root' ? null : parentId;
+
+  const base = this.sb
+    .from('folders')
+    .select('*')
+    .eq('library_type', args.libraryType)
+    .eq('company_id', companyId)
+    .eq('parent_id', resolvedParentId);
+
+  const orderCandidates = ['sort_order', 'order_index', 'name'] as const;
+
+  let lastErr: any = null;
+
+  for (const rawCol of orderCandidates) {
+    const col = this.sanitizeOrderColumn(rawCol);
+    if (!col) continue;
+
+    const q = base.order(col, { ascending: true }).order('name', { ascending: true });
 
     const { data, error } = await q;
-    if (error) throw error;
-    return (data ?? []).map((r: any) => this.mapFolderFromDb(r));
+    if (!error) {
+      return (data ?? []).map(mapFolderRowToModel);
+    }
+    lastErr = error;
   }
+
+  const { data, error } = await base;
+  if (error) throw lastErr ?? error;
+  return (data ?? []).map(mapFolderRowToModel);
+}
 
   async createFolder(args: { kind: 'materials' | 'assemblies'; libraryType: LibraryType; parentId: string | null; name: string }): Promise<Folder> {
     const companyId = await this.currentCompanyId();
@@ -507,115 +534,51 @@ export class SupabaseDataProvider implements IDataProvider {
      Materials
   ============================ */
 
-  async listMaterials(args: { libraryType: LibraryType; folderId: string | null }): Promise<Material[]> {
-    const companyId = await this.currentCompanyId();
-    const owner = this.toDbOwner(args.libraryType);
 
-    let q = this.supabase
-      .from('materials')
-      .select('*')
-      .eq('owner', owner)
-      .order('sort_order', { ascending: true })
-      .order('name', { ascending: true });
+async listMaterials(args: { libraryType: LibraryType; folderId: string | null }): Promise<Material[]> {
+  const companyId = await this.currentCompanyId();
 
-    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
-    q = args.folderId ? q.eq('folder_id', args.folderId) : q.is('folder_id', null);
+  const folderId = args.folderId;
+  const resolvedFolderId = folderId === 'root' ? null : folderId;
+
+  const base = this.sb
+    .from('materials')
+    .select('*')
+    .eq('library_type', args.libraryType)
+    .eq('company_id', companyId)
+    .eq('folder_id', resolvedFolderId);
+
+  const orderCandidates = ['sort_order', 'order_index', 'description', 'name'] as const;
+
+  let lastErr: any = null;
+
+  for (const rawCol of orderCandidates) {
+    const col = this.sanitizeOrderColumn(rawCol);
+    if (!col) continue;
+
+    const q = base.order(col, { ascending: true });
 
     const { data, error } = await q;
-    if (error) throw error;
-
-    const base = (data ?? []).map((r: any) => this.mapMaterialFromDb(r));
-
-    // Company overrides for App Materials live in app_material_overrides.
-    // The UI expects a merged view (base app row + per-company override fields).
-    if (owner !== 'app' || base.length === 0) return base;
-
-    const materialIds = base.map((m) => m.id);
-    const { data: ov, error: ovErr } = await this.supabase
-      .from('app_material_overrides')
-      .select('*')
-      .eq('company_id', companyId)
-      .in('material_id', materialIds)
-      // If earlier debugging created duplicate rows, prefer the most recently updated.
-      .order('updated_at', { ascending: false });
-    if (ovErr) {
-      // If overrides table is temporarily unavailable/migrating, still return base list.
-      return base;
+    if (!error) {
+      return (data ?? []).map(mapMaterialRowToModel);
     }
-
-    // Build a stable map; keep the first (newest) row per material_id.
-    const byMaterialId = new Map<string, any>();
-    for (const row of ov ?? []) {
-      const mid = row?.material_id ? String(row.material_id) : '';
-      if (!mid) continue;
-      if (!byMaterialId.has(mid)) byMaterialId.set(mid, row);
-    }
-
-    return base.map((m) => this.applyAppMaterialOverride(m, byMaterialId.get(m.id)));
+    lastErr = error;
+    // try next ordering column
   }
+
+  // Final fallback: no order
+  const { data, error } = await base;
+  if (error) {
+    // throw the last error if we have one to preserve context
+    throw lastErr ?? error;
+  }
+  return (data ?? []).map(mapMaterialRowToModel);
+}
 
   async getMaterial(id: string): Promise<Material | null> {
     const { data, error } = await this.supabase.from('materials').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
-    if (!data) return null;
-
-    const material = this.mapMaterialFromDb(data);
-
-    // Merge per-company overrides onto app-owned materials.
-    if ((data as any)?.owner === 'app' || (data as any)?.company_id == null) {
-      try {
-        const companyId = await this.currentCompanyId();
-        // Do NOT use maybeSingle() here. If earlier debugging created duplicate rows,
-        // maybeSingle() will error and the UI will "snap back" to base values.
-        const { data: rows, error: ovErr } = await this.supabase
-          .from('app_material_overrides')
-          .select('*')
-          .eq('company_id', companyId)
-          .eq('material_id', id)
-          .order('updated_at', { ascending: false })
-          .limit(1);
-        if (!ovErr && rows && rows.length) return this.applyAppMaterialOverride(material, rows[0]);
-      } catch {
-        // ignore and fall back to base material
-      }
-    }
-
-    return material;
-  }
-
-  private applyAppMaterialOverride(base: Material, ov: any | null | undefined): Material {
-    if (!ov) return base;
-
-    const next: any = { ...base };
-
-    // Only apply override fields when present; keep base values otherwise.
-    if (ov.job_type_id !== undefined) next.job_type_id = ov.job_type_id ?? null;
-    if (ov.taxable !== undefined && ov.taxable !== null) next.taxable = Boolean(ov.taxable);
-
-    // Custom cost + toggle are critical. Treat null as "no override".
-    if (ov.custom_cost !== undefined) next.custom_cost = ov.custom_cost === null ? null : Number(ov.custom_cost);
-    if (ov.use_custom_cost !== undefined && ov.use_custom_cost !== null) next.use_custom_cost = Boolean(ov.use_custom_cost);
-
-    return next as Material;
-  }
-
-  /**
-   * Fetch the current company's override row for a given app material.
-   * This is intentionally tolerant of duplicate rows (prefers latest updated_at).
-   */
-  async getAppMaterialOverride(materialId: string): Promise<any | null> {
-    const companyId = await this.currentCompanyId();
-    if (!companyId) return null;
-
-    const { data, error } = await this.supabase
-      .from('app_material_overrides')
-      .select('*')
-      .eq('company_id', companyId)
-      .eq('material_id', materialId)
-      .order('updated_at', { ascending: false })
-      .limit(1);
-    if (error) throw error;
-    return (data ?? [])[0] ?? null;
+    return data ? this.mapMaterialFromDb(data) : null;
   }
 
   async upsertMaterial(material: Partial<Material>): Promise<Material> {
@@ -986,6 +949,17 @@ export class SupabaseDataProvider implements IDataProvider {
   /* ============================
      App Material Overrides
   ============================ */
+
+  async getAppMaterialOverride(materialId: string, companyId: string): Promise<AppMaterialOverride | null> {
+    const { data, error } = await this.supabase
+      .from('app_material_overrides')
+      .select('*')
+      .eq('material_id', materialId)
+      .eq('company_id', companyId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as any) ?? null;
+  }
 
   /**
    * App Material Overrides
