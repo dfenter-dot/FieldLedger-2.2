@@ -510,6 +510,20 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   async function handleCreateAssembly() {
     try {
       setStatus('');
+      // App assemblies can only be created by the app owner.
+      // Company users should create assemblies in the User Assemblies library.
+      if (lib === 'personal') {
+        try {
+          const owner = await (data as any).isAppOwner?.();
+          if (!owner) {
+            setStatus('App assemblies can only be created by the app owner.');
+            return;
+          }
+        } catch {
+          setStatus('App assemblies can only be created by the app owner.');
+          return;
+        }
+      }
       if (!activeFolderId) {
         setStatus('Create or enter a folder first. Assemblies must live inside a folder.');
         return;
@@ -1261,6 +1275,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
 
 
 
