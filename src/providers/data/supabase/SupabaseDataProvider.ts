@@ -46,16 +46,6 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
 
-private sanitizeOrderColumn(col: any): string | null {
-  if (typeof col !== 'string') return null;
-  // Supabase/PostgREST will 400 on invalid order column. Strip quotes and allow safe identifiers only.
-  const cleaned = col.trim().replace(/^"+|"+$/g, '');
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(cleaned)) return null;
-  return cleaned;
-}
-
-
-
 
   private _isAppOwner: boolean | null = null;
   private _estimateItemsOptionFkCol: string | null = null;
@@ -374,41 +364,24 @@ private sanitizeOrderColumn(col: any): string | null {
      Folders
   ============================ */
 
+  async listFolders(args: { kind: 'materials' | 'assemblies'; libraryType: LibraryType; parentId: string | null }): Promise<Folder[]> {
+    const companyId = await this.currentCompanyId();
+    const owner = this.toDbOwner(args.libraryType);
 
-async listFolders(args: { libraryType: LibraryType; parentId: string | null }): Promise<Folder[]> {
-  const companyId = await this.currentCompanyId();
+    let q = this.supabase
+      .from('folders')
+      .select('*')
+      .eq('library', args.kind)
+      .eq('owner', owner)
+      .order('sort_order', { ascending: true });
 
-  const parentId = args.parentId;
-  const resolvedParentId = parentId === 'root' ? null : parentId;
-
-  const base = this.sb
-    .from('folders')
-    .select('*')
-    .eq('library_type', args.libraryType)
-    .eq('company_id', companyId)
-    .eq('parent_id', resolvedParentId);
-
-  const orderCandidates = ['sort_order', 'order_index', 'name'] as const;
-
-  let lastErr: any = null;
-
-  for (const rawCol of orderCandidates) {
-    const col = this.sanitizeOrderColumn(rawCol);
-    if (!col) continue;
-
-    const q = base.order(col, { ascending: true }).order('name', { ascending: true });
+    q = args.parentId ? q.eq('parent_id', args.parentId) : q.is('parent_id', null);
+    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
 
     const { data, error } = await q;
-    if (!error) {
-      return (data ?? []).map(mapFolderRowToModel);
-    }
-    lastErr = error;
+    if (error) throw error;
+    return (data ?? []).map((r: any) => this.mapFolderFromDb(r));
   }
-
-  const { data, error } = await base;
-  if (error) throw lastErr ?? error;
-  return (data ?? []).map(mapFolderRowToModel);
-}
 
   async createFolder(args: { kind: 'materials' | 'assemblies'; libraryType: LibraryType; parentId: string | null; name: string }): Promise<Folder> {
     const companyId = await this.currentCompanyId();
@@ -534,46 +507,24 @@ async listFolders(args: { libraryType: LibraryType; parentId: string | null }): 
      Materials
   ============================ */
 
+  async listMaterials(args: { libraryType: LibraryType; folderId: string | null }): Promise<Material[]> {
+    const companyId = await this.currentCompanyId();
+    const owner = this.toDbOwner(args.libraryType);
 
-async listMaterials(args: { libraryType: LibraryType; folderId: string | null }): Promise<Material[]> {
-  const companyId = await this.currentCompanyId();
+    let q = this.supabase
+      .from('materials')
+      .select('*')
+      .eq('owner', owner)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true });
 
-  const folderId = args.folderId;
-  const resolvedFolderId = folderId === 'root' ? null : folderId;
-
-  const base = this.sb
-    .from('materials')
-    .select('*')
-    .eq('library_type', args.libraryType)
-    .eq('company_id', companyId)
-    .eq('folder_id', resolvedFolderId);
-
-  const orderCandidates = ['sort_order', 'order_index', 'description', 'name'] as const;
-
-  let lastErr: any = null;
-
-  for (const rawCol of orderCandidates) {
-    const col = this.sanitizeOrderColumn(rawCol);
-    if (!col) continue;
-
-    const q = base.order(col, { ascending: true });
+    q = owner === 'company' ? q.eq('company_id', companyId) : q.is('company_id', null);
+    q = args.folderId ? q.eq('folder_id', args.folderId) : q.is('folder_id', null);
 
     const { data, error } = await q;
-    if (!error) {
-      return (data ?? []).map(mapMaterialRowToModel);
-    }
-    lastErr = error;
-    // try next ordering column
+    if (error) throw error;
+    return (data ?? []).map((r: any) => this.mapMaterialFromDb(r));
   }
-
-  // Final fallback: no order
-  const { data, error } = await base;
-  if (error) {
-    // throw the last error if we have one to preserve context
-    throw lastErr ?? error;
-  }
-  return (data ?? []).map(mapMaterialRowToModel);
-}
 
   async getMaterial(id: string): Promise<Material | null> {
     const { data, error } = await this.supabase.from('materials').select('*').eq('id', id).maybeSingle();
