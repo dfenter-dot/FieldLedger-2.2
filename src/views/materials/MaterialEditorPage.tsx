@@ -34,19 +34,31 @@ export function MaterialEditorPage() {
         let mat: any = await data.getMaterial(materialId);
 
         // App materials store overrides (including `use_custom_cost`) in a separate table.
-        // Some queries/views only include `custom_cost`, so we explicitly merge the override row here.
+        // IMPORTANT: When re-opening a material, we must re-hydrate from app_material_overrides,
+        // otherwise the editor can "bounce back" to the base app values.
         if (mat?.is_app_material && (data as any)?.getCurrentCompanyId && (data as any)?.getAppMaterialOverride) {
           const companyId = await (data as any).getCurrentCompanyId();
           if (companyId) {
-            const ov = await (data as any).getAppMaterialOverride(materialId, companyId);
-            if (ov) {
-              mat = {
-                ...mat,
-                custom_cost: ov.custom_cost ?? mat.custom_cost ?? null,
-                use_custom_cost: ov.use_custom_cost ?? mat.use_custom_cost ?? false,
-                job_type_id: ov.job_type_id ?? mat.job_type_id ?? null,
-              };
+            // If no job type is currently set, prefer the company default.
+            let jobTypeIdToUse: string | null = (mat as any).job_type_id ?? null;
+            if (!jobTypeIdToUse && (data as any)?.listJobTypes) {
+              try {
+                const jts = await (data as any).listJobTypes();
+                const def = Array.isArray(jts) ? jts.find((j: any) => j?.is_default) : null;
+                jobTypeIdToUse = def?.id ?? null;
+              } catch {
+                // ignore
+              }
             }
+
+            const ov = await (data as any).getAppMaterialOverride(materialId, companyId, jobTypeIdToUse);
+            // Always keep job_type_id stable in the editor (default if needed), even if there is no override row yet.
+            mat = {
+              ...mat,
+              job_type_id: (ov?.job_type_id ?? jobTypeIdToUse ?? (mat as any).job_type_id ?? null) as any,
+              custom_cost: (ov?.custom_cost ?? (mat as any).custom_cost ?? null) as any,
+              use_custom_cost: (ov?.use_custom_cost ?? (mat as any).use_custom_cost ?? false) as any,
+            };
           }
         }
 
@@ -128,7 +140,11 @@ export function MaterialEditorPage() {
         try {
           const companyId = await (data as any).getCurrentCompanyId?.();
           if (companyId) {
-            const ov = await (data as any).getAppMaterialOverride?.(materialId, companyId);
+            const ov = await (data as any).getAppMaterialOverride?.(
+              materialId,
+              companyId,
+              (m as any)?.job_type_id ?? null
+            );
             if (ov) {
               refreshed = {
                 ...refreshed,
