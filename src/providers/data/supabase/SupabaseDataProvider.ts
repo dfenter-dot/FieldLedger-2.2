@@ -915,7 +915,16 @@ export class SupabaseDataProvider implements IDataProvider {
   async upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride> {
     const companyId = await this.currentCompanyId();
     const payload = { ...override, company_id: override.company_id ?? companyId, updated_at: new Date().toISOString() };
-    const { data, error } = await this.supabase.from('app_material_overrides').upsert(payload as any).select().single();
+    // IMPORTANT:
+    // Some Supabase/PostgREST combinations can produce a malformed `select=*,0` when
+    // `select()` is called with no explicit column list, which then triggers:
+    // "Could not find the '0' column of 'app_material_overrides' in the schema cache".
+    // Being explicit here avoids that class of request serialization issues.
+    const { data, error } = await this.supabase
+      .from('app_material_overrides')
+      .upsert(payload as any)
+      .select('*')
+      .single();
     if (error) throw error;
     return data as any;
   }
@@ -1577,6 +1586,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
