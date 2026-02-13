@@ -529,38 +529,7 @@ export class SupabaseDataProvider implements IDataProvider {
   async getMaterial(id: string): Promise<Material | null> {
     const { data, error } = await this.supabase.from('materials').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
-    if (!data) return null;
-
-    const material = this.mapMaterialFromDb(data);
-
-    // If this is an app-owned material, merge in any per-company override record.
-    // This is critical so the Material Editor (and downstream calculations) reflect saved overrides.
-    if (material.owner === 'app') {
-      const companyId = await this.currentCompanyId();
-      if (companyId) {
-        const { data: ov, error: ovErr } = await this.supabase
-          .from('app_material_overrides')
-          .select('override_custom_cost, override_use_custom_cost, job_type_id')
-          .eq('company_id', companyId)
-          .eq('material_id', material.id)
-          .maybeSingle();
-
-        // If the override table is missing/blocked by RLS, don't break base material retrieval.
-        if (!ovErr && ov) {
-          if (ov.override_use_custom_cost !== null && ov.override_use_custom_cost !== undefined) {
-            (material as any).use_custom_cost = !!ov.override_use_custom_cost;
-          }
-          if (ov.override_custom_cost !== null && ov.override_custom_cost !== undefined) {
-            (material as any).custom_cost = Number(ov.override_custom_cost);
-          }
-          if (ov.job_type_id !== null && ov.job_type_id !== undefined) {
-            (material as any).job_type_id = ov.job_type_id;
-          }
-        }
-      }
-    }
-
-    return material;
+    return data ? this.mapMaterialFromDb(data) : null;
   }
 
   async upsertMaterial(material: Partial<Material>): Promise<Material> {
@@ -932,13 +901,29 @@ export class SupabaseDataProvider implements IDataProvider {
      App Material Overrides
   ============================ */
 
-  async getAppMaterialOverride(materialId: string, companyId: string): Promise<AppMaterialOverride | null> {
-    const { data, error } = await this.supabase
+  async getAppMaterialOverride(
+    materialId: string,
+    companyId: string,
+    jobTypeId?: string | null
+  ): Promise<AppMaterialOverride | null> {
+    // Important: Over time, some companies may end up with more than one override row per
+    // (company_id, material_id) (ex: legacy data, job-type scoped rows, or partial migrations).
+    // We deliberately:
+    //   - scope to job_type_id when provided
+    //   - otherwise pick the most recently updated row
+    let q = this.supabase
       .from('app_material_overrides')
       .select('*')
       .eq('material_id', materialId)
-      .eq('company_id', companyId)
-      .maybeSingle();
+      .eq('company_id', companyId);
+
+    if (jobTypeId === null) {
+      q = q.is('job_type_id', null);
+    } else if (typeof jobTypeId === 'string') {
+      q = q.eq('job_type_id', jobTypeId);
+    }
+
+    const { data, error } = await q.order('updated_at', { ascending: false }).limit(1).maybeSingle();
     if (error) throw error;
     return (data as any) ?? null;
   }
