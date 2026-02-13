@@ -98,6 +98,7 @@ export function AssemblyEditorPage() {
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
+  const [isAppOwner, setIsAppOwner] = useState<boolean>(false);
 
   const didAutoSetDefaultJobType = useRef(false);
 
@@ -118,6 +119,8 @@ export function AssemblyEditorPage() {
   const enabledJobTypeIds = useMemo(() => {
     return new Set(enabledJobTypes.map((j: any) => j.id));
   }, [enabledJobTypes]);
+  const readOnlyAppAssembly = Boolean(a && a.library_type === 'personal' && !isAppOwner);
+
 
   function getEffectiveJobTypeId(asm: any): string | null {
     const id = (asm?.job_type_id ?? asm?.jobTypeId ?? null) as any;
@@ -171,6 +174,8 @@ export function AssemblyEditorPage() {
     // Best-effort persist so leaving/returning keeps the default.
     (async () => {
       try {
+        // Do not attempt to persist changes to app-owned assemblies for non-app-owner users.
+        if (readOnlyAppAssembly) return;
         await dataRef.current.upsertAssembly(next);
       } catch (e) {
         console.error(e);
@@ -393,6 +398,10 @@ export function AssemblyEditorPage() {
 
   async function save(next: Assembly) {
     if (saving) return;
+    if (readOnlyAppAssembly) {
+      setStatus('App assemblies are read-only. Duplicate it into User Assemblies to customize.');
+      return;
+    }
     try {
       setSaving(true);
       setStatus('Saving…');
@@ -410,6 +419,7 @@ export function AssemblyEditorPage() {
 
   function updateItem(id: string, patch: Record<string, any>) {
     if (!a) return;
+    if (readOnlyAppAssembly) return;
     const nextItems = (a.items ?? []).map((x: any) => (x.id === id ? { ...x, ...patch } : x));
     setA({ ...a, items: nextItems } as any);
   }
@@ -431,6 +441,10 @@ export function AssemblyEditorPage() {
 
   async function duplicate() {
     if (!a) return;
+    if (readOnlyAppAssembly) {
+      setStatus('App assemblies cannot be duplicated from here. Create a new assembly in User Assemblies and build it there.');
+      return;
+    }
     try {
       setStatus('Duplicating…');
       const copy = await data.upsertAssembly({
@@ -594,7 +608,7 @@ export function AssemblyEditorPage() {
         <div className="grid2">
           <div className="stack">
             <label className="label">Assembly Name</label>
-            <Input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
+            <Input value={a.name} disabled={readOnlyAppAssembly} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
           </div>
 
           {/* Assemblies: keep Use Admin Rules functionality intact but hidden from view. */}
@@ -1128,6 +1142,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
