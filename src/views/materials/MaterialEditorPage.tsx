@@ -25,11 +25,38 @@ export function MaterialEditorPage() {
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
+  const applyAppOverride = (base: Material, ov: any | null): Material => {
+    if (!ov) return base;
+    return {
+      ...base,
+      // For app-owned materials, these fields are stored per-company in app_material_overrides.
+      use_custom_cost: ov.enabled ?? base.use_custom_cost,
+      custom_cost: ov.custom_cost ?? base.custom_cost,
+      job_type_id: ov.job_type_id ?? base.job_type_id,
+    };
+  };
+
   useEffect(() => {
     if (!materialId) return;
-    data
-      .getMaterial(materialId)
-      .then((mat) => {
+    let cancelled = false;
+    (async () => {
+      try {
+        let mat = await data.getMaterial(materialId);
+
+        // For app-owned materials, load the per-company override (if any) and project it
+        // into the editor state. Without this, saving an override appears to "revert"
+        // because the editor reloads the base app material row (which intentionally
+        // does not store company-specific fields).
+        if (mat?.owner_type === 'app') {
+          const cid = await data.getCurrentCompanyId();
+          if (cid) {
+            const ov = await data.getAppMaterialOverride(materialId, cid);
+            mat = applyAppOverride(mat, ov);
+          }
+        }
+
+        if (cancelled) return;
+
         setM(mat);
         // NOTE: Our Material model stores the editable cost as `base_cost`.
         // If this input is blank on load, clicking Save will overwrite the DB value with 0.
@@ -40,11 +67,16 @@ export function MaterialEditorPage() {
         const min = Math.round(lm % 60);
         setLaborHoursText(mat.labor_minutes == null ? '' : String(h));
         setLaborMinutesText(mat.labor_minutes == null ? '' : String(min));
-      })
-      .catch((e) => {
+      } catch (e) {
         console.error(e);
+        if (cancelled) return;
         setStatus(String((e as any)?.message ?? e));
-      });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [data, materialId]);
 
   useEffect(() => {
@@ -95,17 +127,20 @@ export function MaterialEditorPage() {
 
         await (data as any).upsertAppMaterialOverride(patch);
 
-        // refresh merged view
-        const refreshed = await data.getMaterial(materialId);
-        setM(refreshed);
+        // Refresh a merged view (base app material + this company's override values).
+        const base = await data.getMaterial(materialId);
+        const cid = await data.getCurrentCompanyId();
+        const ov = cid ? await data.getAppMaterialOverride(materialId, cid) : null;
+        const merged = applyAppOverride(base, ov);
+        setM(merged);
 
-        setUnitCostText(refreshed.base_cost === null || refreshed.base_cost === undefined ? '' : String(refreshed.base_cost));
-        setCustomCostText(refreshed.custom_cost === null || refreshed.custom_cost === undefined ? '' : String(refreshed.custom_cost));
-        const savedLm = Number(refreshed.labor_minutes ?? 0) || 0;
+        setUnitCostText(merged.base_cost === null || merged.base_cost === undefined ? '' : String(merged.base_cost));
+        setCustomCostText(merged.custom_cost === null || merged.custom_cost === undefined ? '' : String(merged.custom_cost));
+        const savedLm = Number(merged.labor_minutes ?? 0) || 0;
         const sh = Math.floor(savedLm / 60);
         const smin = Math.round(savedLm % 60);
-        setLaborHoursText(refreshed.labor_minutes == null ? '' : String(sh));
-        setLaborMinutesText(refreshed.labor_minutes == null ? '' : String(smin));
+        setLaborHoursText(merged.labor_minutes == null ? '' : String(sh));
+        setLaborMinutesText(merged.labor_minutes == null ? '' : String(smin));
 
         setStatus('Saved.');
         setTimeout(() => setStatus(''), 1500);
@@ -278,6 +313,7 @@ export function MaterialEditorPage() {
     </div>
   );
 }
+
 
 
 
