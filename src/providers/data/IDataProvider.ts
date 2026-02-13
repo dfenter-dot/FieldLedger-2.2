@@ -89,7 +89,7 @@ export interface IDataProvider {
      App Material Overrides
   ============================ */
   getAppMaterialOverride(materialId: string, companyId: string): Promise<AppMaterialOverride | null>;
-  upsertAppMaterialOverride(override: Partial<AppMaterialOverride>): Promise<AppMaterialOverride>;
+  upsertAppMaterialOverride(materialId: string, patch: Partial<AppMaterialOverride>): Promise<AppMaterialOverride>;
 
   /* ============================
      Assemblies
@@ -131,6 +131,7 @@ export interface IDataProvider {
   getBrandingSettings(): Promise<BrandingSettings>;
   saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings>;
 }
+
 
 
 
