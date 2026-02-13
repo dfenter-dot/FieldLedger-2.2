@@ -557,14 +557,15 @@ export class SupabaseDataProvider implements IDataProvider {
   }
 
   async getMaterial(id: string): Promise<Material | null> {
+    if (!id) throw new Error('getMaterial: missing id');
     const { data, error } = await this.supabase.from('materials').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     if (!data) return null;
     const material = this.mapMaterialFromDb(data);
 
     // Merge per-company overrides for app-owned materials so custom cost/toggles persist.
-    const owner = (material as any)?.owner;
-    if (owner !== 'app') return material;
+    // (Do not rely on a free variable; use the mapped material library_type.)
+    if (material.library_type !== 'app') return material;
 
     try {
       const companyId2 = await this.currentCompanyId();
@@ -953,12 +954,14 @@ export class SupabaseDataProvider implements IDataProvider {
      App Material Overrides
   ============================ */
 
-  async getAppMaterialOverride(materialId: string, companyId: string): Promise<AppMaterialOverride | null> {
+  async getAppMaterialOverride(materialId: string, companyId?: string): Promise<AppMaterialOverride | null> {
+    if (!materialId) throw new Error('getAppMaterialOverride: missing materialId');
+    const effectiveCompanyId = companyId ?? (await this.currentCompanyId());
     const { data, error } = await this.supabase
       .from('app_material_overrides')
       .select('*')
       .eq('material_id', materialId)
-      .eq('company_id', companyId)
+      .eq('company_id', effectiveCompanyId)
       .maybeSingle();
     if (error) throw error;
     return (data as any) ?? null;
@@ -976,18 +979,11 @@ export class SupabaseDataProvider implements IDataProvider {
   private applyAppMaterialOverride(material: any, overrideRow: any) {
     if (!overrideRow) return material;
 
-    // DB column is `custom_cost` (older migrations briefly used `override_custom_cost`).
-    const overrideCost =
-      overrideRow.custom_cost ??
-      overrideRow.override_custom_cost ??
-      null;
-
     return {
       ...material,
       use_custom_cost: overrideRow.use_custom_cost ?? material.use_custom_cost,
-      custom_cost: overrideCost ?? material.custom_cost,
-      // UI expects this field name in some screens
-      override_custom_cost: overrideCost ?? material.override_custom_cost,
+      // DB column is `custom_cost` (older code used `override_custom_cost`).
+      custom_cost: (overrideRow.custom_cost ?? overrideRow.override_custom_cost) ?? material.custom_cost,
       override_job_type_id: overrideRow.job_type_id ?? material.override_job_type_id,
     };
   }
