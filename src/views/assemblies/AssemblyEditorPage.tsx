@@ -101,14 +101,27 @@ export function AssemblyEditorPage() {
 
   const didAutoSetDefaultJobType = useRef(false);
 
-  const defaultJobTypeId = useMemo(() => {
-    const enabled = (jobTypes ?? []).filter((j: any) => j && j.enabled !== false);
-    const def = enabled.find((j: any) => j.is_default === true) ?? enabled[0];
-    return def?.id ?? null;
+  // Reset one-time initialization when switching assemblies.
+  useEffect(() => {
+    didAutoSetDefaultJobType.current = false;
+  }, [assemblyId]);
+
+  const enabledJobTypes = useMemo(() => {
+    return (jobTypes ?? []).filter((j: any) => j && j.enabled !== false);
   }, [jobTypes]);
 
+  const defaultJobTypeId = useMemo(() => {
+    const def = enabledJobTypes.find((j: any) => j.is_default === true) ?? enabledJobTypes[0];
+    return def?.id ?? null;
+  }, [enabledJobTypes]);
+
+  const enabledJobTypeIds = useMemo(() => {
+    return new Set(enabledJobTypes.map((j: any) => j.id));
+  }, [enabledJobTypes]);
+
   function getEffectiveJobTypeId(asm: any): string | null {
-    return (asm?.job_type_id ?? asm?.jobTypeId ?? null) as any;
+    const id = (asm?.job_type_id ?? asm?.jobTypeId ?? null) as any;
+    return id || null;
   }
 
 
@@ -136,12 +149,17 @@ export function AssemblyEditorPage() {
     setLaborMinutesText(asm?.labor_minutes == null ? '' : String(asm.labor_minutes));
   }
 
-  // Auto-set default job type for new assemblies (and persist it once) so it doesn't reset on reload.
+  // Auto-set default job type for new/invalid assemblies (and persist it once)
+  // so it doesn't reset on reload.
   useEffect(() => {
     if (!a) return;
     if (didAutoSetDefaultJobType.current) return;
     const current = getEffectiveJobTypeId(a);
-    if (current) {
+
+    // If job_type_id references a job type that no longer exists/enabled (e.g. template sync changed),
+    // treat it as unset and fall back to the current default.
+    const currentIsValid = current ? enabledJobTypeIds.has(current) : false;
+    if (current && currentIsValid) {
       didAutoSetDefaultJobType.current = true;
       return;
     }
@@ -158,7 +176,7 @@ export function AssemblyEditorPage() {
         console.error(e);
       }
     })();
-  }, [a, defaultJobTypeId]);
+  }, [a, defaultJobTypeId, enabledJobTypeIds]);
 
 
   useEffect(() => {
@@ -399,7 +417,9 @@ export function AssemblyEditorPage() {
   async function saveAll() {
     if (!a) return;
     const lm = laborMinutesText.trim() === '' ? 0 : Number(laborMinutesText);
-    const jtId = getEffectiveJobTypeId(a) ?? defaultJobTypeId;
+    // Only persist a job type that exists/enabled for this company. If missing/invalid, use default.
+    const chosen = getEffectiveJobTypeId(a);
+    const jtId = chosen && enabledJobTypeIds.has(chosen) ? chosen : defaultJobTypeId;
     await save({
       ...a,
       // Keep both spellings to survive old/new model shapes
@@ -563,7 +583,8 @@ export function AssemblyEditorPage() {
             <Button variant="danger" onClick={remove}>
               Delete
             </Button>
-            {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
+            {/* Assemblies: keep rules feature in code for future, but hide it from the UI. */}
+            {false && a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll} disabled={saving}>
               Save
             </Button>
@@ -576,27 +597,30 @@ export function AssemblyEditorPage() {
             <Input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
           </div>
 
-          <div className="stack">
-            <label className="label">Use Admin Rules</label>
-            <Toggle
-              checked={Boolean(a.use_admin_rules)}
-              onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
-              label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
-            />
-          </div>
+          {/* Assemblies: keep Use Admin Rules functionality intact but hidden from view. */}
+          {false && (
+            <div className="stack">
+              <label className="label">Use Admin Rules</label>
+              <Toggle
+                checked={Boolean(a.use_admin_rules)}
+                onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
+                label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
+              />
+            </div>
+          )}
 
           <div className="stack">
             <label className="label">Job Type</label>
             <select
               className="input"
-              disabled={Boolean(a.use_admin_rules)}
+              // Keep behavior consistent with spec, but since Use Admin Rules is hidden,
+              // do not disable this control in assemblies.
+              disabled={false}
               value={getEffectiveJobTypeId(a) ?? ''}
               onChange={(ev) => { const v = ev.target.value || null; setA({ ...a, job_type_id: v, jobTypeId: v } as any); }}
             >
               <option value="">(Select)</option>
-              {jobTypes
-                .filter((j: any) => j.enabled !== false)
-                .map((jt: any) => (
+              {enabledJobTypes.map((jt: any) => (
                   <option key={jt.id} value={jt.id}>
                     {jt.name}
                   </option>
