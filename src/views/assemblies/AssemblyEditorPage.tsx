@@ -15,7 +15,6 @@ type AssemblyMaterialRow = {
   itemId: string;
   materialId: string;
   quantity: number;
-  _ui_qty_text?: string;
   material?: Material | null;
 };
 
@@ -100,6 +99,19 @@ export function AssemblyEditorPage() {
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
+  const didAutoSetDefaultJobType = useRef(false);
+
+  const defaultJobTypeId = useMemo(() => {
+    const enabled = (jobTypes ?? []).filter((j: any) => j && j.enabled !== false);
+    const def = enabled.find((j: any) => j.is_default === true) ?? enabled[0];
+    return def?.id ?? null;
+  }, [jobTypes]);
+
+  function getEffectiveJobTypeId(asm: any): string | null {
+    return (asm?.job_type_id ?? asm?.jobTypeId ?? null) as any;
+  }
+
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -124,6 +136,31 @@ export function AssemblyEditorPage() {
     setLaborMinutesText(asm?.labor_minutes == null ? '' : String(asm.labor_minutes));
   }
 
+  // Auto-set default job type for new assemblies (and persist it once) so it doesn't reset on reload.
+  useEffect(() => {
+    if (!a) return;
+    if (didAutoSetDefaultJobType.current) return;
+    const current = getEffectiveJobTypeId(a);
+    if (current) {
+      didAutoSetDefaultJobType.current = true;
+      return;
+    }
+    if (!defaultJobTypeId) return;
+
+    didAutoSetDefaultJobType.current = true;
+    const next = { ...a, job_type_id: defaultJobTypeId, jobTypeId: defaultJobTypeId } as any;
+    setA(next);
+    // Best-effort persist so leaving/returning keeps the default.
+    (async () => {
+      try {
+        await dataRef.current.upsertAssembly(next);
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+  }, [a, defaultJobTypeId]);
+
+
   useEffect(() => {
     if (!assemblyId) return;
     refreshAssembly(assemblyId).catch((e) => {
@@ -144,7 +181,6 @@ export function AssemblyEditorPage() {
         itemId: it.id,
         materialId: it.material_id ?? it.materialId,
         quantity: Number(it.quantity ?? 1) || 1,
-        _ui_qty_text: it._ui_qty_text,
       }));
   }, [a?.items]);
 
@@ -363,8 +399,12 @@ export function AssemblyEditorPage() {
   async function saveAll() {
     if (!a) return;
     const lm = laborMinutesText.trim() === '' ? 0 : Number(laborMinutesText);
+    const jtId = getEffectiveJobTypeId(a) ?? defaultJobTypeId;
     await save({
       ...a,
+      // Keep both spellings to survive old/new model shapes
+      job_type_id: jtId,
+      jobTypeId: jtId,
       labor_minutes: Number.isFinite(lm) ? lm : 0,
     } as any);
   }
@@ -409,8 +449,7 @@ export function AssemblyEditorPage() {
     if (!a) return;
     const nextItems = (a.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
     setA({ ...a, items: nextItems } as any);
-  }
-
+  
   function updateItemQuantityText(itemId: string, text: string) {
     updateItem(itemId, { _ui_qty_text: text });
   }
@@ -427,6 +466,7 @@ export function AssemblyEditorPage() {
     const q = Number.isFinite(n) ? Math.max(fallback, Math.floor(n)) : fallback;
     updateItem(itemId, { quantity: q, _ui_qty_text: undefined });
   }
+}
 
   function removeItem(itemId: string) {
     if (!a) return;
@@ -536,25 +576,22 @@ export function AssemblyEditorPage() {
             <Input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
           </div>
 
-          {/* Use Admin Rules (hidden in Assemblies UI only; do not remove feature/state) */}
-          {false && (
-            <div className="stack">
-              <label className="label">Use Admin Rules</label>
-              <Toggle
-                checked={Boolean(a.use_admin_rules)}
-                onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
-                label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
-              />
-            </div>
-          )}
+          <div className="stack">
+            <label className="label">Use Admin Rules</label>
+            <Toggle
+              checked={Boolean(a.use_admin_rules)}
+              onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
+              label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
+            />
+          </div>
 
           <div className="stack">
             <label className="label">Job Type</label>
             <select
               className="input"
               disabled={Boolean(a.use_admin_rules)}
-              value={a.job_type_id ?? ''}
-              onChange={(ev) => setA({ ...a, job_type_id: ev.target.value || null } as any)}
+              value={getEffectiveJobTypeId(a) ?? ''}
+              onChange={(ev) => { const v = ev.target.value || null; setA({ ...a, job_type_id: v, jobTypeId: v } as any); }}
             >
               <option value="">(Select)</option>
               {jobTypes
@@ -598,8 +635,10 @@ export function AssemblyEditorPage() {
           <Button
             variant="primary"
             onClick={() => {
-              const lt = libraryType === 'app' ? 'app' : 'user';
-              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, returnTo: `/assemblies/${lt}/${a.id}` });
+              // Picker mode: add materials to this assembly, then return here.
+              // IMPORTANT: navigate to the Materials HOME (not a specific library) so the user can choose
+              // App vs User materials intentionally.
+              setMode({ type: 'add-materials-to-assembly', assemblyId: a.id, returnTo: location.pathname });
               nav('/materials');
             }}
           >
@@ -770,8 +809,12 @@ export function AssemblyEditorPage() {
                       value={r._ui_qty_text ?? String(r.quantity ?? 1)}
                       onChange={(e) => {
                         const raw = e.target.value;
-                        // Allow free typing. Commit numeric quantity on blur.
                         updateItemQuantityText(r.itemId, raw);
+                        const trimmed = raw.trim();
+                        if (trimmed === '') return; // allow clearing while editing
+                        const n = Number(trimmed);
+                        if (!Number.isFinite(n)) return;
+                        updateItemQuantity(r.itemId, Math.max(1, Math.floor(n)));
                       }}
                       onBlur={() => commitItemQuantityFromText(r.itemId, 1)}
                     />
@@ -842,8 +885,18 @@ export function AssemblyEditorPage() {
                         value={it._ui_qty_text ?? String(it.quantity ?? 1)}
                         onChange={(e) => {
                           const raw = e.target.value;
-                          // Allow free typing. We commit the numeric quantity on blur.
                           updateItem(it.id, { _ui_qty_text: raw });
+
+                          const trimmed = raw.trim();
+                          if (trimmed === '') return; // allow clearing while editing
+
+                          const n = Number(trimmed);
+                          if (!Number.isFinite(n)) return;
+                          const q = Math.max(1, Math.floor(n));
+                          const nextItems = (a.items ?? []).map((x: any) =>
+                            x.id === it.id ? { ...x, quantity: q } : x
+                          );
+                          setA({ ...a, items: nextItems } as any);
                         }}
                         onBlur={() => commitItemQuantityFromText(it.id, 1)}
                       />
@@ -934,8 +987,18 @@ export function AssemblyEditorPage() {
                         value={it._ui_qty_text ?? String(it.quantity ?? 1)}
                         onChange={(e) => {
                           const raw = e.target.value;
-                          // Allow free typing. We commit the numeric quantity on blur.
                           updateItem(it.id, { _ui_qty_text: raw });
+
+                          const trimmed = raw.trim();
+                          if (trimmed === '') return; // allow clearing while editing
+
+                          const n = Number(trimmed);
+                          if (!Number.isFinite(n)) return;
+                          const q = Math.max(1, Math.floor(n));
+                          const nextItems = (a.items ?? []).map((x: any) =>
+                            x.id === it.id ? { ...x, quantity: q } : x
+                          );
+                          setA({ ...a, items: nextItems } as any);
                         }}
                         onBlur={() => commitItemQuantityFromText(it.id, 1)}
                       />
