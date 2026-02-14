@@ -323,6 +323,25 @@ export class SupabaseDataProvider implements IDataProvider {
     if (data) return data as any;
 
     const seeded = seedCompanySettings(companyId);
+
+// Seed material tiered markups from the app designer (template company), so users see the same defaults
+// that exist in the app developer login (they can still edit/remove in their own company without affecting template).
+const templateSettings = await this.tryGetTemplateCompanySettings();
+if (templateSettings) {
+  if (Array.isArray((templateSettings as any).material_markup_tiers)) {
+    (seeded as any).material_markup_tiers = (templateSettings as any).material_markup_tiers;
+  }
+  if (typeof (templateSettings as any).material_markup_mode === 'string') {
+    (seeded as any).material_markup_mode = (templateSettings as any).material_markup_mode;
+  }
+  if (typeof (templateSettings as any).hourly_material_markup_mode === 'string') {
+    (seeded as any).hourly_material_markup_mode = (templateSettings as any).hourly_material_markup_mode;
+  }
+  if (typeof (templateSettings as any).hourly_material_markup_fixed_percent === 'number') {
+    (seeded as any).hourly_material_markup_fixed_percent = (templateSettings as any).hourly_material_markup_fixed_percent;
+  }
+}
+
     const insert = async (payload: any) =>
       this.supabase.from('company_settings').insert(payload).select().single();
 
@@ -1714,6 +1733,38 @@ async deleteEstimate(id: string): Promise<void> {
 
 
 
+
+
+
+
+/**
+ * Best-effort fetch of the app designer's (template) company settings.
+ * Used to seed new companies with the same default material tiered markups shown in the designer account.
+ * If RLS prevents access, this safely returns null and we fall back to local defaults.
+ */
+private async tryGetTemplateCompanySettings(): Promise<CompanySettings | null> {
+  try {
+    const { data: tmplCompany, error: cErr } = await this.supabase
+      .from('companies')
+      .select('id')
+      .eq('is_template', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (cErr || !tmplCompany?.id) return null;
+
+    const { data: settings, error: sErr } = await this.supabase
+      .from('company_settings')
+      .select('*')
+      .eq('company_id', tmplCompany.id)
+      .maybeSingle();
+
+    if (sErr || !settings) return null;
+    return settings as unknown as CompanySettings;
+  } catch {
+    return null;
+  }
+}
 
 
 
