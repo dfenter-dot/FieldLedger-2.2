@@ -1716,6 +1716,30 @@ async deleteEstimate(id: string): Promise<void> {
     if (error) throw error;
     return data as any;
   }
+
+  private async tryGetTemplateCompanySettings(): Promise<CompanySettings | null> {
+  try {
+  const { data: tmplCompany, error: cErr } = await this.supabase
+  .from('companies')
+  .select('id')
+  .eq('is_template', true)
+  .limit(1)
+  .maybeSingle();
+
+  if (cErr || !tmplCompany?.id) return null;
+
+  const { data: settings, error: sErr } = await this.supabase
+  .from('company_settings')
+  .select('*')
+  .eq('company_id', tmplCompany.id)
+  .maybeSingle();
+
+  if (sErr || !settings) return null;
+  return settings as unknown as CompanySettings;
+  } catch {
+  return null;
+  }
+  }
 }
 
 
@@ -1742,29 +1766,6 @@ async deleteEstimate(id: string): Promise<void> {
  * Used to seed new companies with the same default material tiered markups shown in the designer account.
  * If RLS prevents access, this safely returns null and we fall back to local defaults.
  */
-private async tryGetTemplateCompanySettings(): Promise<CompanySettings | null> {
-  try {
-    const { data: tmplCompany, error: cErr } = await this.supabase
-      .from('companies')
-      .select('id')
-      .eq('is_template', true)
-      .limit(1)
-      .maybeSingle();
-
-    if (cErr || !tmplCompany?.id) return null;
-
-    const { data: settings, error: sErr } = await this.supabase
-      .from('company_settings')
-      .select('*')
-      .eq('company_id', tmplCompany.id)
-      .maybeSingle();
-
-    if (sErr || !settings) return null;
-    return settings as unknown as CompanySettings;
-  } catch {
-    return null;
-  }
-}
 
 
 
