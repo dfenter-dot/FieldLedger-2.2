@@ -4,6 +4,7 @@ import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
+import { SaveButton, SaveUiState } from '../../ui/components/SaveButton';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
@@ -95,6 +96,7 @@ export function AssemblyEditorPage() {
   const [a, setA] = useState<Assembly | null>(null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveUi, setSaveUi] = useState<SaveUiState>('idle');
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
@@ -412,14 +414,19 @@ export function AssemblyEditorPage() {
     }
     try {
       setSaving(true);
+      setSaveUi('saving');
       setStatus('Saving…');
       const saved = await data.upsertAssembly(next);
       setA(saved);
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
+      setSaveUi('saved');
+      setTimeout(() => setSaveUi('idle'), 1200);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
+      setSaveUi('error');
+      setTimeout(() => setSaveUi('idle'), 1500);
     } finally {
       setSaving(false);
     }
@@ -777,9 +784,7 @@ export function AssemblyEditorPage() {
             </Button>
             {/* Assemblies: keep rules feature in code for future, but hide it from the UI. */}
             {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
-            <Button variant="primary" onClick={saveAll} disabled={saving}>
-              Save
-            </Button>
+            <SaveButton state={saveUi} onClick={saveAll} disabled={saving} />
           </div>
         }
       >
@@ -1339,6 +1344,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
