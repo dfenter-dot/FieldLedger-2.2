@@ -129,6 +129,25 @@ export class SupabaseDataProvider implements IDataProvider {
       // ignore
     }
 
+    // AUTH METADATA CHECK (preferred if configured)
+    try {
+      const { data } = await this.supabase.auth.getUser();
+      const user: any = data?.user ?? null;
+
+      const metaIsOwner =
+        user?.user_metadata?.is_app_owner === true ||
+        user?.app_metadata?.is_app_owner === true ||
+        String(user?.user_metadata?.role ?? '').toLowerCase() === 'app_owner' ||
+        String(user?.app_metadata?.role ?? '').toLowerCase() === 'app_owner';
+
+      if (metaIsOwner) {
+        this._isAppOwner = true;
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+
     // DB FLAG CHECK
     try {
       const { data, error } = await this.supabase.from('profiles').select('is_app_owner').single();
@@ -1698,6 +1717,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
