@@ -14,6 +14,8 @@
 .btn:active:not(:disabled){
   transform: translateY(1px);
   filter: brightness(1.08);
+  border-color: rgba(212,175,55,0.75);
+  box-shadow: 0 0 0 3px rgba(212,175,55,0.14);
 }
 .btn:focus-visible{
   outline: 2px solid rgba(212,175,55,0.55);
@@ -33,4 +35,12 @@
 .btn-ghost{
   background: transparent;
   border-color: transparent;
+}
+
+.btn-link{
+  padding: 2px 4px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+  font-weight: 750;
 }
