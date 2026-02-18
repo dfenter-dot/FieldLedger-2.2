@@ -716,6 +716,19 @@ export function CompanySetupPage() {
               />
               <div className="muted">{(s as any)?.misc_applies_when_customer_supplies ? 'Yes' : 'No'}</div>
             </div>
+
+            <div style={{ height: 10 }} />
+
+            <label className="label">Apply Misc Material (default)</label>
+            <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+              <Toggle
+                checked={Boolean((s as any)?.apply_misc_material_default ?? (s as any)?.apply_misc_material ?? true)}
+                onChange={(checked) => s && setS({ ...(s as any), apply_misc_material_default: Boolean(checked) })}
+              />
+              <div className="muted">
+                {Boolean((s as any)?.apply_misc_material_default ?? (s as any)?.apply_misc_material ?? true) ? 'Yes' : 'No'}
+              </div>
+            </div>
           
 <div className="stack" style={{ minWidth: 320 }}>
   <label className="label">Show Tech View cost breakdown (Estimates + Assemblies)</label>
@@ -1287,6 +1300,7 @@ export function CompanySetupPage() {
     </div>
   );
 }
+
 
 
 
