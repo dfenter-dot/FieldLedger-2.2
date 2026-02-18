@@ -80,6 +80,9 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     return lib === 'personal' ? 'App Assemblies' : 'User Assemblies';
   }, [kind, lib]);
 
+  const rootPath = kind === 'materials' ? '/materials' : '/assemblies';
+
+
   const selectionBanner = useMemo(() => {
     if (mode.type === 'add-materials-to-assembly' && kind === 'materials') return 'Picker mode: Add materials to assembly';
     if (mode.type === 'add-materials-to-estimate' && kind === 'materials') return 'Picker mode: Add materials to estimate';
@@ -872,6 +875,10 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
         title={title}
         right={
           <div className="row">
+            <Button variant="secondary" onClick={() => nav(rootPath)}>
+              Back to Root
+            </Button>
+
             {selectionBanner ? (
               <>
                 <div className="pill">{selectionBanner}</div>
@@ -1275,6 +1282,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
 
 
 
