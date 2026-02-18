@@ -429,7 +429,116 @@ export function AssemblyEditorPage() {
     const lm = laborMinutesText.trim() === '' ? 0 : Number(laborMinutesText);
     // Only persist a job type that exists/enabled for this company. If missing/invalid, use default.
     const chosen = getEffectiveJobTypeId(a);
-    const jtId = chosen && enabledJobTypeIds.has(chosen) ? chosen : defaultJobTypeId;
+    const jtIdBase = chosen && enabledJobTypeIds.has(chosen) ? chosen : defaultJobTypeId;
+
+    let jtId = jtIdBase;
+
+    // If Use Admin Rules is enabled, evaluate rules on save so the chosen job type actually applies.
+    if ((a as any).use_admin_rules) {
+      try {
+        const rulesRaw = (await data.listAdminRules()) as any[];
+        const rules = (rulesRaw ?? [])
+          .filter((r) => {
+            const enabled = r.enabled ?? true;
+            const scope = (r.scope ?? r.applies_to ?? 'both') as string;
+            const scopeOk = scope === 'both' || scope === 'assembly';
+            return !!enabled && scopeOk;
+          })
+          .sort((x, y) => Number(x.priority ?? 0) - Number(y.priority ?? 0));
+
+        const jobTypesById = Object.fromEntries((jobTypes ?? []).map((j: any) => [j.id, j]));
+        const pricing = computeAssemblyPricing({
+          assembly: a as any,
+          materialsById: materialCache,
+          jobTypesById,
+          companySettings,
+        } as any) as any;
+
+        const expectedLaborMinutes = Number(pricing?.expected_labor_minutes ?? pricing?.expectedLaborMinutes ?? 0);
+        const expectedMaterialCost = Number(pricing?.material_cost ?? pricing?.materialCost ?? 0);
+        const maxQty = Math.max(0, ...(((a as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0)));
+        const lineItemCount = (((a as any).items ?? []) as any[]).length;
+
+        const cmp = (op: string, x: number, y: number) => {
+          switch (op) {
+            case '>=':
+              return x >= y;
+            case '>':
+              return x > y;
+            case '<=':
+              return x <= y;
+            case '<':
+              return x < y;
+            case '==':
+              return x === y;
+            case '!=':
+              return x !== y;
+            default:
+              return false;
+          }
+        };
+
+        const getMetric = (t: string) => {
+          switch (t) {
+            case 'expected_labor_hours':
+              return expectedLaborMinutes / 60;
+            case 'expected_labor_minutes':
+              return expectedLaborMinutes;
+            case 'material_cost':
+              return expectedMaterialCost;
+            case 'line_item_count':
+              return lineItemCount;
+            case 'any_line_item_qty':
+              return maxQty;
+            default:
+              return null;
+          }
+        };
+
+        const match = rules.find((r) => {
+          const ct = (r as any).condition_type;
+          const op = (r as any).operator;
+          const thr = (r as any).threshold_value;
+
+          if (ct && thr != null) {
+            const metric = getMetric(String(ct));
+            const nThr = Number(thr);
+            if (metric == null || !Number.isFinite(nThr)) return false;
+            return cmp(String(op ?? '>='), metric, nThr);
+          }
+
+          const minLabor = (r as any).min_expected_labor_minutes ?? (r as any).minExpectedLaborMinutes;
+          const minMat = (r as any).min_material_cost ?? (r as any).minMaterialCost;
+          const minQty = (r as any).min_quantity ?? (r as any).minQuantity;
+          const minLineItems =
+            (r as any).min_line_item_count ??
+            (r as any).min_line_items ??
+            (r as any).minItemCount ??
+            (r as any).min_items;
+
+          if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
+          if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
+          if (minQty != null && maxQty < Number(minQty)) return false;
+          if (minLineItems != null && lineItemCount < Number(minLineItems)) return false;
+
+          const hasAny = minLabor != null || minMat != null || minQty != null || minLineItems != null;
+          return hasAny;
+        });
+
+        const nextJobTypeId =
+          (match as any)?.target_job_type_id ??
+          (match as any)?.job_type_id ??
+          (match as any)?.set_job_type_id ??
+          (match as any)?.rule_value?.target_job_type_id ??
+          (match as any)?.rule_value?.job_type_id;
+
+        if (nextJobTypeId && enabledJobTypeIds.has(nextJobTypeId)) {
+          jtId = nextJobTypeId;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
     await save({
       ...a,
       // Keep both spellings to survive old/new model shapes
@@ -483,7 +592,8 @@ export function AssemblyEditorPage() {
     if (!a) return;
     const nextItems = (a.items ?? []).map((it: any) => (it.id === itemId ? { ...it, quantity } : it));
     setA({ ...a, items: nextItems } as any);
-  
+  }
+
   function updateItemQuantityText(itemId: string, text: string) {
     updateItem(itemId, { _ui_qty_text: text });
   }
@@ -491,8 +601,8 @@ export function AssemblyEditorPage() {
   function commitItemQuantityFromText(itemId: string, fallback = 1) {
     if (!a) return;
     const it = (a.items ?? []).find((x: any) => x.id === itemId);
-    const raw = String(it?._ui_qty_text ?? '').trim();
-    if (raw === '') {
+    const raw = String((it as any)?._ui_qty_text ?? "").trim();
+    if (raw === "") {
       updateItem(itemId, { quantity: fallback, _ui_qty_text: undefined });
       return;
     }
@@ -500,7 +610,6 @@ export function AssemblyEditorPage() {
     const q = Number.isFinite(n) ? Math.max(fallback, Math.floor(n)) : fallback;
     updateItem(itemId, { quantity: q, _ui_qty_text: undefined });
   }
-}
 
   function removeItem(itemId: string) {
     if (!a) return;
@@ -540,20 +649,81 @@ export function AssemblyEditorPage() {
         ...(((a as any).items ?? []) as any[]).map((it) => Number(it.quantity ?? 0))
       );
 
+      const cmp = (op: string, a: number, b: number) => {
+        switch (op) {
+          case '>=':
+            return a >= b;
+          case '>':
+            return a > b;
+          case '<=':
+            return a <= b;
+          case '<':
+            return a < b;
+          case '==':
+            return a === b;
+          case '!=':
+            return a !== b;
+          default:
+            return false;
+        }
+      };
+
+      const getMetric = (t: string) => {
+        switch (t) {
+          case 'expected_labor_hours':
+            return expectedLaborMinutes / 60;
+          case 'expected_labor_minutes':
+            return expectedLaborMinutes;
+          case 'material_cost':
+            return expectedMaterialCost;
+          case 'line_item_count':
+            return (((a as any).items ?? []) as any[]).length;
+          case 'any_line_item_qty':
+            return maxQty;
+          default:
+            return null;
+        }
+      };
+
       const match = rules.find((r) => {
-        const minLabor = r.min_expected_labor_minutes ?? r.min_expected_labor_minutes;
-        const minMat = r.min_material_cost ?? r.min_material_cost;
-        const minQty = r.min_quantity ?? r.min_quantity;
+        // Schema A (current): condition_type/operator/threshold_value
+        const ct = (r as any).condition_type;
+        const op = (r as any).operator;
+        const thr = (r as any).threshold_value;
+
+        if (ct && thr != null) {
+          const metric = getMetric(String(ct));
+          const nThr = Number(thr);
+          if (metric == null || !Number.isFinite(nThr)) return false;
+          return cmp(String(op ?? '>='), metric, nThr);
+        }
+
+        // Legacy threshold fields
+        const minLabor = (r as any).min_expected_labor_minutes ?? (r as any).minExpectedLaborMinutes;
+        const minMat = (r as any).min_material_cost ?? (r as any).minMaterialCost;
+        const minQty = (r as any).min_quantity ?? (r as any).minQuantity;
+        const minLineItems =
+          (r as any).min_line_item_count ??
+          (r as any).min_line_items ??
+          (r as any).minItemCount ??
+          (r as any).min_items;
 
         if (minLabor != null && expectedLaborMinutes < Number(minLabor)) return false;
         if (minMat != null && expectedMaterialCost < Number(minMat)) return false;
         if (minQty != null && maxQty < Number(minQty)) return false;
+        if (minLineItems != null && (((a as any).items ?? []) as any[]).length < Number(minLineItems)) return false;
 
-        const hasAny = minLabor != null || minMat != null || minQty != null;
+        const hasAny = minLabor != null || minMat != null || minQty != null || minLineItems != null;
+        // If it has no thresholds at all, do not auto-match it (prevents accidental always-on).
         return hasAny;
       });
 
-      const nextJobTypeId = match?.job_type_id ?? match?.set_job_type_id;
+      const nextJobTypeId =
+        (match as any)?.target_job_type_id ??
+        (match as any)?.job_type_id ??
+        (match as any)?.set_job_type_id ??
+        (match as any)?.rule_value?.target_job_type_id ??
+        (match as any)?.rule_value?.job_type_id;
       if (nextJobTypeId) {
         const saved = await data.upsertAssembly({ ...(a as any), job_type_id: nextJobTypeId } as any);
         setA(saved);
@@ -598,7 +768,7 @@ export function AssemblyEditorPage() {
               Delete
             </Button>
             {/* Assemblies: keep rules feature in code for future, but hide it from the UI. */}
-            {false && a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
+            {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll} disabled={saving}>
               Save
             </Button>
@@ -612,7 +782,7 @@ export function AssemblyEditorPage() {
           </div>
 
           {/* Assemblies: keep Use Admin Rules functionality intact but hidden from view. */}
-          {false && (
+          {(
             <div className="stack">
               <label className="label">Use Admin Rules</label>
               <Toggle
@@ -627,9 +797,8 @@ export function AssemblyEditorPage() {
             <label className="label">Job Type</label>
             <select
               className="input"
-              // Keep behavior consistent with spec, but since Use Admin Rules is hidden,
-              // do not disable this control in assemblies.
-              disabled={false}
+              // If Use Admin Rules is enabled, job type is locked and set via Rules.
+              disabled={readOnlyAppAssembly || Boolean(a.use_admin_rules)}
               value={getEffectiveJobTypeId(a) ?? ''}
               onChange={(ev) => { const v = ev.target.value || null; setA({ ...a, job_type_id: v, jobTypeId: v } as any); }}
             >
@@ -1142,6 +1311,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
