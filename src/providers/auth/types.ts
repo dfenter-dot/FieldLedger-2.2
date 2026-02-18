@@ -42,6 +42,10 @@ export interface CompanySettings {
      ------------------------- */
   material_purchase_tax_percent: number;
   misc_material_percent: number;
+  /** Company default: whether misc material is applied at all (can be overridden per estimate/assembly). */
+  apply_misc_material_default?: boolean;
+  /** Legacy/alternate name tolerated in partially migrated schemas. */
+  apply_misc_material?: boolean;
   default_discount_percent: number;
   processing_fee_percent: number;
 
@@ -197,5 +201,6 @@ export interface BrandingSettings {
   created_at?: string;
   updated_at?: string;
 }
+
 
 
