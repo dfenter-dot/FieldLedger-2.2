@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
@@ -11,6 +11,13 @@ import { useDialogs } from '../../providers/dialogs/DialogContext';
 export function MaterialEditorPage() {
   const { materialId, libraryType } = useParams();
   const data = useData();
+  // NOTE: DataContext value can change identity between renders in this codebase.
+  // If we depend on `data` in editor hydration effects, a new identity can trigger
+  // a refetch that overwrites in-progress edits (appearing like inputs "revert").
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
   const nav = useNavigate();
   const { confirm } = useDialogs();
 
@@ -30,7 +37,7 @@ export function MaterialEditorPage() {
 
     (async () => {
       try {
-        const base = await data.getMaterial(materialId);
+        const base = await dataRef.current.getMaterial(materialId);
         if (!base) {
           setM(null);
           return;
@@ -43,7 +50,7 @@ export function MaterialEditorPage() {
         let merged: any = { ...base };
         if (isAppLibrary && !isOwner) {
           try {
-            const ov = await (data as any).getAppMaterialOverride?.(materialId);
+            const ov = await (dataRef.current as any).getAppMaterialOverride?.(materialId);
             if (ov) {
               if (ov.custom_cost !== undefined) merged.custom_cost = ov.custom_cost;
               if (ov.use_custom_cost !== undefined) merged.use_custom_cost = ov.use_custom_cost;
@@ -68,7 +75,7 @@ export function MaterialEditorPage() {
         setStatus(String((e as any)?.message ?? e));
       }
     })();
-  }, [data, materialId, isOwner, isAppLibrary]);
+  }, [materialId, isOwner, isAppLibrary]);
 
   useEffect(() => {
     data.listJobTypes().then(setJobTypes).catch(console.error);
@@ -316,6 +323,7 @@ export function MaterialEditorPage() {
     </div>
   );
 }
+
 
 
 
