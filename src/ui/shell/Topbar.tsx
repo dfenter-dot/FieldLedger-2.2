@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../providers/auth/AuthContext';
+import { Button } from '../components/Button';
 import './topbar.css';
 
 function titleFromPath(pathname: string): string {
@@ -38,13 +39,14 @@ export function Topbar() {
       </div>
       <div className="topbarRight">
         <div className="chip">{user?.email}</div>
-        <button className="topbarLogout" type="button" onClick={handleLogout}>
+        <Button className="topbarLogout" type="button" onClick={handleLogout} variant="secondary">
           Log Out
-        </button>
+        </Button>
       </div>
     </header>
   );
 }
+
 
 
 
