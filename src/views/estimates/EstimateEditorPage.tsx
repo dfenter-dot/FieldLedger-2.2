@@ -100,6 +100,14 @@ function getSortedOptions(list: EstimateOption[]) {
 export function EstimateEditorPage() {
   const { estimateId } = useParams();
   const data = useData();
+  // NOTE: In this codebase, the DataContext value has previously changed identity between renders.
+  // If an editor effect depends on `data`, it can unintentionally re-trigger a fresh fetch and
+  // overwrite in-progress input edits (e.g., quantity fields appearing to "revert").
+  // Keep a ref to the latest provider so "load on enter" stays stable.
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
   const nav = useNavigate();
   const { setMode } = useSelection();
   const dialogs = useDialogs();
@@ -227,9 +235,9 @@ export function EstimateEditorPage() {
       (async () => {
         try {
           setStatus('Creating…');
-          const settings = await data.getCompanySettings();
+          const settings = await dataRef.current.getCompanySettings();
           const starting = Number((settings as any)?.starting_estimate_number ?? 1) || 1;
-          const existing = await data.listEstimates();
+          const existing = await dataRef.current.listEstimates();
           const maxNum = existing.reduce((m, r) => Math.max(m, Number((r as any).estimate_number ?? 0) || 0), 0);
           const nextNum = Math.max(starting, maxNum + 1);
 
@@ -251,7 +259,7 @@ export function EstimateEditorPage() {
           } as any;
 
           // Persist immediately so selection flows work.
-          const saved = await data.upsertEstimate(draft as any);
+          const saved = await dataRef.current.upsertEstimate(draft as any);
           setE(saved);
           setStatus('');
           nav(`/estimates/${saved.id}`, { replace: true });
@@ -263,12 +271,12 @@ export function EstimateEditorPage() {
       return;
     }
 
-    data
+    dataRef.current
       .getEstimate(estimateId)
       .then(async (est) => {
         setE(est);
         try {
-          const opts = await (data as any).listEstimateOptions?.(est?.id ?? estimateId);
+          const opts = await (dataRef.current as any).listEstimateOptions?.(est?.id ?? estimateId);
           const list: any[] = Array.isArray(opts) ? opts : [];
           setOptions(list as any);
           const initialActive =
@@ -276,7 +284,7 @@ export function EstimateEditorPage() {
           if (initialActive) {
             setActiveOptionId(initialActive);
             // Ensure we have the items for the selected option (getEstimate returns active option items, but we refresh to be safe)
-            const items = await (data as any).getEstimateItemsForOption?.(initialActive);
+            const items = await (dataRef.current as any).getEstimateItemsForOption?.(initialActive);
             const optRow = (list ?? []).find((o: any) => String(o.id) === String(initialActive)) ?? null;
             const payload = safeParseOptionPayload((optRow as any)?.option_description ?? (optRow as any)?.optionDescription);
             const settings = payload.settings ?? {};
@@ -322,7 +330,7 @@ export function EstimateEditorPage() {
         console.error(err);
         setStatus(String((err as any)?.message ?? err));
       });
-  }, [data, estimateId, nav]);
+  }, [estimateId, nav]);
 
   const rows = useMemo<ItemRow[]>(() => {
     const items: any[] = ((e as any)?.items ?? []) as any[];
@@ -2077,6 +2085,7 @@ async function updateQuantity(itemId: string, quantity: number) {
     </div>
   );
 }
+
 
 
 
