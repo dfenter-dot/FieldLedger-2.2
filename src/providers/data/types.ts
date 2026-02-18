@@ -51,6 +51,12 @@ export interface CompanySettings {
   material_markup_fixed_percent?: number;
   material_purchase_tax_percent?: number;
   misc_material_percent?: number;
+  /** Company default: whether misc material is applied at all (can be overridden per estimate/assembly). */
+  apply_misc_material_default?: boolean;
+  /** Legacy/alternate name tolerated in partially migrated schemas. */
+  apply_misc_material?: boolean;
+  /** Legacy toggle: apply misc material when customer supplies materials. */
+  misc_applies_when_customer_supplies?: boolean;
   discount_percent_default?: number;
   processing_fee_percent?: number;
   min_billable_labor_minutes_per_job?: number;
@@ -376,6 +382,7 @@ export interface BrandingSettings {
   logo_storage_path?: string | null;
   updated_at?: string;
 }
+
 
 
 
