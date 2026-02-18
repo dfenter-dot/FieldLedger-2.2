@@ -60,9 +60,10 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   const [draftQtyByMaterialId, setDraftQtyByMaterialId] = useState<Record<string, string>>({});
   const [draftQtyByAssemblyId, setDraftQtyByAssemblyId] = useState<Record<string, string>>({});
 
-  // Global search (materials only)
+  // Global search (materials + assemblies)
+  type SearchResult = { id: string; name: string; secondary?: string; folderId: string | null };
   const [searchText, setSearchText] = useState('');
-  const [searchResults, setSearchResults] = useState<Material[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
 
   // Bulk select/delete (folders + items)
@@ -81,6 +82,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   }, [kind, lib]);
 
   const rootPath = kind === 'materials' ? '/materials' : '/assemblies';
+
+  const highlightId = (location.state as any)?.highlightId ?? null;
 
 
   const selectionBanner = useMemo(() => {
@@ -805,10 +808,8 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   }
 
 
-  // Global search dropdown (materials only)
+  // Global search dropdown (materials + assemblies)
   useEffect(() => {
-    if (kind !== 'materials') return;
-
     const q = searchText.trim();
     if (!q) {
       setSearchResults([]);
@@ -822,7 +823,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
         const seen = new Set<string>();
 
         async function walk(parentId: string | null) {
-          const kids = await data.listFolders({ kind: 'materials', libraryType: lib, parentId });
+          const kids = await data.listFolders({ kind, libraryType: lib, parentId });
           for (const f of kids) {
             if (seen.has(f.id)) continue;
             seen.add(f.id);
@@ -833,20 +834,49 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
 
         await walk(null);
 
-        const lists = await Promise.all(folderIds.map((fid) => data.listMaterials({ libraryType: lib, folderId: fid })));
-        const all = lists.flat();
         const lower = q.toLowerCase();
 
-        const hits = all
-          .filter(
-            (m) =>
-              (m.name ?? '').toLowerCase().includes(lower) ||
-              (m.sku ?? '').toLowerCase().includes(lower) ||
-              (m.description ?? '').toLowerCase().includes(lower)
-          )
-          .slice(0, 8);
-
-        if (!cancelled) setSearchResults(hits);
+        if (kind === 'materials') {
+          const lists = await Promise.all(
+            folderIds.map((fid) => data.listMaterials({ libraryType: lib, folderId: fid }))
+          );
+          const all = lists.flat();
+          const hits: SearchResult[] = all
+            .filter(
+              (m) =>
+                (m.name ?? '').toLowerCase().includes(lower) ||
+                (m.sku ?? '').toLowerCase().includes(lower) ||
+                (m.description ?? '').toLowerCase().includes(lower)
+            )
+            .slice(0, 8)
+            .map((m) => ({
+              id: m.id,
+              name: m.name,
+              secondary: m.sku ?? '',
+              folderId: (m as any).folder_id ?? (m as any).folderId ?? null,
+            }));
+          if (!cancelled) setSearchResults(hits);
+        } else {
+          const lists = await Promise.all(
+            folderIds.map((fid) => data.listAssemblies({ libraryType: lib, folderId: fid }))
+          );
+          const all = lists.flat();
+          const hits: SearchResult[] = all
+            .filter(
+              (a) =>
+                (a.name ?? '').toLowerCase().includes(lower) ||
+                ((a as any).assembly_number ?? '').toLowerCase().includes(lower) ||
+                (a.description ?? '').toLowerCase().includes(lower)
+            )
+            .slice(0, 8)
+            .map((a) => ({
+              id: a.id,
+              name: a.name,
+              secondary: (a as any).assembly_number ?? '',
+              folderId: (a as any).folder_id ?? (a as any).folderId ?? null,
+            }));
+          if (!cancelled) setSearchResults(hits);
+        }
       } catch {
         if (!cancelled) setSearchResults([]);
       }
@@ -868,6 +898,15 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
+
+  useEffect(() => {
+    if (!highlightId) return;
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(`item-${highlightId}`);
+      if (el) el.scrollIntoView({ block: 'center' });
+    }, 50);
+    return () => window.clearTimeout(t);
+  }, [highlightId, materials, assemblies]);
 
   return (
     <div className="stack">
@@ -956,32 +995,33 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
           </div>
 
           {/* Global search */}
-          {kind === 'materials' ? (
-            <div ref={searchBoxRef} style={{ position: 'relative' }}>
-              <Input
-                placeholder="Search materials (name, SKU, description)…"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-              />
-              {searchResults.length ? (
-                <div className="dropdown" style={{ position: 'absolute', left: 0, right: 0, top: '42px', zIndex: 10 }}>
-                  {searchResults.map((m) => (
-                    <div
-                      key={m.id}
-                      className="dropdownRow clickable"
-                      onClick={() => {
-                        setSearchResults([]);
-                        nav(`/materials/${libraryType === 'app' ? 'app' : 'user'}/${m.id}`);
-                      }}
-                    >
-                      <div style={{ fontWeight: 600 }}>{m.name}</div>
-                      <div className="muted small">{m.sku ?? ''}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          <div ref={searchBoxRef} style={{ position: 'relative' }}>
+            <Input
+              placeholder={kind === 'materials' ? 'Search materials (name, SKU, description)…' : 'Search assemblies…'}
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+            {searchResults.length ? (
+              <div className="dropdown" style={{ position: 'absolute', left: 0, right: 0, top: '42px', zIndex: 10 }}>
+                {searchResults.map((r) => (
+                  <div
+                    key={r.id}
+                    className="dropdownRow clickable"
+                    onClick={() => {
+                      setSearchResults([]);
+                      const base = kind === 'materials' ? '/materials' : '/assemblies';
+                      const libSeg = libraryType === 'app' ? 'app' : 'user';
+                      const path = r.folderId ? `${base}/${libSeg}/f/${r.folderId}` : `${base}/${libSeg}`;
+                      nav(path, { state: { highlightId: r.id } });
+                    }}
+                  >
+                    <div style={{ fontWeight: 600 }}>{r.name}</div>
+                    <div className="muted small">{r.secondary ?? ''}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
 
           {/* Folder list */}
           <div className="list">
@@ -1030,7 +1070,13 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                 return (
                   <div
                     key={m.id}
+                    id={`item-${m.id}`}
                     className={'listRow' + (isSelected ? ' selected' : '')}
+                    style={
+                      highlightId === m.id
+                        ? { outline: '2px solid var(--accent)', outlineOffset: 2, borderRadius: 10 }
+                        : undefined
+                    }
                     draggable={!inMaterialPickerMode}
                     onDragStart={() => setDraggingId(m.id)}
                     onDragOver={(e) => {
@@ -1154,7 +1200,16 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                 })();
 
                 return (
-                  <div key={a.id} className="listRow">
+                  <div
+                    key={a.id}
+                    id={`item-${a.id}`}
+                    className="listRow"
+                    style={
+                      highlightId === a.id
+                        ? { outline: '2px solid var(--accent)', outlineOffset: 2, borderRadius: 10 }
+                        : undefined
+                    }
+                  >
                     {selectMode && !inAssemblyPicker ? (
                       <input
                         type="checkbox"
@@ -1282,6 +1337,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
 
 
 
