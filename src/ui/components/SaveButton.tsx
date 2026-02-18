@@ -1,7 +1,6 @@
 import { ButtonHTMLAttributes } from 'react';
-import { Button } from './Button';
 import clsx from 'clsx';
-import './saveButton.css';
+import { Button } from './Button';
 
 export type SaveUiState = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -19,9 +18,9 @@ type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
 /**
  * Standard Save button feedback: Saving → Saved.
  *
- * Contract:
- * - state must be updated on user action (onClick) and on completion.
- * - normalization/validation should happen on blur/save, not on every keypress.
+ * Notes:
+ * - Uses existing shared Button styling (no extra CSS dependency).
+ * - Icon feedback is done with simple characters to avoid build issues if a CSS file is missing.
  */
 export function SaveButton({ state, labels, className, disabled, ...rest }: Props) {
   const label =
@@ -41,13 +40,13 @@ export function SaveButton({ state, labels, className, disabled, ...rest }: Prop
       {...rest}
       disabled={disabled || isBusy}
       aria-busy={isBusy}
-      className={clsx('save-btn', className)}
+      className={clsx(className)}
     >
-      {state === 'saving' ? <span className="sb-spinner" aria-hidden /> : null}
-      {state === 'saved' ? <span className="sb-check" aria-hidden>
-        ✓
-      </span> : null}
-      <span className="sb-label">{label}</span>
+      {/* Visible feedback without requiring additional CSS */}
+      {state === 'saving' ? <span aria-hidden style={{ marginRight: 8 }}>⏳</span> : null}
+      {state === 'saved' ? <span aria-hidden style={{ marginRight: 8 }}>✓</span> : null}
+      {state === 'error' ? <span aria-hidden style={{ marginRight: 8 }}>⚠</span> : null}
+      <span>{label}</span>
     </Button>
   );
 }
