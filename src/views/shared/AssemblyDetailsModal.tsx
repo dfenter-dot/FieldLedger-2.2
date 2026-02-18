@@ -82,21 +82,20 @@ export function AssemblyDetailsModal({
               return (
                 <div key={it.id} className="row" style={{ justifyContent: 'space-between' }}>
                   <div>
-                    <button
+                    <Button
                       type="button"
+                      variant="link"
                       onClick={() => materialId && onViewMaterial(materialId)}
+                      disabled={!materialId}
                       style={{
                         padding: 0,
-                        border: 'none',
-                        background: 'transparent',
                         cursor: materialId ? 'pointer' : 'default',
                         textAlign: 'left',
-                        fontWeight: 700,
+                        justifyContent: 'flex-start',
                       }}
-                      disabled={!materialId}
                     >
                       {label}
-                    </button>
+                    </Button>
                     <div className="muted">{(m as any)?.description ?? '—'}</div>
                   </div>
                   <div className="muted">Qty {Math.max(1, Math.floor(Number(it.quantity ?? 1)))}</div>
@@ -109,4 +108,5 @@ export function AssemblyDetailsModal({
     </Modal>
   );
 }
+
 
