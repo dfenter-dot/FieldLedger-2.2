@@ -374,6 +374,17 @@ export class SupabaseDataProvider implements IDataProvider {
         delete fallback.material_markup_fixed_percent;
         ({ data, error } = await this.supabase.from('company_settings').upsert(fallback).select().single());
       }
+
+      // Tolerate schemas that don't yet support apply_misc_material_default / apply_misc_material.
+      if (error) {
+        const msg2 = String((error as any)?.message ?? error);
+        if (msg2.includes('apply_misc_material_default') || msg2.includes('apply_misc_material')) {
+          const fallback = { ...(payload as any) };
+          delete fallback.apply_misc_material_default;
+          delete fallback.apply_misc_material;
+          ({ data, error } = await this.supabase.from('company_settings').upsert(fallback).select().single());
+        }
+      }
     }
     if (error) throw error;
     return data as any;
@@ -1209,8 +1220,12 @@ async upsertAppMaterialOverride(
           ? null
           : Number((estimate as any).discount_percent),
       apply_processing_fees: Boolean((estimate as any).apply_processing_fees ?? false),
-      // Deprecated: misc material is governed solely by Admin configuration.
-      // Do NOT send apply_misc_material to Supabase (column may not exist in migrated schemas).
+      // Estimate-level override for misc material (nullable).
+      // Some schemas may not have this column; we tolerate that below.
+      apply_misc_material:
+        (estimate as any).apply_misc_material === null || (estimate as any).apply_misc_material === undefined
+          ? null
+          : Boolean((estimate as any).apply_misc_material),
 
       status: (estimate as any).status ?? 'draft',
       sent_at: (estimate as any).sent_at ?? null,
@@ -1225,7 +1240,16 @@ async upsertAppMaterialOverride(
 
     if (!payload.id) delete payload.id;
 
-    const { data, error } = await this.supabase.from('estimates').upsert(payload).select('*').single();
+    let { data, error } = await this.supabase.from('estimates').upsert(payload).select('*').single();
+    if (error) {
+      // Tolerate partially-migrated schemas (e.g., missing apply_misc_material).
+      const msg = String((error as any)?.message ?? error);
+      if (msg.includes('apply_misc_material')) {
+        const fallback = { ...(payload as any) };
+        delete fallback.apply_misc_material;
+        ({ data, error } = await this.supabase.from('estimates').upsert(fallback).select('*').single());
+      }
+    }
     if (error) throw error;
 
     // Options + items
@@ -1717,6 +1741,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
