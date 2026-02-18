@@ -233,6 +233,7 @@ export function AssemblyEditorPage() {
     jobTypeId: '' as string | null,
     laborHoursText: '',
     laborMinutesText: '',
+    quantityText: '1',
   });
 
   async function ensureAssemblyCreatedFolder(): Promise<string | null> {
@@ -310,7 +311,13 @@ export function AssemblyEditorPage() {
         id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
         type: 'material',
         material_id: savedMat.id,
-        quantity: 1,
+        quantity: (() => {
+          const t = String((blankMat as any).quantityText ?? '').trim();
+          if (t === '') return 1;
+          const n = Number(t);
+          if (!Number.isFinite(n)) return 1;
+          return Math.max(0, n);
+        })(),
       });
 
       setA({ ...a, items: nextItems } as any);
@@ -327,6 +334,7 @@ export function AssemblyEditorPage() {
         jobTypeId: '' as string | null,
         laborHoursText: '',
         laborMinutesText: '',
+        quantityText: '1',
       });
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
@@ -858,6 +866,7 @@ export function AssemblyEditorPage() {
               // Ensure the destination folder exists, then open the card UI.
               await ensureAssemblyCreatedFolder();
               setShowBlankMaterialCard(true);
+              setBlankMat((p) => ({ ...p, quantityText: (p as any).quantityText ?? '1' }));
             }}
           >
             Add Blank Material Line
@@ -904,6 +913,25 @@ export function AssemblyEditorPage() {
               <div className="stack">
                 <label className="label">Name</label>
                 <Input value={blankMat.name} onChange={(ev) => setBlankMat((p) => ({ ...p, name: ev.target.value }))} />
+              </div>
+
+              <div className="stack">
+                <label className="label">Quantity</label>
+                <Input
+                  value={(blankMat as any).quantityText ?? '1'}
+                  inputMode="decimal"
+                  onChange={(ev) => setBlankMat((p) => ({ ...p, quantityText: ev.target.value }))}
+                  onBlur={() =>
+                    setBlankMat((p) => {
+                      const t = String((p as any).quantityText ?? '').trim();
+                      if (t === '') return { ...p, quantityText: '' };
+                      const n = Number(t);
+                      if (!Number.isFinite(n)) return { ...p, quantityText: '1' };
+                      const clamped = Math.max(0, n);
+                      return { ...p, quantityText: String(clamped) };
+                    })
+                  }
+                />
               </div>
 
               <div className="stack">
@@ -1311,6 +1339,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
