@@ -462,6 +462,7 @@ export function EstimateEditorPage() {
     jobTypeId: '' as string | null,
     laborHoursText: '',
     laborMinutesText: '',
+    quantityText: '1',
   });
 
   useEffect(() => {
@@ -669,7 +670,13 @@ export function EstimateEditorPage() {
 					id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
 					type: 'material',
 					material_id: savedMat.id,
-					quantity: 1,
+					quantity: (() => {
+							const t = String((blankMat as any).quantityText ?? '').trim();
+							if (t === '') return 1;
+							const n = Number(t);
+							if (!Number.isFinite(n)) return 1;
+							return Math.max(0, n);
+						})(),
 				};
 				setE({ ...(e as any), items: [...(((e as any).items ?? []) as any[]), nextItem] } as any);
 			}
@@ -1561,6 +1568,7 @@ async function updateQuantity(itemId: string, quantity: number) {
 	                jobTypeId: (selectedJobType as any)?.id ?? null,
 	                laborHoursText: '',
 	                laborMinutesText: '',
+	                quantityText: '1',
 	              });
 	            }}
           >
@@ -1751,6 +1759,25 @@ async function updateQuantity(itemId: string, quantity: number) {
 							<div className="stack">
 								<label className="label">Name</label>
 								<Input value={blankMat.name} onChange={(ev) => setBlankMat((p) => ({ ...p, name: ev.target.value }))} />
+							</div>
+
+							<div className="stack">
+								<label className="label">Quantity</label>
+								<Input
+									value={(blankMat as any).quantityText ?? '1'}
+									inputMode="decimal"
+									onChange={(ev) => setBlankMat((p) => ({ ...p, quantityText: ev.target.value }))}
+									onBlur={() =>
+										setBlankMat((p) => {
+											const t = String((p as any).quantityText ?? '').trim();
+											if (t === '') return { ...p, quantityText: '' };
+											const n = Number(t);
+											if (!Number.isFinite(n)) return { ...p, quantityText: '1' };
+											const clamped = Math.max(0, n);
+											return { ...p, quantityText: String(clamped) };
+										})
+									}
+								/>
 							</div>
 
 							<div className="stack">
@@ -2090,6 +2117,7 @@ async function updateQuantity(itemId: string, quantity: number) {
     </div>
   );
 }
+
 
 
 
