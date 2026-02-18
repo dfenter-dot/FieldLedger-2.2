@@ -4,6 +4,7 @@ import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
 import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
+import { SaveButton, SaveUiState } from '../../ui/components/SaveButton';
 import { useData } from '../../providers/data/DataContext';
 import type { Material } from '../../providers/data/types';
 import { useDialogs } from '../../providers/dialogs/DialogContext';
@@ -26,6 +27,7 @@ export function MaterialEditorPage() {
 
   const [m, setM] = useState<Material | null>(null);
   const [status, setStatus] = useState<string>('');
+  const [saveUi, setSaveUi] = useState<SaveUiState>('idle');
   const [unitCostText, setUnitCostText] = useState('');
   const [customCostText, setCustomCostText] = useState('');
   const [laborHoursText, setLaborHoursText] = useState('');
@@ -95,6 +97,7 @@ export function MaterialEditorPage() {
   async function save() {
     if (!m || !materialId) return;
     try {
+      setSaveUi('saving');
       setStatus('Saving...');
 
       const laborOnly = Boolean((m as any).labor_only);
@@ -154,6 +157,8 @@ export function MaterialEditorPage() {
 
         setStatus('Saved.');
         setTimeout(() => setStatus(''), 1500);
+        setSaveUi('saved');
+        setTimeout(() => setSaveUi('idle'), 1200);
         return;
       }
 
@@ -180,9 +185,13 @@ export function MaterialEditorPage() {
       setLaborMinutesText(saved.labor_minutes == null ? '' : String(smin));
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
+      setSaveUi('saved');
+      setTimeout(() => setSaveUi('idle'), 1200);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
+      setSaveUi('error');
+      setTimeout(() => setSaveUi('idle'), 1500);
     }
   }
 
@@ -227,9 +236,7 @@ export function MaterialEditorPage() {
                 Delete
               </Button>
             )}
-            <Button variant="primary" onClick={save}>
-              Save
-            </Button>
+            <SaveButton state={saveUi} onClick={save} />
           </div>
         }
       >
@@ -323,6 +330,7 @@ export function MaterialEditorPage() {
     </div>
   );
 }
+
 
 
 
