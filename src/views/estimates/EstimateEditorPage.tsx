@@ -193,6 +193,8 @@ export function EstimateEditorPage() {
     Record<string, { name: string; description: string; settings?: OptionPayload['settings'] }>
   >({});
   const [showOptionsView, setShowOptionsView] = useState(false);
+  const [addOptionCopiesItems, setAddOptionCopiesItems] = useState(true);
+
   const [expandedOptions, setExpandedOptions] = useState<Record<string, boolean>>({});
   const [optionItemsCache, setOptionItemsCache] = useState<Record<string, any[]>>({});
 
@@ -462,7 +464,6 @@ export function EstimateEditorPage() {
     jobTypeId: '' as string | null,
     laborHoursText: '',
     laborMinutesText: '',
-    quantityText: '1',
   });
 
   useEffect(() => {
@@ -670,13 +671,7 @@ export function EstimateEditorPage() {
 					id: crypto.randomUUID?.() ?? `it_${Date.now()}`,
 					type: 'material',
 					material_id: savedMat.id,
-					quantity: (() => {
-							const t = String((blankMat as any).quantityText ?? '').trim();
-							if (t === '') return 1;
-							const n = Number(t);
-							if (!Number.isFinite(n)) return 1;
-							return Math.max(0, n);
-						})(),
+					quantity: 1,
 				};
 				setE({ ...(e as any), items: [...(((e as any).items ?? []) as any[]), nextItem] } as any);
 			}
@@ -854,26 +849,49 @@ async function removeEstimate() {
     return opt1;
   }
 
-  async function addOption() {
+  async function addOption(copyItems = true) {
     if (!e || isLocked) return;
     try {
-      // Ensure we have a base option to copy from.
-      const base = await ensureInitialOptionExists();
-      const fromId = (activeOptionId ?? (e as any).active_option_id ?? base?.id ?? null) as any;
-      if (!fromId) {
-        setStatus('Unable to determine an option to copy.');
-        setTimeout(() => setStatus(''), 2000);
-        return;
-      }
+      // Ensure at least one option exists so we can safely number new options
+      // and (when copying) always have a source option.
+      await ensureInitialOptionExists();
 
-      if (!(data as any).copyEstimateOption) {
-        setStatus('Options are not supported by the current data provider.');
-        setTimeout(() => setStatus(''), 2000);
-        return;
-      }
+      const refreshedExisting = await (data as any).listEstimateOptions?.(e.id);
+      const existingList: any[] = Array.isArray(refreshedExisting) ? refreshedExisting : (options as any[]);
+
+      const fromId = (activeOptionId ??
+        (e as any).active_option_id ??
+        (existingList?.[0]?.id ?? null)) as any;
+
+      let created: any = null;
 
       setStatus('Creating option…');
-      const created = await (data as any).copyEstimateOption(e.id, fromId);
+
+      if (copyItems) {
+        if (!fromId) {
+          setStatus('Unable to determine an option to copy.');
+          setTimeout(() => setStatus(''), 2000);
+          return;
+        }
+        if (!(data as any).copyEstimateOption) {
+          setStatus('Options are not supported by the current data provider.');
+          setTimeout(() => setStatus(''), 2000);
+          return;
+        }
+        created = await (data as any).copyEstimateOption(e.id, fromId);
+      } else {
+        if (!(data as any).createEstimateOption || !(data as any).replaceEstimateItemsForOption) {
+          setStatus('Options are not supported by the current data provider.');
+          setTimeout(() => setStatus(''), 2000);
+          return;
+        }
+        const nextSort =
+          (existingList?.reduce((m, o: any) => Math.max(m, Number(o.sort_order ?? 0)), 0) ?? 0) + 1;
+        const name = `Option ${nextSort}`;
+        created = await (data as any).createEstimateOption(e.id, name);
+        await (data as any).replaceEstimateItemsForOption(created.id, []);
+      }
+
       const refreshed = await (data as any).listEstimateOptions?.(e.id);
       const list: any[] = Array.isArray(refreshed) ? refreshed : [];
       // Some environments may briefly return an empty list after creation.
@@ -889,8 +907,8 @@ async function removeEstimate() {
       if (created?.id) {
         const nextIndex = nextList.length > 0 ? nextList.length : options.length + 1;
 
-        // Per spec: new options start with a blank description, but copy line items.
-        // We also snapshot the current option-level settings into the option payload so
+        // Per spec: new options start with a blank description.
+        // Snapshot the current option-level settings into the option payload so
         // each option can be configured independently.
         if ((data as any).updateEstimateOption) {
           try {
@@ -1497,7 +1515,9 @@ async function updateQuantity(itemId: string, quantity: number) {
             Duplicate Estimate
           </Button>
 
-          <Button variant="secondary" disabled={!e || isLocked} onClick={addOption}>
+          <Toggle checked={addOptionCopiesItems} onChange={setAddOptionCopiesItems} label={addOptionCopiesItems ? "Copy materials" : "Blank option"} />
+
+          <Button variant="secondary" disabled={!e || isLocked} onClick={() => addOption(addOptionCopiesItems)}>
             Add Option
           </Button>
 
@@ -1568,7 +1588,6 @@ async function updateQuantity(itemId: string, quantity: number) {
 	                jobTypeId: (selectedJobType as any)?.id ?? null,
 	                laborHoursText: '',
 	                laborMinutesText: '',
-	                quantityText: '1',
 	              });
 	            }}
           >
@@ -1759,25 +1778,6 @@ async function updateQuantity(itemId: string, quantity: number) {
 							<div className="stack">
 								<label className="label">Name</label>
 								<Input value={blankMat.name} onChange={(ev) => setBlankMat((p) => ({ ...p, name: ev.target.value }))} />
-							</div>
-
-							<div className="stack">
-								<label className="label">Quantity</label>
-								<Input
-									value={(blankMat as any).quantityText ?? '1'}
-									inputMode="decimal"
-									onChange={(ev) => setBlankMat((p) => ({ ...p, quantityText: ev.target.value }))}
-									onBlur={() =>
-										setBlankMat((p) => {
-											const t = String((p as any).quantityText ?? '').trim();
-											if (t === '') return { ...p, quantityText: '' };
-											const n = Number(t);
-											if (!Number.isFinite(n)) return { ...p, quantityText: '1' };
-											const clamped = Math.max(0, n);
-											return { ...p, quantityText: String(clamped) };
-										})
-									}
-								/>
 							</div>
 
 							<div className="stack">
@@ -2117,7 +2117,6 @@ async function updateQuantity(itemId: string, quantity: number) {
     </div>
   );
 }
-
 
 
 
