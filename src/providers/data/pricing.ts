@@ -20,6 +20,8 @@ export type PricingInput = {
     material_markup_fixed_percent?: number;
     material_markup_tiers: Array<{ min: number; max: number; percent: number }>;
     misc_material_percent: number;
+    /** Company default: whether misc material is applied at all (can be overridden per estimate/assembly). */
+    apply_misc_material_default?: boolean;
     allow_misc_with_customer_materials: boolean;
     discount_percent: number;
     processing_fee_percent: number;
@@ -52,6 +54,8 @@ export type PricingInput = {
     apply_discount: boolean;
     apply_processing_fee: boolean;
     customer_supplies_materials: boolean;
+    /** Optional per-document override (Estimate/Assembly). If undefined, fall back to company default. */
+    apply_misc_material?: boolean;
     /**
      * Optional per-document discount percent override.
      * Used by Estimates to allow applying a LOWER discount than the Admin default.
@@ -171,11 +175,24 @@ export function computePricingBreakdown(input: PricingInput): PricingBreakdown {
   const customerSupplies = Boolean(flags.customer_supplies_materials);
   const materialSell = customerSupplies ? 0 : rawMaterialSell;
 
+  // Apply-misc toggle hierarchy:
+  // 1) per-document flag (estimate/assembly)
+  // 2) company default
+  // 3) fallback: true (legacy behavior)
+  const applyMisc =
+    typeof flags.apply_misc_material === 'boolean'
+      ? flags.apply_misc_material
+      : typeof company.apply_misc_material_default === 'boolean'
+        ? company.apply_misc_material_default
+        : true;
+
   // Misc material behavior:
   // - If Admin disallows misc when customer supplies materials: misc = 0 when customerSupplies
   // - If Admin allows it: misc always applies regardless of customerSupplies selection
   const miscMaterial =
-    rawMaterialSell > 0 && (company.allow_misc_with_customer_materials || !customerSupplies)
+    applyMisc &&
+    rawMaterialSell > 0 &&
+    (company.allow_misc_with_customer_materials || !customerSupplies)
       ? rawMaterialSell * (company.misc_material_percent / 100)
       : 0;
 
@@ -396,6 +413,14 @@ function toEngineCompany(s: any) {
     ),
     material_markup_tiers: tiers,
     misc_material_percent: toNum(s?.misc_material_percent, 0),
+    // Admin default toggle label: "Apply Misc Material" (or similar).
+    // Tolerate legacy/alternate schema field names.
+    apply_misc_material_default:
+      s?.apply_misc_material_default ??
+      s?.apply_misc_material ??
+      s?.misc_material_enabled ??
+      s?.misc_enabled ??
+      undefined,
     // Admin toggle label: "Apply misc material when customer supplies materials"
     // Tolerate legacy/alternate schema field names.
     allow_misc_with_customer_materials: Boolean(
@@ -511,6 +536,9 @@ export function computeAssemblyPricing(params: {
   const company = toEngineCompany(companySettings);
   const jt = toEngineJobType(jobType);
 
+  const applyMiscRaw = (assembly as any)?.apply_misc_material;
+  const applyMisc = typeof applyMiscRaw === 'boolean' ? applyMiscRaw : undefined;
+
   const breakdown = computePricingBreakdown({
     company: company,
     jobType: jt,
@@ -525,6 +553,7 @@ export function computeAssemblyPricing(params: {
       customer_supplies_materials:
         Boolean(assembly?.customer_supplied_materials === true) ||
         Boolean((assembly as any)?.customer_supplies_materials === true),
+      apply_misc_material: applyMisc,
     },
   });
   const actualMinutes = breakdown.labor.actual_minutes;
@@ -696,6 +725,9 @@ export function computeEstimatePricing(params: {
   );
   const applyDiscount = Boolean(estimate?.apply_discount ?? estimate?.applyDiscount ?? false);
 
+  const applyMiscRaw = (estimate as any)?.apply_misc_material;
+  const applyMisc = typeof applyMiscRaw === 'boolean' ? applyMiscRaw : undefined;
+
   const breakdown = computePricingBreakdown({
     company: company,
     jobType: jt,
@@ -708,6 +740,7 @@ export function computeEstimatePricing(params: {
       apply_discount: applyDiscount,
       apply_processing_fee: applyProcessing,
       customer_supplies_materials: customerSupplies,
+      apply_misc_material: applyMisc,
       discount_percent_override: Number.isFinite(estDiscountNum) ? estDiscountNum : undefined,
     },
   });
@@ -802,6 +835,7 @@ export function computeEstimateTotalsNormalized(
     gross_margin_expected_percent: pricing.gross_margin_expected_percent ?? null,
   };
 }
+
 
 
 
