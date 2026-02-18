@@ -60,27 +60,24 @@ export function LoginPage() {
           </Button>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
-            <button
+            <Button
               type="button"
+              variant="secondary"
               onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
               style={{
-                background: 'rgba(212,175,55,0.10)',
-                border: '1px solid rgba(212,175,55,0.35)',
-                color: 'var(--text)',
                 padding: '8px 12px',
                 borderRadius: 10,
-                cursor: 'pointer',
-                fontWeight: 600,
                 lineHeight: 1,
               }}
             >
               {mode === 'signin' ? 'Request access' : 'Back to sign in'}
-            </button>
+            </Button>
           </div>
         </div>
       </Card>
     </div>
   );
 }
+
 
 
