@@ -4,6 +4,7 @@ import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
+import { SaveButton, SaveUiState } from '../../ui/components/SaveButton';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Estimate, EstimateOption, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
@@ -114,6 +115,7 @@ export function EstimateEditorPage() {
 
   const [e, setE] = useState<Estimate | null>(null);
   const [status, setStatus] = useState('');
+  const [saveUi, setSaveUi] = useState<SaveUiState>('idle');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
 
@@ -569,6 +571,7 @@ export function EstimateEditorPage() {
 
   async function save(next: Estimate) {
     try {
+      setSaveUi('saving');
       setStatus('Saving…');
 
       const optId = activeOptionId ?? (next as any)?.active_option_id ?? null;
@@ -585,9 +588,13 @@ export function EstimateEditorPage() {
       setE(saved);
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1200);
+      setSaveUi('saved');
+      setTimeout(() => setSaveUi('idle'), 1200);
     } catch (err: any) {
       console.error(err);
       setStatus(String(err?.message ?? err));
+      setSaveUi('error');
+      setTimeout(() => setSaveUi('idle'), 1500);
     }
   }
 
@@ -595,7 +602,18 @@ export function EstimateEditorPage() {
     if (!e) return;
     // If Use Admin Rules is enabled, evaluate rules on save so job type changes apply.
     if ((e as any).use_admin_rules) {
-      await applyAdminRules();
+      try {
+        setSaveUi('saving');
+        setStatus('Saving…');
+        await applyAdminRules();
+        // applyAdminRules already sets user-facing status; still show standard button feedback.
+        setSaveUi('saved');
+        setTimeout(() => setSaveUi('idle'), 1200);
+      } catch (err: any) {
+        console.error(err);
+        setSaveUi('error');
+        setTimeout(() => setSaveUi('idle'), 1500);
+      }
       return;
     }
     await save(e);
@@ -1295,9 +1313,7 @@ async function updateQuantity(itemId: string, quantity: number) {
               Delete
             </Button>
             {!isLocked ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
-            <Button variant="primary" onClick={saveAll}>
-              Save
-            </Button>
+            <SaveButton state={saveUi} onClick={saveAll} disabled={isLocked} />
           </div>
         }
       >
@@ -2117,6 +2133,7 @@ async function updateQuantity(itemId: string, quantity: number) {
     </div>
   );
 }
+
 
 
 
