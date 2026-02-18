@@ -591,6 +591,11 @@ export function EstimateEditorPage() {
 
   async function saveAll() {
     if (!e) return;
+    // If Use Admin Rules is enabled, evaluate rules on save so job type changes apply.
+    if ((e as any).use_admin_rules) {
+      await applyAdminRules();
+      return;
+    }
     await save(e);
   }
 
@@ -1095,7 +1100,7 @@ async function updateQuantity(itemId: string, quantity: number) {
   // (maxDiscountPercent is memoized above)
 
   async function applyAdminRules() {
-    if (!e || isLocked || !(e as any).use_admin_rules) return;
+    if (!e || isLocked) return;
     try {
       setStatus('Applying rules...');
 
@@ -1264,7 +1269,7 @@ async function updateQuantity(itemId: string, quantity: number) {
             <Button variant="danger" onClick={removeEstimate}>
               Delete
             </Button>
-            {(e as any).use_admin_rules && !isLocked ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
+            {!isLocked ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
             <Button variant="primary" onClick={saveAll}>
               Save
             </Button>
