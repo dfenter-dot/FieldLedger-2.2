@@ -74,6 +74,14 @@ export class LocalDataProvider implements IDataProvider {
     return [...this.jobTypes];
   }
 
+  async setDefaultJobType(jobTypeId: string): Promise<void> {
+    // Ensure exactly one default at a time.
+    this.jobTypes = this.jobTypes.map((jt) => ({
+      ...jt,
+      is_default: jt.id === jobTypeId,
+    }));
+  }
+
   async upsertJobType(companyIdOrJobType: any, maybeJobType?: any): Promise<JobType> {
     const jobType = (maybeJobType ?? companyIdOrJobType) as JobType;
     const idx = this.jobTypes.findIndex(j => j.id === jobType.id);
@@ -488,6 +496,7 @@ async deleteEstimate(id: string): Promise<void> {
     return settings as BrandingSettings;
   }
 }
+
 
 
 
