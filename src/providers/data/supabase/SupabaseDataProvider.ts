@@ -320,6 +320,30 @@ export class SupabaseDataProvider implements IDataProvider {
     return data as any;
   }
 
+  async setDefaultJobType(jobTypeId: string): Promise<void> {
+    const companyId = await this.currentCompanyId();
+
+    // IMPORTANT:
+    // - Only ONE job type can be default at a time per company.
+    // - Do not touch app-owned/global job types (company_id IS NULL).
+
+    // Clear current default(s) for this company.
+    const { error: clearErr } = await this.supabase
+      .from('job_types')
+      .update({ is_default: false })
+      .eq('company_id', companyId)
+      .eq('is_default', true);
+    if (clearErr) throw clearErr;
+
+    // Set new default for this company.
+    const { error: setErr } = await this.supabase
+      .from('job_types')
+      .update({ is_default: true })
+      .eq('company_id', companyId)
+      .eq('id', jobTypeId);
+    if (setErr) throw setErr;
+  }
+
   async deleteJobType(companyIdOrId: any, maybeId?: any): Promise<void> {
     const id = (maybeId ?? companyIdOrId) as string;
     const { error } = await this.supabase.from('job_types').delete().eq('id', id);
@@ -1741,6 +1765,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
