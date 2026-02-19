@@ -239,18 +239,24 @@ export function EstimateEditorPage() {
       (async () => {
         try {
           setStatus('Creating…');
-          const settings = await dataRef.current.getCompanySettings();
+          const [settings, jts] = await Promise.all([
+            dataRef.current.getCompanySettings(),
+            dataRef.current.listJobTypes(),
+          ]);
           const starting = Number((settings as any)?.starting_estimate_number ?? 1) || 1;
           const existing = await dataRef.current.listEstimates();
           const maxNum = existing.reduce((m, r) => Math.max(m, Number((r as any).estimate_number ?? 0) || 0), 0);
           const nextNum = Math.max(starting, maxNum + 1);
+
+          const enabled = (jts ?? []).filter((j: any) => j.enabled !== false);
+          const defaultJobTypeId = enabled.find((j: any) => j.is_default === true)?.id ?? enabled[0]?.id ?? null;
 
           const draft: Estimate = {
             id: crypto.randomUUID?.() ?? `est_${Date.now()}`,
             company_id: null,
             name: 'New Estimate',
             estimate_number: nextNum,
-            job_type_id: null,
+            job_type_id: defaultJobTypeId,
             use_admin_rules: false,
             customer_supplies_materials: false,
             apply_discount: false,
