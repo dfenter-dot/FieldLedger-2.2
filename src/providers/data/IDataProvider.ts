@@ -42,6 +42,11 @@ export interface IDataProvider {
      Job Types (Admin)
   ============================ */
   listJobTypes(): Promise<JobType[]>;
+  /**
+   * Sets the default job type for the current company.
+   * Must ensure only ONE job type is_default=true per company.
+   */
+  setDefaultJobType(jobTypeId: string): Promise<void>;
   upsertJobType(companyIdOrJobType: any, maybeJobType?: any): Promise<JobType>;
   deleteJobType(companyIdOrId: any, maybeId?: any): Promise<void>;
 
@@ -131,6 +136,7 @@ export interface IDataProvider {
   getBrandingSettings(): Promise<BrandingSettings>;
   saveBrandingSettings(settings: Partial<BrandingSettings>): Promise<BrandingSettings>;
 }
+
 
 
 
