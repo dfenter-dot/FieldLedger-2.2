@@ -1,0 +1,12 @@
+-- Job Types: support configurable default job type per company
+
+-- 1) Add is_default column (if missing)
+alter table public.job_types
+  add column if not exists is_default boolean not null default false;
+
+-- 2) Enforce at most one default per company (company-owned job types)
+-- Note: This enforces uniqueness for non-null company_id values.
+create unique index if not exists job_types_one_default_per_company
+  on public.job_types (company_id)
+  where (is_default = true and company_id is not null);
+
