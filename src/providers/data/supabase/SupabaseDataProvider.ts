@@ -794,16 +794,20 @@ export class SupabaseDataProvider implements IDataProvider {
 
     // SPEC: assemblies must belong to a folder.
     // Some UI flows may call save with a partial assembly object (e.g. edit-only overrides
-    // on app-owned assemblies). If an id exists, recover folder_id from the existing row.
+    // on app-owned assemblies). If an id exists, recover required fields from the existing row.
     let folderId = (assembly.folder_id ?? assembly.folderId ?? null) as string | null;
-    if (!folderId && assembly?.id) {
+    let existingName: string | null = null;
+    let existingCreatedAt: string | null = null;
+    if (assembly?.id) {
       const { data: existing, error: existingErr } = await this.supabase
         .from('assemblies')
-        .select('folder_id')
+        .select('folder_id, name, created_at')
         .eq('id', assembly.id)
         .maybeSingle();
       if (existingErr) throw existingErr;
-      folderId = (existing as any)?.folder_id ?? null;
+      folderId = folderId ?? (existing as any)?.folder_id ?? null;
+      existingName = (existing as any)?.name ?? null;
+      existingCreatedAt = (existing as any)?.created_at ?? null;
     }
     if (!folderId) {
       throw new Error('Assembly must be saved inside a folder (folder_id is required)');
@@ -819,7 +823,9 @@ export class SupabaseDataProvider implements IDataProvider {
       owner,
       company_id: owner === 'company' ? (assembly.company_id ?? companyId) : null,
       folder_id: folderId,
-      name: assembly.name,
+      // `assemblies.name` is NOT NULL in your schema. When saving from partial editor state,
+      // keep the existing name if one wasn't provided.
+      name: assembly.name ?? existingName,
       description: assembly.description ?? null,
       job_type_id: assembly.job_type_id ?? null,
       use_admin_rules: Boolean(assembly.use_admin_rules ?? false),
@@ -830,7 +836,7 @@ export class SupabaseDataProvider implements IDataProvider {
       task_code_base: (assembly as any).task_code_base ?? (assembly as any).taskCodeBase ?? null,
       task_code: (assembly as any).task_code ?? (assembly as any).taskCode ?? null,
       updated_at: new Date().toISOString(),
-      created_at: assembly.created_at ?? new Date().toISOString(),
+      created_at: assembly.created_at ?? existingCreatedAt ?? new Date().toISOString(),
     };
 
     if (!payload.id) delete payload.id;
