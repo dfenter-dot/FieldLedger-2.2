@@ -19,8 +19,19 @@ export function AssembliesHomePage() {
   const userBoxRef = useRef<HTMLDivElement | null>(null);
   const appBoxRef = useRef<HTMLDivElement | null>(null);
 
-  const inPickerMode = mode.type === 'add-assemblies-to-estimate';
-  const returnPath = inPickerMode ? `/estimates/${mode.estimateId}` : null;
+  const inPickerMode = mode.type === 'add-assemblies-to-estimate' || mode.type === 'pick-assemblies-for-export';
+  const returnPath =
+    mode.type === 'add-assemblies-to-estimate'
+      ? `/estimates/${mode.estimateId}`
+      : mode.type === 'pick-assemblies-for-export'
+        ? mode.returnTo
+        : null;
+  const returnLabel =
+    mode.type === 'add-assemblies-to-estimate'
+      ? 'Return to Estimate'
+      : mode.type === 'pick-assemblies-for-export'
+        ? 'Return to CSV'
+        : 'Return';
 
   async function findAssemblies(lib: 'company' | 'personal', q: string): Promise<Assembly[]> {
     const trimmed = q.trim();
@@ -109,7 +120,7 @@ export function AssembliesHomePage() {
                   setMode({ type: 'none' });
                 }}
               >
-                Return to Estimate
+                {returnLabel}
               </Button>
             </div>
           }
@@ -135,7 +146,7 @@ export function AssembliesHomePage() {
             </div>
             <div ref={userBoxRef} style={{ position: 'relative' }}>
               <Input
-                placeholder="Search user assembliesâ€¦"
+                placeholder="Search user assembliesÃ¢â‚¬Â¦"
                 value={searchUser}
                 onChange={(e) => setSearchUser(e.target.value)}
               />
@@ -166,7 +177,7 @@ export function AssembliesHomePage() {
             </div>
             <div ref={appBoxRef} style={{ position: 'relative' }}>
               <Input
-                placeholder="Search app assembliesâ€¦"
+                placeholder="Search app assembliesÃ¢â‚¬Â¦"
                 value={searchApp}
                 onChange={(e) => setSearchApp(e.target.value)}
               />
@@ -195,5 +206,6 @@ export function AssembliesHomePage() {
     </div>
   );
 }
+
 
 
