@@ -309,39 +309,20 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error) {
       // Tolerate partially-migrated schemas (e.g., missing hourly markup override columns).
       const msg = String((error as any)?.message ?? error);
-      if (msg.includes('hourly_material_markup_mode') || msg.includes('hourly_material_markup_fixed_percent')) {
+      if (
+        msg.includes('hourly_material_markup_mode') ||
+        msg.includes('hourly_material_markup_fixed_percent') ||
+        msg.includes('assembly_task_code_suffix')
+      ) {
         const fallback = { ...payload } as any;
         delete fallback.hourly_material_markup_mode;
         delete fallback.hourly_material_markup_fixed_percent;
+        delete fallback.assembly_task_code_suffix;
         ({ data, error } = await this.supabase.from('job_types').upsert(fallback).select().single());
       }
     }
     if (error) throw error;
     return data as any;
-  }
-
-  async setDefaultJobType(jobTypeId: string): Promise<void> {
-    const companyId = await this.currentCompanyId();
-
-    // IMPORTANT:
-    // - Only ONE job type can be default at a time per company.
-    // - Do not touch app-owned/global job types (company_id IS NULL).
-
-    // Clear current default(s) for this company.
-    const { error: clearErr } = await this.supabase
-      .from('job_types')
-      .update({ is_default: false })
-      .eq('company_id', companyId)
-      .eq('is_default', true);
-    if (clearErr) throw clearErr;
-
-    // Set new default for this company.
-    const { error: setErr } = await this.supabase
-      .from('job_types')
-      .update({ is_default: true })
-      .eq('company_id', companyId)
-      .eq('id', jobTypeId);
-    if (setErr) throw setErr;
   }
 
   async deleteJobType(companyIdOrId: any, maybeId?: any): Promise<void> {
