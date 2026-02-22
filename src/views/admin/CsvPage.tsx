@@ -198,6 +198,7 @@ export function CsvPage() {
   const [allowMaterialImport, setAllowMaterialImport] = useState(true);
   const [allowAssemblyImport, setAllowAssemblyImport] = useState(true);
   const [status, setStatus] = useState('');
+  const [isExportingAssemblies, setIsExportingAssemblies] = useState(false);
 
   // Assemblies export controls
   const [exportAllJobTypes, setExportAllJobTypes] = useState(true);
@@ -296,7 +297,12 @@ export function CsvPage() {
     return s;
   }
 
-  async function collectAllAssembliesAcrossLibraries(): Promise<Assembly[]> {
+  function fmt2(n: any) {
+    const x = Number(n);
+    return Number.isFinite(x) ? x.toFixed(2) : '0.00';
+  }
+
+  nc function collectAllAssembliesAcrossLibraries(): Promise<Assembly[]> {
     const libs: Array<LibraryType> = ['company' as any, 'personal' as any];
     const all: Assembly[] = [];
     for (const lib of libs) {
@@ -314,6 +320,7 @@ export function CsvPage() {
 
   async function exportAssemblies() {
     try {
+      setIsExportingAssemblies(true);
       setStatus('Exporting assemblies...');
 
       const companySettings = await data.getCompanySettings();
@@ -389,8 +396,8 @@ export function CsvPage() {
           const row = [
             String((asm as any)?.name ?? ''),
             String((asm as any)?.description ?? ''),
-            String(Number(pricing?.total_price ?? 0)),
-            String(Number(pricing?.material_cost_total ?? 0) + Number(pricing?.labor_price_total ?? 0)),
+            fmt2(pricing?.total_price ?? 0),
+            fmt2(Number(pricing?.material_cost_total ?? 0) + Number(pricing?.labor_price_total ?? 0)),
             taskCode,
             String((jt as any)?.name ?? ''),
           ].map(csvEscapeAny);
@@ -404,6 +411,8 @@ export function CsvPage() {
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
+    } finally {
+      setIsExportingAssemblies(false);
     }
   }
 
@@ -653,7 +662,9 @@ export function CsvPage() {
           </div>
 
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <Button onClick={exportAssemblies}>Export Assemblies CSV</Button>
+            <Button onClick={exportAssemblies} disabled={isExportingAssemblies}>
+              {isExportingAssemblies ? 'Exporting…' : 'Export Assemblies CSV'}
+            </Button>
             <Button onClick={() => asmInputRef.current?.click()} disabled={!allowAssemblyImport}>Import Assemblies CSV</Button>
             <input
               ref={asmInputRef}
