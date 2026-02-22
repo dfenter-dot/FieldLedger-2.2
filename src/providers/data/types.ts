@@ -234,6 +234,17 @@ export interface Assembly {
   /** Derived full task code based on job type suffix, e.g., 134205SRV */
   task_code?: string | null;
 
+
+  /**
+   * App-assembly task-code override behavior (company-scoped).
+   * - When viewing an app-owned assembly as a normal company, the UI may allow overriding ONLY task_code_base.
+   * - use_app_task_code=true means use the app-owned base task code (still applies the selected job type suffix).
+   * - use_app_task_code=false means use the company override value stored in app_assembly_overrides.task_code_base.
+   */
+  use_app_task_code?: boolean;
+  /** The original app-owned base task code (for display when use_app_task_code=true). */
+  app_task_code_base?: string | null;
+
   library_type: LibraryType;
 
   created_at?: string;
@@ -401,6 +412,7 @@ export interface BrandingSettings {
   logo_storage_path?: string | null;
   updated_at?: string;
 }
+
 
 
 
