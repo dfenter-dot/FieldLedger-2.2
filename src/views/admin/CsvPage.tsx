@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
 import { Toggle } from '../../ui/components/Toggle';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Folder, Material, LibraryType } from '../../providers/data/types';
+import { computeAssemblyPricing } from '../../providers/data/pricing';
+import { useSelection } from '../../providers/selection/SelectionContext';
 
 type CsvRow = Record<string, string>;
 
@@ -190,9 +193,17 @@ async function ensureFolderPath(data: any, kind: 'materials' | 'assemblies', lib
 
 export function CsvPage() {
   const data = useData();
+  const nav = useNavigate();
+  const { exportAssemblyIds, setExportAssemblyIds, setMode } = useSelection();
   const [allowMaterialImport, setAllowMaterialImport] = useState(true);
   const [allowAssemblyImport, setAllowAssemblyImport] = useState(true);
   const [status, setStatus] = useState('');
+
+  // Assemblies export controls
+  const [exportAllJobTypes, setExportAllJobTypes] = useState(true);
+  const [exportJobTypeIds, setExportJobTypeIds] = useState<string[]>([]);
+  const [exportAllAssemblies, setExportAllAssemblies] = useState(true);
+  const [jobTypesUi, setJobTypesUi] = useState<any[]>([]);
 
   const matInputRef = useRef<HTMLInputElement | null>(null);
   const asmInputRef = useRef<HTMLInputElement | null>(null);
@@ -204,6 +215,20 @@ export function CsvPage() {
         setAllowAssemblyImport(Boolean(s.allow_assembly_import));
       })
       .catch((e) => setStatus(String((e as any)?.message ?? e)));
+  }, [data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    data.listJobTypes()
+      .then((rows: any) => {
+        if (!cancelled) setJobTypesUi(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setJobTypesUi([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [data]);
 
   const settingsPayload = useMemo(() => ({
@@ -234,7 +259,7 @@ export function CsvPage() {
       const all: Material[] = [];
       const folderIds = [null, ...folders.map((f) => f.id)];
       for (const folderId of folderIds) {
-        const mats = await data.listMaterials({ libraryType: LibraryType, folderId });
+        const mats = await data.listMaterials({ libraryType: 'company' as any, folderId });
         all.push(...mats);
       }
 
@@ -265,41 +290,117 @@ export function CsvPage() {
     }
   }
 
+  function csvEscapeAny(val: any) {
+    const s = String(val ?? '');
+    if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) return `"${s.replaceAll('"', '""')}"`;
+    return s;
+  }
+
+  async function collectAllAssembliesAcrossLibraries(): Promise<Assembly[]> {
+    const libs: Array<LibraryType> = ['company' as any, 'personal' as any];
+    const all: Assembly[] = [];
+    for (const lib of libs) {
+      const folders = await collectAllFolders(data, 'assemblies', lib);
+      const folderIds = [null, ...folders.map((f) => f.id)];
+      for (const folderId of folderIds) {
+        const asms = await data.listAssemblies({ libraryType: lib, folderId });
+        all.push(...asms);
+      }
+    }
+    const byId = new Map<string, Assembly>();
+    for (const a of all) byId.set(a.id, a);
+    return [...byId.values()];
+  }
+
   async function exportAssemblies() {
     try {
       setStatus('Exporting assemblies...');
-      const folders = await collectAllFolders(data, 'assemblies', libraryType);
-      const existingAssemblies = await collectAllAssemblies(data, libraryType, folders);
-      const assemblyIdByFolderAndName = new Map<string, string>();
-      for (const a of existingAssemblies) {
-        const key = `${a.folder_id ?? 'root'}::${(a.name ?? '').trim().toLowerCase()}`;
-        if (!assemblyIdByFolderAndName.has(key)) assemblyIdByFolderAndName.set(key, a.id);
+
+      const companySettings = await data.getCompanySettings();
+      const jobTypes = await data.listJobTypes().catch(() => [] as any[]);
+      const jobTypesById: Record<string, any> = {};
+      for (const jt of jobTypes as any[]) if (jt?.id) jobTypesById[String(jt.id)] = jt;
+
+      const chosenJobTypes = exportAllJobTypes
+        ? (jobTypes as any[])
+        : (jobTypes as any[]).filter((jt) => jt?.id && exportJobTypeIds.includes(String(jt.id)));
+
+      if (chosenJobTypes.length === 0) {
+        setStatus('Select at least one Job Type to export.');
+        return;
       }
-      const { pathForFolderId } = buildPathMap(folders);
-      const all: Assembly[] = [];
-      const folderIds = [null, ...folders.map((f) => f.id)];
-      for (const folderId of folderIds) {
-        const asms = await data.listAssemblies({ libraryType: LibraryType, folderId });
-        all.push(...asms);
+
+      const baseAssemblies: any[] = exportAllAssemblies
+        ? await collectAllAssembliesAcrossLibraries()
+        : (await Promise.all(exportAssemblyIds.map((id) => data.getAssembly(id)))).filter(Boolean) as any[];
+
+      if (baseAssemblies.length === 0) {
+        setStatus('Select at least one Assembly to export.');
+        return;
       }
-      const header = ['path', 'name', 'description', 'use_admin_rules', 'job_type_id', 'customer_supplies_materials', 'labor_minutes', 'items_json'];
+
+      const fullAssemblies = await Promise.all(
+        baseAssemblies.map(async (a) => {
+          const full = await data.getAssembly(a.id).catch(() => null);
+          return full ?? a;
+        })
+      );
+
+      // Collect material IDs referenced by selected assemblies
+      const matIds = new Set<string>();
+      for (const asm of fullAssemblies) {
+        for (const it of (asm?.items ?? []) as any[]) {
+          if ((it?.type ?? it?.item_type) !== 'material') continue;
+          const id = String(it?.material_id ?? it?.materialId ?? '').trim();
+          if (id) matIds.add(id);
+        }
+      }
+
+      const materialsById: Record<string, any> = {};
+      await Promise.all(
+        [...matIds].map(async (id) => {
+          try {
+            const m = await data.getMaterial(id);
+            if (m) materialsById[id] = m;
+          } catch {
+            // ignore
+          }
+        })
+      );
+
+      const header = ['Name', 'Description', 'Price', 'Cost', 'Task Code', 'Job Type'];
       const lines = [header.join(',')];
-      for (const a of all) {
-        const row = [
-          pathForFolderId(a.folder_id),
-          a.name ?? '',
-          a.description ?? '',
-          String(Boolean(a.use_admin_rules)),
-          a.job_type_id ?? '',
-          String(Boolean(a.customer_supplies_materials)),
-          String(a.labor_minutes ?? 0),
-          JSON.stringify(a.items ?? []),
-        ].map(escapeCsv);
-        lines.push(row.join(','));
+
+      for (const asm of fullAssemblies) {
+        for (const jt of chosenJobTypes) {
+          const jobTypeId = String(jt.id);
+          const pricing = computeAssemblyPricing({
+            assembly: { ...(asm ?? {}), job_type_id: jobTypeId },
+            items: (asm?.items ?? []) as any[],
+            materialsById,
+            jobTypesById,
+            companySettings,
+          });
+
+          const base = String((asm as any)?.task_code_base ?? '').trim();
+          const suffix = String((jt as any)?.assembly_task_code_suffix ?? (jt as any)?.task_code_suffix ?? '').trim();
+          const taskCode = base ? (suffix ? `${base}${suffix}` : base) : '';
+
+          const row = [
+            String((asm as any)?.name ?? ''),
+            String((asm as any)?.description ?? ''),
+            String(Number(pricing?.total_price ?? 0)),
+            String(Number(pricing?.material_cost_total ?? 0) + Number(pricing?.labor_price_total ?? 0)),
+            taskCode,
+            String((jt as any)?.name ?? ''),
+          ].map(csvEscapeAny);
+          lines.push(row.join(','));
+        }
       }
+
       downloadText('assemblies_export.csv', lines.join('\n'));
-      setStatus('Assemblies exported.');
-      setTimeout(() => setStatus(''), 1500);
+      setStatus(`Assemblies exported: ${fullAssemblies.length} assemblies × ${chosenJobTypes.length} job types = ${fullAssemblies.length * chosenJobTypes.length} rows.`);
+      setTimeout(() => setStatus(''), 2500);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
@@ -478,28 +579,104 @@ export function CsvPage() {
       </Card>
 
       <Card title="Assemblies">
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <Button onClick={exportAssemblies}>Export Assemblies</Button>
-          <Button onClick={() => asmInputRef.current?.click()} disabled={!allowAssemblyImport}>Import Assemblies CSV</Button>
-          <input
-            ref={asmInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.currentTarget.value = '';
-              if (f) void importAssemblies(f);
-            }}
-          />
-        </div>
-        <div className="muted small mt">
-          App-owned libraries are not exported item-by-item. This exports only your company-owned assemblies.
+        <div className="grid2" style={{ gap: 14 }}>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Job Types</div>
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Toggle
+                checked={exportAllJobTypes}
+                onChange={(v) => {
+                  setExportAllJobTypes(Boolean(v));
+                  if (v) setExportJobTypeIds([]);
+                }}
+                label="All job types"
+              />
+              {!exportAllJobTypes ? (
+                <div className="muted small">Select one or more job types below.</div>
+              ) : null}
+            </div>
+            {!exportAllJobTypes ? (
+              <div className="row" style={{ gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+                {jobTypesUi.map((jt: any) => {
+                  const id = String(jt?.id ?? '');
+                  if (!id) return null;
+                  const checked = exportJobTypeIds.includes(id);
+                  return (
+                    <label key={id} className="pill" style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setExportJobTypeIds((prev) =>
+                            checked ? prev.filter((x) => x !== id) : [...prev, id]
+                          );
+                        }}
+                      />
+                      {String(jt?.name ?? 'Job Type')}
+                    </label>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Assemblies</div>
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Toggle
+                checked={exportAllAssemblies}
+                onChange={(v) => {
+                  setExportAllAssemblies(Boolean(v));
+                  if (v) setExportAssemblyIds([]);
+                }}
+                label="All assemblies (User + App)"
+              />
+              {!exportAllAssemblies ? (
+                <>
+                  <Button
+                    onClick={() => {
+                      setMode({ type: 'pick-assemblies-for-export', returnTo: '/admin/csv' });
+                      nav('/assemblies');
+                    }}
+                  >
+                    Choose Assemblies
+                  </Button>
+                  <div className="muted small">Selected: {exportAssemblyIds.length}</div>
+                  {exportAssemblyIds.length > 0 ? (
+                    <Button variant="danger" onClick={() => setExportAssemblyIds([])}>
+                      Clear
+                    </Button>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <Button onClick={exportAssemblies}>Export Assemblies CSV</Button>
+            <Button onClick={() => asmInputRef.current?.click()} disabled={!allowAssemblyImport}>Import Assemblies CSV</Button>
+            <input
+              ref={asmInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.currentTarget.value = '';
+                if (f) void importAssemblies(f);
+              }}
+            />
+          </div>
+
+          <div className="muted small">
+            Export columns: Name, Description, Price, Cost, Task Code, Job Type. If you select 3 assemblies and 2 job types, you will export 6 rows.
+          </div>
         </div>
       </Card>
     </div>
   );
 }
+
 
 
 
