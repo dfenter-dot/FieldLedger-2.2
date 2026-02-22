@@ -116,6 +116,12 @@ export interface JobType {
   /** Optional description used by the UI (nullable in DB). */
   description?: string | null;
 
+  /**
+   * Optional suffix used when generating Assembly task codes for this Job Type.
+   * Admin-configurable. Expected format: 3-6 alphanumeric characters.
+   */
+  assembly_task_code_suffix?: string | null;
+
   created_at?: string;
   updated_at?: string;
 }
@@ -382,6 +388,7 @@ export interface BrandingSettings {
   logo_storage_path?: string | null;
   updated_at?: string;
 }
+
 
 
 
