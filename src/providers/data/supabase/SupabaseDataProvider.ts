@@ -857,14 +857,9 @@ export class SupabaseDataProvider implements IDataProvider {
           ? 'company'
           : this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
 
-    // SPEC: assemblies must belong to a folder
-    const folderId = assembly.folder_id ?? null;
-    if (!folderId) {
-      throw new Error('Assembly must be saved inside a folder (folder_id is required)');
-    }
-
     // Permissions: prevent non-app-owner from mutating app-owned base.
     // Exception: normal companies may override ONLY the task code base (company-scoped) for app-owned assemblies.
+    // IMPORTANT: this override path must NOT require folder_id, since the client may submit only the override fields.
     if ((assembly.company_id === null || owner === 'app') && !(await this.isAppOwner())) {
       const useAppTaskCode = assembly.use_app_task_code !== false;
       const taskCodeBase = (assembly.task_code_base ?? assembly.taskCodeBase ?? null) as any;
@@ -876,6 +871,12 @@ export class SupabaseDataProvider implements IDataProvider {
       // Return merged view (base + override) without touching the app-owned assembly row.
       const merged = await this.getAssembly(assembly.id);
       return merged as any;
+    }
+
+    // SPEC: assemblies must belong to a folder (for all base-row writes)
+    const folderId = assembly.folder_id ?? null;
+    if (!folderId) {
+      throw new Error('Assembly must be saved inside a folder (folder_id is required)');
     }
 
     const payload: any = {
