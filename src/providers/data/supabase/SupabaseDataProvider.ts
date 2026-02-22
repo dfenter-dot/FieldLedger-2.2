@@ -679,7 +679,7 @@ export class SupabaseDataProvider implements IDataProvider {
     const { data, error } = await q;
     if (error) throw error;
 
-    return (data ?? []).map((row: any) => ({
+    const base = (data ?? []).map((row: any) => ({
       id: row.id,
       company_id: row.company_id ?? null,
       owner_type: row.owner,
@@ -696,8 +696,64 @@ export class SupabaseDataProvider implements IDataProvider {
       taxable: Boolean(row.taxable ?? false),
       // NOTE: used by LibraryFolderPage; safe to ignore elsewhere
       item_count: Number(row?.assembly_items?.[0]?.count ?? 0),
+      task_code_base: (row as any).task_code_base ?? null,
+      task_code: (row as any).task_code ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
+    })) as any;
+
+    // App-owned assemblies act as templates; some flows (CSV export) need their items hydrated to
+    // compute pricing under the current company's settings and per-company material overrides.
+    // Keep company-owned lists lightweight.
+    if (owner !== 'app') return base;
+
+    const ids = base.map((a: any) => a?.id).filter(Boolean) as string[];
+    if (ids.length === 0) return base;
+
+    let itemsRows: any[] = [];
+    {
+      const qItems = this.supabase.from('assembly_items').select('*').in('assembly_id', ids);
+      const orderCandidates = ['sort_order', 'order_index', 'order'];
+      let got = false;
+      for (const col of orderCandidates) {
+        const { data: rows, error: err } = await qItems.order(col as any, { ascending: true });
+        if (!err) {
+          itemsRows = (rows ?? []) as any[];
+          got = true;
+          break;
+        }
+      }
+      if (!got) {
+        const { data: rows, error: err } = await qItems;
+        if (err) throw err;
+        itemsRows = (rows ?? []) as any[];
+      }
+    }
+
+    const byAsm = new Map<string, any[]>();
+    for (const it of itemsRows) {
+      const aid = it.assembly_id;
+      if (!aid) continue;
+      if (!byAsm.has(aid)) byAsm.set(aid, []);
+      byAsm.get(aid)!.push({
+        id: it.id,
+        assembly_id: it.assembly_id,
+        item_type: it.item_type ?? it.type,
+        type: it.item_type ?? it.type,
+        material_id: it.material_id ?? null,
+        name: it.name ?? null,
+        quantity: Number(it.quantity ?? 1),
+        material_cost_override: it.material_cost_override ?? null,
+        unit_cost: it.material_cost_override ?? null,
+        taxable: true,
+        labor_minutes: Number(it.labor_minutes ?? 0),
+        sort_order: Number(it.sort_order ?? it.order_index ?? it.order ?? 0),
+      });
+    }
+
+    return base.map((a: any) => ({
+      ...a,
+      items: byAsm.get(a.id) ?? [],
     })) as any;
   }
 
@@ -792,23 +848,8 @@ export class SupabaseDataProvider implements IDataProvider {
           ? 'company'
           : this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
 
-    // SPEC: assemblies must belong to a folder.
-    // Some UI flows may call save with a partial assembly object (e.g. edit-only overrides
-    // on app-owned assemblies). If an id exists, recover required fields from the existing row.
-    let folderId = (assembly.folder_id ?? assembly.folderId ?? null) as string | null;
-    let existingName: string | null = null;
-    let existingCreatedAt: string | null = null;
-    if (assembly?.id) {
-      const { data: existing, error: existingErr } = await this.supabase
-        .from('assemblies')
-        .select('folder_id, name, created_at')
-        .eq('id', assembly.id)
-        .maybeSingle();
-      if (existingErr) throw existingErr;
-      folderId = folderId ?? (existing as any)?.folder_id ?? null;
-      existingName = (existing as any)?.name ?? null;
-      existingCreatedAt = (existing as any)?.created_at ?? null;
-    }
+    // SPEC: assemblies must belong to a folder
+    const folderId = assembly.folder_id ?? null;
     if (!folderId) {
       throw new Error('Assembly must be saved inside a folder (folder_id is required)');
     }
@@ -823,9 +864,7 @@ export class SupabaseDataProvider implements IDataProvider {
       owner,
       company_id: owner === 'company' ? (assembly.company_id ?? companyId) : null,
       folder_id: folderId,
-      // `assemblies.name` is NOT NULL in your schema. When saving from partial editor state,
-      // keep the existing name if one wasn't provided.
-      name: assembly.name ?? existingName,
+      name: assembly.name,
       description: assembly.description ?? null,
       job_type_id: assembly.job_type_id ?? null,
       use_admin_rules: Boolean(assembly.use_admin_rules ?? false),
@@ -836,7 +875,7 @@ export class SupabaseDataProvider implements IDataProvider {
       task_code_base: (assembly as any).task_code_base ?? (assembly as any).taskCodeBase ?? null,
       task_code: (assembly as any).task_code ?? (assembly as any).taskCode ?? null,
       updated_at: new Date().toISOString(),
-      created_at: assembly.created_at ?? existingCreatedAt ?? new Date().toISOString(),
+      created_at: assembly.created_at ?? new Date().toISOString(),
     };
 
     if (!payload.id) delete payload.id;
