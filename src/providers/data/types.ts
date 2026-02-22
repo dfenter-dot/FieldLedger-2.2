@@ -117,6 +117,12 @@ export interface JobType {
   description?: string | null;
 
   /** Optional 3–6 character suffix appended to Assembly task codes (e.g., SRV, INS). */
+  assembly_task_code_suffix?: string | null;
+
+  /**
+   * Backward-compat alias used by a short-lived migration attempt.
+   * If present in DB, the app will treat it the same as assembly_task_code_suffix.
+   */
   task_code_suffix?: string | null;
 
   created_at?: string;
