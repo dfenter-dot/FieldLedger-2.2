@@ -47,44 +47,6 @@ export class SupabaseDataProvider implements IDataProvider {
 
 
 
-
-  private async getAppAssemblyOverride(companyId: string, assemblyId: string): Promise<any | null> {
-    const { data, error } = await this.supabase
-      .from('app_assembly_overrides')
-      .select('use_app_task_code, task_code_base')
-      .eq('company_id', companyId)
-      .eq('assembly_id', assemblyId)
-      .maybeSingle();
-    if (error) {
-      // If the table doesn't exist yet, treat as no override.
-      const msg = (error as any)?.message ?? '';
-      if (/relation .* does not exist/i.test(msg) || /schema cache/i.test(msg)) return null;
-      throw error;
-    }
-    return data ?? null;
-  }
-
-  private async upsertAppAssemblyOverride(
-    companyId: string,
-    assemblyId: string,
-    useAppTaskCode: boolean,
-    taskCodeBase: string | null
-  ): Promise<void> {
-    const payload: any = {
-      company_id: companyId,
-      assembly_id: assemblyId,
-      use_app_task_code: Boolean(useAppTaskCode),
-      task_code_base: useAppTaskCode ? null : (taskCodeBase ? String(taskCodeBase).trim() : null),
-      updated_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
-
-    const { error } = await this.supabase.from('app_assembly_overrides').upsert(payload, {
-      onConflict: 'company_id,assembly_id',
-    } as any);
-    if (error) throw error;
-  }
-
   private _isAppOwner: boolean | null = null;
   private _estimateItemsOptionFkCol: string | null = null;
 
@@ -744,33 +706,6 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error) throw error;
     if (!data) return null;
 
-    // For app-owned assemblies, allow per-company task code overrides (task_code_base only).
-    // Normal companies remain read-only for all other fields.
-    let appTaskCodeBase: string | null = (data as any).task_code_base ?? null;
-    let useAppTaskCode: boolean = true;
-
-    const owner: DbOwner = (data as any).owner === 'app' || (data as any).company_id == null ? 'app' : 'company';
-    if (owner === 'app' && !(await this.isAppOwner())) {
-      const companyId = await this.currentCompanyId();
-      const ovr = await this.getAppAssemblyOverride(companyId, id);
-      if (ovr) {
-        useAppTaskCode = ovr.use_app_task_code !== false;
-        if (!useAppTaskCode) {
-          const oBase = (ovr.task_code_base ?? null) as any;
-          if (oBase != null && String(oBase).trim() !== '') {
-            (data as any).task_code_base = String(oBase).trim();
-          } else {
-            (data as any).task_code_base = null;
-          }
-          // Force derived task_code to be recomputed by UI (suffix depends on job type).
-          (data as any).task_code = null;
-        }
-      }
-      // Provide UI helper fields (not persisted on assemblies table)
-      (data as any).app_task_code_base = appTaskCodeBase;
-      (data as any).use_app_task_code = useAppTaskCode;
-    }
-
     // Assembly line items have existed with a few different column names over the life of the project.
     // Some DB schemas use `sort_order`, others use `order_index`, and some have no order column.
     // We MUST be tolerant here because a 400 from PostgREST will prevent materials from ever being added.
@@ -857,26 +792,26 @@ export class SupabaseDataProvider implements IDataProvider {
           ? 'company'
           : this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
 
-    // Permissions: prevent non-app-owner from mutating app-owned base.
-    // Exception: normal companies may override ONLY the task code base (company-scoped) for app-owned assemblies.
-    // IMPORTANT: this override path must NOT require folder_id, since the client may submit only the override fields.
-    if ((assembly.company_id === null || owner === 'app') && !(await this.isAppOwner())) {
-      const useAppTaskCode = assembly.use_app_task_code !== false;
-      const taskCodeBase = (assembly.task_code_base ?? assembly.taskCodeBase ?? null) as any;
-
-      if (!assembly.id) throw new Error('Missing assembly id for override');
-
-      await this.upsertAppAssemblyOverride(companyId, assembly.id, useAppTaskCode, taskCodeBase ? String(taskCodeBase) : null);
-
-      // Return merged view (base + override) without touching the app-owned assembly row.
-      const merged = await this.getAssembly(assembly.id);
-      return merged as any;
+    // SPEC: assemblies must belong to a folder.
+    // Some UI flows may call save with a partial assembly object (e.g. edit-only overrides
+    // on app-owned assemblies). If an id exists, recover folder_id from the existing row.
+    let folderId = (assembly.folder_id ?? assembly.folderId ?? null) as string | null;
+    if (!folderId && assembly?.id) {
+      const { data: existing, error: existingErr } = await this.supabase
+        .from('assemblies')
+        .select('folder_id')
+        .eq('id', assembly.id)
+        .maybeSingle();
+      if (existingErr) throw existingErr;
+      folderId = (existing as any)?.folder_id ?? null;
     }
-
-    // SPEC: assemblies must belong to a folder (for all base-row writes)
-    const folderId = assembly.folder_id ?? null;
     if (!folderId) {
       throw new Error('Assembly must be saved inside a folder (folder_id is required)');
+    }
+
+    // Permissions: prevent non-app-owner from mutating app-owned base
+    if ((assembly.company_id === null || owner === 'app') && !(await this.isAppOwner())) {
+      throw new Error('App assemblies cannot be edited directly');
     }
 
     const payload: any = {
