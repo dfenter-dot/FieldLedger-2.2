@@ -1,0 +1,35 @@
+-- FieldLedger: Assembly Task Codes
+-- Adds:
+-- - job_types.assembly_task_code_suffix (optional 3–6 char code)
+-- - assemblies.task_code_base (user input)
+-- - assemblies.task_code (derived full task code)
+
+BEGIN;
+
+-- Canonical job type suffix column (created in an earlier migration, but safe to ensure it exists).
+ALTER TABLE public.job_types
+  ADD COLUMN IF NOT EXISTS assembly_task_code_suffix text;
+
+-- Enforce 3–6 alphanumeric characters when provided.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'job_types_task_code_suffix_chk'
+  ) THEN
+    ALTER TABLE public.job_types
+      ADD CONSTRAINT job_types_task_code_suffix_chk
+      CHECK (
+        assembly_task_code_suffix IS NULL
+        OR assembly_task_code_suffix ~ '^[A-Za-z0-9]{3,6}$'
+      );
+  END IF;
+END $$;
+
+ALTER TABLE public.assemblies
+  ADD COLUMN IF NOT EXISTS task_code_base text,
+  ADD COLUMN IF NOT EXISTS task_code text;
+
+COMMIT;
+
