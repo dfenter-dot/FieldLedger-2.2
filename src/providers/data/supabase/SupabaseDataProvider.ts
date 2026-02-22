@@ -305,6 +305,12 @@ export class SupabaseDataProvider implements IDataProvider {
     const payload: any = { ...jobType };
     if (!payload.company_id) payload.company_id = companyId;
 
+    // Canonicalize task code suffix column (avoid sending unknown/legacy columns).
+    if (payload.task_code_suffix != null && payload.assembly_task_code_suffix == null) {
+      payload.assembly_task_code_suffix = payload.task_code_suffix;
+    }
+    delete payload.task_code_suffix;
+
     let { data, error } = await this.supabase.from('job_types').upsert(payload).select().single();
     if (error) {
       // Tolerate partially-migrated schemas (e.g., missing hourly markup override columns).
@@ -313,6 +319,13 @@ export class SupabaseDataProvider implements IDataProvider {
         const fallback = { ...payload } as any;
         delete fallback.hourly_material_markup_mode;
         delete fallback.hourly_material_markup_fixed_percent;
+        ({ data, error } = await this.supabase.from('job_types').upsert(fallback).select().single());
+      }
+
+      // Tolerate schemas that don't yet include the task code suffix column.
+      if (error && msg.includes('assembly_task_code_suffix')) {
+        const fallback = { ...payload } as any;
+        delete fallback.assembly_task_code_suffix;
         ({ data, error } = await this.supabase.from('job_types').upsert(fallback).select().single());
       }
     }
