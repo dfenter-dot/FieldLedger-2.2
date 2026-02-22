@@ -1,0 +1,51 @@
+-- Create per-company overrides for app-owned assemblies (task code only)
+-- This keeps app-owned assemblies immutable while allowing companies to override the base task code.
+create table if not exists public.app_assembly_overrides (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references public.companies(id) on delete cascade,
+  assembly_id uuid not null references public.assemblies(id) on delete cascade,
+  use_app_task_code boolean not null default true,
+  task_code_base text null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(company_id, assembly_id)
+);
+
+-- Basic validation: 3–6 alphanumeric suffix is handled on job_types; task_code_base is user-defined and may be longer.
+-- If you want to constrain task_code_base to digits only, do it later as a separate deliberate change.
+
+alter table public.app_assembly_overrides enable row level security;
+
+-- RLS: company users can read/write only their own overrides
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='app_assembly_overrides' and policyname='app_assembly_overrides_select_own') then
+    create policy app_assembly_overrides_select_own
+      on public.app_assembly_overrides
+      for select
+      using (company_id = (select company_id from public.profiles where user_id = auth.uid()));
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='app_assembly_overrides' and policyname='app_assembly_overrides_upsert_own') then
+    create policy app_assembly_overrides_upsert_own
+      on public.app_assembly_overrides
+      for insert
+      with check (company_id = (select company_id from public.profiles where user_id = auth.uid()));
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='app_assembly_overrides' and policyname='app_assembly_overrides_update_own') then
+    create policy app_assembly_overrides_update_own
+      on public.app_assembly_overrides
+      for update
+      using (company_id = (select company_id from public.profiles where user_id = auth.uid()))
+      with check (company_id = (select company_id from public.profiles where user_id = auth.uid()));
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='app_assembly_overrides' and policyname='app_assembly_overrides_delete_own') then
+    create policy app_assembly_overrides_delete_own
+      on public.app_assembly_overrides
+      for delete
+      using (company_id = (select company_id from public.profiles where user_id = auth.uid()));
+  end if;
+end $$;
+
