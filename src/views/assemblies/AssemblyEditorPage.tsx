@@ -121,7 +121,7 @@ export function AssemblyEditorPage() {
     (jobTypes ?? []).forEach((jt: any) => {
       const id = jt?.id;
       if (!id) return;
-      const raw = String(jt.task_code_suffix ?? '').trim();
+      const raw = String((jt.assembly_task_code_suffix ?? jt.task_code_suffix) ?? '').trim();
       if (raw) m.set(id, raw);
     });
     return m;
