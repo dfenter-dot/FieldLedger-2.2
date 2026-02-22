@@ -4,7 +4,6 @@ import { Button } from '../../ui/components/Button';
 import { Card } from '../../ui/components/Card';
 import { Input } from '../../ui/components/Input';
 import { Toggle } from '../../ui/components/Toggle';
-import { SaveButton, SaveUiState } from '../../ui/components/SaveButton';
 import { useData } from '../../providers/data/DataContext';
 import type { Assembly, Material } from '../../providers/data/types';
 import { useSelection } from '../../providers/selection/SelectionContext';
@@ -96,7 +95,6 @@ export function AssemblyEditorPage() {
   const [a, setA] = useState<Assembly | null>(null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
-  const [saveUi, setSaveUi] = useState<SaveUiState>('idle');
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
@@ -117,6 +115,37 @@ export function AssemblyEditorPage() {
     const def = enabledJobTypes.find((j: any) => j.is_default === true) ?? enabledJobTypes[0];
     return def?.id ?? null;
   }, [enabledJobTypes]);
+
+  const jobTypeSuffixById = useMemo(() => {
+    const m = new Map<string, string>();
+    (jobTypes ?? []).forEach((jt: any) => {
+      const id = jt?.id;
+      if (!id) return;
+      const raw = String(jt.task_code_suffix ?? '').trim();
+      if (raw) m.set(id, raw);
+    });
+    return m;
+  }, [jobTypes]);
+
+  function computeFullTaskCode(base: string | null | undefined, jobTypeId: string | null | undefined) {
+    const b = String(base ?? '').trim();
+    if (!b) return '';
+    const suf = jobTypeId ? jobTypeSuffixById.get(jobTypeId) : '';
+    return suf ? `${b}${suf}` : b;
+  }
+
+  // Keep derived task_code in sync with base + job type selection (without altering the user's base input).
+  useEffect(() => {
+    if (!a) return;
+    const jtId = (getEffectiveJobTypeId(a) ?? a.job_type_id ?? (a as any).jobTypeId) as any;
+    const full = computeFullTaskCode((a as any).task_code_base, jtId || null);
+    const next = full ? full : null;
+    if (((a as any).task_code ?? null) !== next) {
+      setA({ ...(a as any), task_code: next } as any);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a?.task_code_base, a?.job_type_id, (a as any)?.jobTypeId, jobTypeSuffixById]);
+
 
   const enabledJobTypeIds = useMemo(() => {
     return new Set(enabledJobTypes.map((j: any) => j.id));
@@ -414,19 +443,14 @@ export function AssemblyEditorPage() {
     }
     try {
       setSaving(true);
-      setSaveUi('saving');
       setStatus('Saving…');
       const saved = await data.upsertAssembly(next);
       setA(saved);
       setStatus('Saved.');
       setTimeout(() => setStatus(''), 1500);
-      setSaveUi('saved');
-      setTimeout(() => setSaveUi('idle'), 1200);
     } catch (e: any) {
       console.error(e);
       setStatus(String(e?.message ?? e));
-      setSaveUi('error');
-      setTimeout(() => setSaveUi('idle'), 1500);
     } finally {
       setSaving(false);
     }
@@ -784,7 +808,9 @@ export function AssemblyEditorPage() {
             </Button>
             {/* Assemblies: keep rules feature in code for future, but hide it from the UI. */}
             {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
-            <SaveButton state={saveUi} onClick={saveAll} disabled={saving} />
+            <Button variant="primary" onClick={saveAll} disabled={saving}>
+              Save
+            </Button>
           </div>
         }
       >
@@ -792,7 +818,28 @@ export function AssemblyEditorPage() {
           <div className="stack">
             <label className="label">Assembly Name</label>
             <Input value={a.name} disabled={readOnlyAppAssembly} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
+          
+
+          <div className="stack">
+            <label className="label">Master Task Code</label>
+            <Input
+              value={(a as any).task_code_base ?? ''}
+              disabled={readOnlyAppAssembly}
+              placeholder="e.g., 134205"
+              onChange={(e) => {
+                const base = e.target.value;
+                const jtId = getEffectiveJobTypeId(a) ?? null;
+                const full = computeFullTaskCode(base, jtId);
+                setA({ ...(a as any), task_code_base: base, task_code: full ? full : null } as any);
+              }}
+            />
           </div>
+
+          <div className="stack">
+            <label className="label">Task Code (auto)</label>
+            <Input value={(a as any).task_code ?? ''} disabled />
+          </div>
+</div>
 
           {/* Assemblies: keep Use Admin Rules functionality intact but hidden from view. */}
           {(
@@ -813,7 +860,12 @@ export function AssemblyEditorPage() {
               // If Use Admin Rules is enabled, job type is locked and set via Rules.
               disabled={readOnlyAppAssembly || Boolean(a.use_admin_rules)}
               value={getEffectiveJobTypeId(a) ?? ''}
-              onChange={(ev) => { const v = ev.target.value || null; setA({ ...a, job_type_id: v, jobTypeId: v } as any); }}
+              onChange={(ev) => {
+                const v = ev.target.value || null;
+                const base = (a as any).task_code_base;
+                const full = computeFullTaskCode(base, v);
+                setA({ ...a, job_type_id: v, jobTypeId: v, task_code: full ? full : null } as any);
+              }}
             >
               <option value="">(Select)</option>
               {enabledJobTypes.map((jt: any) => (
