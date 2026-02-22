@@ -150,7 +150,9 @@ export function AssemblyEditorPage() {
   const enabledJobTypeIds = useMemo(() => {
     return new Set(enabledJobTypes.map((j: any) => j.id));
   }, [enabledJobTypes]);
-  const readOnlyAppAssembly = Boolean(a && a.library_type === 'personal' && !isAppOwner);
+  const isAppAssembly = Boolean(a && a.library_type === 'app');
+  const readOnlyAppAssembly = Boolean(isAppAssembly && !isAppOwner);
+  const canOverrideAppAssemblyTaskCode = Boolean(isAppAssembly && !isAppOwner);
 
 
   function getEffectiveJobTypeId(asm: any): string | null {
@@ -437,8 +439,33 @@ export function AssemblyEditorPage() {
 
   async function save(next: Assembly) {
     if (saving) return;
+
+    // App assemblies are read-only for normal companies EXCEPT task code override.
     if (readOnlyAppAssembly) {
-      setStatus('App assemblies are read-only. Duplicate it into User Assemblies to customize.');
+      if (!canOverrideAppAssemblyTaskCode) {
+        setStatus('App assemblies are read-only. Duplicate it into User Assemblies to customize.');
+        return;
+      }
+      try {
+        setSaving(true);
+        setStatus('Saving…');
+        const saved = await data.upsertAssembly({
+          id: next.id,
+          library_type: 'app' as any,
+          // override-only fields
+          use_app_task_code: (next as any).use_app_task_code !== false,
+          app_task_code_base: (next as any).app_task_code_base ?? null,
+          task_code_base: (next as any).task_code_base ?? null,
+        } as any);
+        setA(saved);
+        setStatus('Saved.');
+        setTimeout(() => setStatus(''), 1500);
+      } catch (e: any) {
+        console.error(e);
+        setStatus(String(e?.message ?? e));
+      } finally {
+        setSaving(false);
+      }
       return;
     }
     try {
@@ -822,9 +849,26 @@ export function AssemblyEditorPage() {
 
           <div className="stack">
             <label className="label">Master Task Code</label>
+            {canOverrideAppAssemblyTaskCode ? (
+              <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                <Toggle
+                  checked={(a as any).use_app_task_code !== false}
+                  onChange={(checked) => {
+                    const useApp = checked;
+                    const appBase = String((a as any).app_task_code_base ?? (a as any).task_code_base ?? '').trim();
+                    const nextBase = useApp ? appBase : String((a as any).task_code_base ?? '').trim();
+                    const jtId = getEffectiveJobTypeId(a) ?? null;
+                    const full = computeFullTaskCode(nextBase, jtId);
+                    setA({ ...(a as any), use_app_task_code: useApp, task_code_base: nextBase, task_code: full ? full : null } as any);
+                  }}
+                  label="Use App Task Code"
+                />
+              </div>
+            ) : null}
+
             <Input
               value={(a as any).task_code_base ?? ''}
-              disabled={readOnlyAppAssembly}
+              disabled={readOnlyAppAssembly && !canOverrideAppAssemblyTaskCode || (canOverrideAppAssemblyTaskCode && (a as any).use_app_task_code !== false)}
               placeholder="e.g., 134205"
               onChange={(e) => {
                 const base = e.target.value;
@@ -1396,6 +1440,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
