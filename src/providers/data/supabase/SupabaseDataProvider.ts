@@ -749,6 +749,10 @@ export class SupabaseDataProvider implements IDataProvider {
       customer_supplied_materials: Boolean(data.customer_supplies_materials ?? false),
       customer_supplies_materials: Boolean(data.customer_supplies_materials ?? false),
       taxable: Boolean(data.taxable ?? false),
+      task_code_base: (data as any).task_code_base ?? null,
+      task_code: (data as any).task_code ?? null,
+      task_code_base: data.task_code_base ?? null,
+      task_code: data.task_code ?? null,
       created_at: data.created_at,
       updated_at: data.updated_at,
       items: (items ?? []).map((it: any) => ({
@@ -812,6 +816,8 @@ export class SupabaseDataProvider implements IDataProvider {
         assembly.customer_supplied_materials ?? assembly.customer_supplies_materials ?? false
       ),
       taxable: Boolean(assembly.taxable ?? false),
+      task_code_base: (assembly as any).task_code_base ?? (assembly as any).taskCodeBase ?? null,
+      task_code: (assembly as any).task_code ?? (assembly as any).taskCode ?? null,
       updated_at: new Date().toISOString(),
       created_at: assembly.created_at ?? new Date().toISOString(),
     };
@@ -968,6 +974,8 @@ export class SupabaseDataProvider implements IDataProvider {
       customer_supplied_materials: Boolean(data.customer_supplies_materials ?? false),
       customer_supplies_materials: Boolean(data.customer_supplies_materials ?? false),
       taxable: Boolean(data.taxable ?? false),
+      task_code_base: (data as any).task_code_base ?? null,
+      task_code: (data as any).task_code ?? null,
       created_at: data.created_at,
       updated_at: data.updated_at,
       items: [],
