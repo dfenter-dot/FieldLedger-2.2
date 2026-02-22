@@ -302,7 +302,7 @@ export function CsvPage() {
     return Number.isFinite(x) ? x.toFixed(2) : '0.00';
   }
 
-  nc function collectAllAssembliesAcrossLibraries(): Promise<Assembly[]> {
+  async function collectAllAssembliesAcrossLibraries(): Promise<Assembly[]> {
     const libs: Array<LibraryType> = ['company' as any, 'personal' as any];
     const all: Assembly[] = [];
     for (const lib of libs) {
