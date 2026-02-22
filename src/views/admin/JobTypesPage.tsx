@@ -289,25 +289,26 @@ export function JobTypesPage() {
                     <div className="stack">
                       <label className="label">Task Code Suffix (optional)</label>
                       <Input
-                        value={row.task_code_suffix ?? ''}
+                        value={(row.assembly_task_code_suffix ?? row.task_code_suffix) ?? ''}
                         placeholder="e.g., SRV (3–6 chars)"
                         onChange={(e) =>
                           setEditing((prev) => ({
                             ...prev,
-                            [jt.id]: { ...row, task_code_suffix: e.target.value || null },
+                            [jt.id]: { ...row, assembly_task_code_suffix: e.target.value || null },
                           }))
                         }
                         onBlur={() => {
-                          const raw = String(row.task_code_suffix ?? '').trim();
+                          const raw = String((row.assembly_task_code_suffix ?? row.task_code_suffix) ?? '').trim();
                           if (!raw) {
-                            setEditing((prev) => ({ ...prev, [jt.id]: { ...row, task_code_suffix: null } }));
+                            setEditing((prev) => ({ ...prev, [jt.id]: { ...row, assembly_task_code_suffix: null, task_code_suffix: null } }));
                             return;
                           }
                           const cleaned = raw.replace(/\s+/g, '').toUpperCase();
                           const ok = /^[A-Z0-9]{3,6}$/.test(cleaned);
                           setEditing((prev) => ({
                             ...prev,
-                            [jt.id]: { ...row, task_code_suffix: ok ? cleaned : null },
+                            // Persist only the canonical column.
+                            [jt.id]: { ...row, assembly_task_code_suffix: ok ? cleaned : null, task_code_suffix: null },
                           }));
                         }}
                       />
