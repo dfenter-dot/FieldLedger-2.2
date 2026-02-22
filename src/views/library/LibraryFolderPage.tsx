@@ -30,7 +30,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
   const lib = (libraryType === 'app' ? 'personal' : 'company') as LibraryType;
 
   const data = useData();
-  const { mode, setMode } = useSelection();
+  const { mode, setMode, exportAssemblyIds, setExportAssemblyIds } = useSelection();
   const dialogs = useDialogs();
 
   // Folder navigation is encoded in the splat segment so deep links work:
@@ -90,6 +90,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     if (mode.type === 'add-materials-to-assembly' && kind === 'materials') return 'Picker mode: Add materials to assembly';
     if (mode.type === 'add-materials-to-estimate' && kind === 'materials') return 'Picker mode: Add materials to estimate';
     if (mode.type === 'add-assemblies-to-estimate' && kind === 'assemblies') return 'Picker mode: Add assemblies to estimate';
+    if (mode.type === 'pick-assemblies-for-export' && kind === 'assemblies') return 'Picker mode: Select assemblies for export';
     return null;
   }, [kind, mode.type]);
 
@@ -1192,6 +1193,9 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
             <div className="list">
               {assemblies.map((a) => {
                 const inAssemblyPicker = mode.type === 'add-assemblies-to-estimate';
+                const inExportPicker = mode.type === 'pick-assemblies-for-export';
+
+                const isExportSelected = inExportPicker ? exportAssemblyIds.includes(a.id) : false;
                 // current qty if already selected in estimate
                 const selectedQty = (() => {
                   if (!inAssemblyPicker) return '';
@@ -1205,12 +1209,12 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                     id={`item-${a.id}`}
                     className="listRow"
                     style={
-                      highlightId === a.id
+                      highlightId === a.id || isExportSelected
                         ? { outline: '2px solid var(--accent)', outlineOffset: 2, borderRadius: 10 }
                         : undefined
                     }
                   >
-                    {selectMode && !inAssemblyPicker ? (
+                    {selectMode && !inAssemblyPicker && !inExportPicker ? (
                       <input
                         type="checkbox"
                         checked={!!selectedItemIds[a.id]}
@@ -1221,10 +1225,10 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                       />
                     ) : null}
                     <div
-                      className={inAssemblyPicker ? '' : 'clickable'}
+                      className={inAssemblyPicker || inExportPicker ? '' : 'clickable'}
                       style={{ flex: 1 }}
                       onClick={() => {
-                        if (inAssemblyPicker) return;
+                        if (inAssemblyPicker || inExportPicker) return;
                         if (selectMode) {
                           setSelectedItemIds((p) => ({ ...p, [a.id]: !p[a.id] }));
                           return;
@@ -1239,7 +1243,19 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
                     </div>
 
                     <div className="row" style={{ gap: 8 }}>
-                      {inAssemblyPicker ? (
+                      {inExportPicker ? (
+                        <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                          <Button
+                            variant={isExportSelected ? 'danger' : 'primary'}
+                            onClick={() => {
+                              if (isExportSelected) setExportAssemblyIds(exportAssemblyIds.filter((x) => x !== a.id));
+                              else setExportAssemblyIds([...exportAssemblyIds, a.id]);
+                            }}
+                          >
+                            {isExportSelected ? 'Remove' : 'Add'}
+                          </Button>
+                        </div>
+                      ) : inAssemblyPicker ? (
                         (() => {
                           const draftText = draftQtyByAssemblyId[a.id] ?? (selectedQty || '1');
                           const isSelected = (selectedQty ?? '').trim() !== '';
@@ -1337,6 +1353,7 @@ export function LibraryFolderPage({ kind }: { kind: 'materials' | 'assemblies' }
     </div>
   );
 }
+
 
 
 
