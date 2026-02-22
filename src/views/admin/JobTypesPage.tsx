@@ -20,7 +20,6 @@ function makeNewJobType(): JobType {
     billing_mode: 'flat',
     hourly_material_markup_mode: 'company',
     hourly_material_markup_fixed_percent: 0,
-    assembly_task_code_suffix: null,
     created_at: new Date().toISOString(),
   };
 }
@@ -64,27 +63,12 @@ export function JobTypesPage() {
 
   async function save(jt: JobType) {
     try {
-      const suffixRaw = (jt as any).assembly_task_code_suffix;
-      const suffix = typeof suffixRaw === 'string' ? suffixRaw.trim() : '';
-      if (suffix) {
-        const normalized = suffix.toUpperCase();
-        if (!/^[A-Z0-9]{3,6}$/.test(normalized)) {
-          setStatus('Assembly Task Code Suffix must be 3–6 letters/numbers (A–Z, 0–9).');
-          setTimeout(() => setStatus(''), 2500);
-          return;
-        }
-      }
-
       setStatus('Saving...');
       // Default is managed ONLY via setDefaultJobType().
       // Prevent accidental removal or reassignment of the default flag via the edit form.
       const existing = rows.find((x) => x.id === jt.id);
       const enforcedIsDefault = existing?.is_default ?? false;
-      const payload = {
-        ...jt,
-        is_default: enforcedIsDefault,
-        assembly_task_code_suffix: suffix ? suffix.trim().toUpperCase() : null,
-      };
+      const payload = { ...jt, is_default: enforcedIsDefault };
 
       const saved = await data.upsertJobType(payload);
 
@@ -301,31 +285,40 @@ export function JobTypesPage() {
                       />
                     </div>
 
-                    <div className="stack" style={{ gridColumn: '1 / -1' }}>
-                      <label className="label">Description</label>
-                      <Input value={row.description ?? ''} onChange={(e) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, description: e.target.value || null } }))} />
-                    </div>
-
+                    
                     <div className="stack">
-                      <label className="label">Assembly Task Code Suffix</label>
+                      <label className="label">Task Code Suffix (optional)</label>
                       <Input
-                        placeholder="SRV"
-                        value={(row as any).assembly_task_code_suffix ?? ''}
+                        value={row.task_code_suffix ?? ''}
+                        placeholder="e.g., SRV (3–6 chars)"
                         onChange={(e) =>
                           setEditing((prev) => ({
                             ...prev,
-                            [jt.id]: { ...row, assembly_task_code_suffix: e.target.value || null },
+                            [jt.id]: { ...row, task_code_suffix: e.target.value || null },
                           }))
                         }
-                        onBlur={(e) => {
-                          const v = e.target.value.trim();
+                        onBlur={() => {
+                          const raw = String(row.task_code_suffix ?? '').trim();
+                          if (!raw) {
+                            setEditing((prev) => ({ ...prev, [jt.id]: { ...row, task_code_suffix: null } }));
+                            return;
+                          }
+                          const cleaned = raw.replace(/\s+/g, '').toUpperCase();
+                          const ok = /^[A-Z0-9]{3,6}$/.test(cleaned);
                           setEditing((prev) => ({
                             ...prev,
-                            [jt.id]: { ...row, assembly_task_code_suffix: v ? v.toUpperCase() : null },
+                            [jt.id]: { ...row, task_code_suffix: ok ? cleaned : null },
                           }));
                         }}
                       />
-                      <div className="muted small">3–6 letters/numbers. Used later for Assembly task codes and exports.</div>
+                      <div className="muted" style={{ marginTop: 6 }}>
+                        Used to build Assembly task codes (master code + suffix). Leave blank to keep master code unchanged.
+                      </div>
+                    </div>
+
+<div className="stack" style={{ gridColumn: '1 / -1' }}>
+                      <label className="label">Description</label>
+                      <Input value={row.description ?? ''} onChange={(e) => setEditing((prev) => ({ ...prev, [jt.id]: { ...row, description: e.target.value || null } }))} />
                     </div>
                   </div>
                 ) : null}
