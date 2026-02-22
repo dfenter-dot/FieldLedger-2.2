@@ -305,12 +305,6 @@ export class SupabaseDataProvider implements IDataProvider {
     const payload: any = { ...jobType };
     if (!payload.company_id) payload.company_id = companyId;
 
-    // Canonicalize task code suffix column (avoid sending unknown/legacy columns).
-    if (payload.task_code_suffix != null && payload.assembly_task_code_suffix == null) {
-      payload.assembly_task_code_suffix = payload.task_code_suffix;
-    }
-    delete payload.task_code_suffix;
-
     let { data, error } = await this.supabase.from('job_types').upsert(payload).select().single();
     if (error) {
       // Tolerate partially-migrated schemas (e.g., missing hourly markup override columns).
@@ -319,13 +313,6 @@ export class SupabaseDataProvider implements IDataProvider {
         const fallback = { ...payload } as any;
         delete fallback.hourly_material_markup_mode;
         delete fallback.hourly_material_markup_fixed_percent;
-        ({ data, error } = await this.supabase.from('job_types').upsert(fallback).select().single());
-      }
-
-      // Tolerate schemas that don't yet include the task code suffix column.
-      if (error && msg.includes('assembly_task_code_suffix')) {
-        const fallback = { ...payload } as any;
-        delete fallback.assembly_task_code_suffix;
         ({ data, error } = await this.supabase.from('job_types').upsert(fallback).select().single());
       }
     }
@@ -819,8 +806,6 @@ export class SupabaseDataProvider implements IDataProvider {
       folder_id: folderId,
       name: assembly.name,
       description: assembly.description ?? null,
-      task_code_base: (assembly as any).task_code_base ?? null,
-      task_code: (assembly as any).task_code ?? null,
       job_type_id: assembly.job_type_id ?? null,
       use_admin_rules: Boolean(assembly.use_admin_rules ?? false),
       customer_supplies_materials: Boolean(
@@ -888,7 +873,9 @@ export class SupabaseDataProvider implements IDataProvider {
           };
           if (opts.includeSnapshot) {
             row.name = it.name ?? 'Labor';
-            row.description = it.description ?? null;
+            // IMPORTANT: Some deployments do NOT have a `description` column on `assembly_items`.
+            // Writing unknown columns causes PostgREST to return 400 and makes Save appear broken.
+            // Keep snapshot compatibility by storing `name` only.
           }
           if (opts.orderCol) row[opts.orderCol] = idx;
           return row;
@@ -908,7 +895,7 @@ export class SupabaseDataProvider implements IDataProvider {
           if (opts.includeSnapshot) {
             // Snapshot for UI (optional in DB)
             row.name = it.name ?? 'Assembly Line';
-            row.description = it.description ?? null;
+            // See note above: avoid writing `description` for schema compatibility.
           }
           if (opts.orderCol) row[opts.orderCol] = idx;
           return row;
@@ -924,7 +911,7 @@ export class SupabaseDataProvider implements IDataProvider {
         if (opts.includeSnapshot) {
           // Optional snapshot for UI
           row.name = it.name ?? null;
-          row.description = it.description ?? null;
+          // See note above: avoid writing `description` for schema compatibility.
         }
         if (opts.orderCol) row[opts.orderCol] = idx;
         return row;
