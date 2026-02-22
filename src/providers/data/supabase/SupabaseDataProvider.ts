@@ -309,15 +309,10 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error) {
       // Tolerate partially-migrated schemas (e.g., missing hourly markup override columns).
       const msg = String((error as any)?.message ?? error);
-      if (
-        msg.includes('hourly_material_markup_mode') ||
-        msg.includes('hourly_material_markup_fixed_percent') ||
-        msg.includes('assembly_task_code_suffix')
-      ) {
+      if (msg.includes('hourly_material_markup_mode') || msg.includes('hourly_material_markup_fixed_percent')) {
         const fallback = { ...payload } as any;
         delete fallback.hourly_material_markup_mode;
         delete fallback.hourly_material_markup_fixed_percent;
-        delete fallback.assembly_task_code_suffix;
         ({ data, error } = await this.supabase.from('job_types').upsert(fallback).select().single());
       }
     }
@@ -811,6 +806,8 @@ export class SupabaseDataProvider implements IDataProvider {
       folder_id: folderId,
       name: assembly.name,
       description: assembly.description ?? null,
+      task_code_base: (assembly as any).task_code_base ?? null,
+      task_code: (assembly as any).task_code ?? null,
       job_type_id: assembly.job_type_id ?? null,
       use_admin_rules: Boolean(assembly.use_admin_rules ?? false),
       customer_supplies_materials: Boolean(
