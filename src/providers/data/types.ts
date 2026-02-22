@@ -116,11 +116,8 @@ export interface JobType {
   /** Optional description used by the UI (nullable in DB). */
   description?: string | null;
 
-  /**
-   * Optional suffix used when generating Assembly task codes for this Job Type.
-   * Admin-configurable. Expected format: 3-6 alphanumeric characters.
-   */
-  assembly_task_code_suffix?: string | null;
+  /** Optional 3–6 character suffix appended to Assembly task codes (e.g., SRV, INS). */
+  task_code_suffix?: string | null;
 
   created_at?: string;
   updated_at?: string;
@@ -226,6 +223,11 @@ export interface Assembly {
 
   customer_supplied_materials?: boolean;
 
+  /** User-entered master task code (base), e.g., 134205 */
+  task_code_base?: string | null;
+  /** Derived full task code based on job type suffix, e.g., 134205SRV */
+  task_code?: string | null;
+
   library_type: LibraryType;
 
   created_at?: string;
@@ -274,6 +276,11 @@ export interface Estimate {
   use_admin_rules?: boolean;
 
   customer_supplied_materials?: boolean;
+
+  /** User-entered master task code (base), e.g., 134205 */
+  task_code_base?: string | null;
+  /** Derived full task code based on job type suffix, e.g., 134205SRV */
+  task_code?: string | null;
   /** Deprecated: misc material is governed solely by Admin configuration. */
   apply_misc_material?: boolean;
   apply_processing_fees?: boolean;
