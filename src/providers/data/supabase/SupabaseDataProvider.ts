@@ -186,17 +186,6 @@ export class SupabaseDataProvider implements IDataProvider {
     return owner === 'company' ? ('company' as any) : ('app' as any);
   }
 
-  // Assembly line items have existed with several string enums over the life of the project.
-  // Normalize to the pricing engine's canonical values.
-  private normalizeItemType(raw: any): string {
-    const v = String(raw ?? '').toLowerCase().trim();
-    if (!v) return '';
-    if (v === 'material' || v === 'material_line' || v === 'material_item') return 'material';
-    if (v === 'labor' || v === 'labor_line') return 'labor';
-    if (v === 'blank_material' || v === 'blank' || v === 'blank_material_line' || v === 'custom_material') return 'blank_material';
-    return v;
-  }
-
   /* ============================
      Folder Mapping
   ============================ */
@@ -746,12 +735,11 @@ export class SupabaseDataProvider implements IDataProvider {
       const aid = it.assembly_id;
       if (!aid) continue;
       if (!byAsm.has(aid)) byAsm.set(aid, []);
-      const normalizedType = this.normalizeItemType(it.item_type ?? it.type);
       byAsm.get(aid)!.push({
         id: it.id,
         assembly_id: it.assembly_id,
-        item_type: normalizedType,
-        type: normalizedType,
+        item_type: it.item_type ?? it.type,
+        type: it.item_type ?? it.type,
         material_id: it.material_id ?? null,
         name: it.name ?? null,
         quantity: Number(it.quantity ?? 1),
@@ -827,8 +815,8 @@ export class SupabaseDataProvider implements IDataProvider {
         id: it.id,
         assembly_id: it.assembly_id,
         // Support both DB styles (`item_type` vs `type`) and both UI styles (`type` vs `item_type`).
-        item_type: this.normalizeItemType(it.item_type ?? it.type),
-        type: this.normalizeItemType(it.item_type ?? it.type),
+        item_type: it.item_type ?? it.type,
+        type: it.item_type ?? it.type,
         material_id: it.material_id ?? null,
         name: it.name ?? null,
         quantity: Number(it.quantity ?? 1),
@@ -850,7 +838,19 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.currentCompanyId();
 
     const assembly: any = arg?.assembly ? arg.assembly : arg;
-    const items: any[] = arg?.items ?? assembly?.items ?? [];
+
+    // IMPORTANT:
+    // Some edit flows (e.g. task code updates, job type toggle) call upsertAssembly with a
+    // partial assembly object and do NOT include items. If we treat missing items as an empty
+    // array and "replace" rows, we will accidentally wipe all existing assembly_items.
+    //
+    // We only replace assembly_items when the caller explicitly provides an items array
+    // (either as arg.items or assembly.items).
+    const callerProvidedItems =
+      (arg && typeof arg === 'object' && Object.prototype.hasOwnProperty.call(arg, 'items')) ||
+      (assembly && typeof assembly === 'object' && Object.prototype.hasOwnProperty.call(assembly, 'items'));
+
+    const items: any[] = callerProvidedItems ? (arg?.items ?? assembly?.items ?? []) : [];
 
     // Preserve existing owner when editing; fall back to library_type when creating.
     const owner: DbOwner =
@@ -895,10 +895,9 @@ export class SupabaseDataProvider implements IDataProvider {
     const { data, error } = await this.supabase.from('assemblies').upsert(payload).select().single();
     if (error) throw error;
 
-    // Line items: for reliability (and to avoid UUID issues from client-generated ids),
-    // we replace the entire item list on every save.
-    // This also guarantees removed rows are actually removed.
-    {
+    // Line items: only replace when explicitly provided by the caller.
+    // (See callerProvidedItems note above.)
+    if (callerProvidedItems) {
       // IMPORTANT: If RLS blocks DELETE, PostgREST can succeed with 0 rows affected.
       // That would cause duplicates because we then INSERT a new set of rows.
       // So we (1) count existing rows, (2) delete with `select()` returning, and
