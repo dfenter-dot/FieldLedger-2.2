@@ -186,6 +186,17 @@ export class SupabaseDataProvider implements IDataProvider {
     return owner === 'company' ? ('company' as any) : ('app' as any);
   }
 
+  // Assembly line items have existed with several string enums over the life of the project.
+  // Normalize to the pricing engine's canonical values.
+  private normalizeItemType(raw: any): string {
+    const v = String(raw ?? '').toLowerCase().trim();
+    if (!v) return '';
+    if (v === 'material' || v === 'material_line' || v === 'material_item') return 'material';
+    if (v === 'labor' || v === 'labor_line') return 'labor';
+    if (v === 'blank_material' || v === 'blank' || v === 'blank_material_line' || v === 'custom_material') return 'blank_material';
+    return v;
+  }
+
   /* ============================
      Folder Mapping
   ============================ */
@@ -735,11 +746,12 @@ export class SupabaseDataProvider implements IDataProvider {
       const aid = it.assembly_id;
       if (!aid) continue;
       if (!byAsm.has(aid)) byAsm.set(aid, []);
+      const normalizedType = this.normalizeItemType(it.item_type ?? it.type);
       byAsm.get(aid)!.push({
         id: it.id,
         assembly_id: it.assembly_id,
-        item_type: it.item_type ?? it.type,
-        type: it.item_type ?? it.type,
+        item_type: normalizedType,
+        type: normalizedType,
         material_id: it.material_id ?? null,
         name: it.name ?? null,
         quantity: Number(it.quantity ?? 1),
@@ -815,8 +827,8 @@ export class SupabaseDataProvider implements IDataProvider {
         id: it.id,
         assembly_id: it.assembly_id,
         // Support both DB styles (`item_type` vs `type`) and both UI styles (`type` vs `item_type`).
-        item_type: it.item_type ?? it.type,
-        type: it.item_type ?? it.type,
+        item_type: this.normalizeItemType(it.item_type ?? it.type),
+        type: this.normalizeItemType(it.item_type ?? it.type),
         material_id: it.material_id ?? null,
         name: it.name ?? null,
         quantity: Number(it.quantity ?? 1),
@@ -1807,6 +1819,7 @@ async deleteEstimate(id: string): Promise<void> {
     return data as any;
   }
 }
+
 
 
 
