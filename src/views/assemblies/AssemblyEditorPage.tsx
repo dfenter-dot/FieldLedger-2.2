@@ -95,6 +95,46 @@ export function AssemblyEditorPage() {
   const [a, setA] = useState<Assembly | null>(null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Copy-to-clipboard dropdown (copy ONE field at a time)
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string>('');
+  const copyWrapRef = useRef<HTMLDivElement | null>(null);
+
+  async function copyText(label: string, text: string) {
+    const value = String(text ?? '');
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopyStatus(`Copied ${label}`);
+      setTimeout(() => setCopyStatus(''), 1200);
+    } catch {
+      setCopyStatus('Copy failed');
+      setTimeout(() => setCopyStatus(''), 1500);
+    }
+  }
+
+  useEffect(() => {
+    if (!copyOpen) return;
+    const onDown = (ev: MouseEvent) => {
+      const el = copyWrapRef.current;
+      if (!el) return;
+      if (ev.target instanceof Node && !el.contains(ev.target)) setCopyOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [copyOpen]);
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
@@ -835,6 +875,66 @@ export function AssemblyEditorPage() {
             </Button>
             {/* Assemblies: keep rules feature in code for future, but hide it from the UI. */}
             {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
+
+            <div ref={copyWrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+              <Button
+                variant="secondary"
+                onClick={() => setCopyOpen((v) => !v)}
+                title={copyStatus ? copyStatus : 'Copy'}
+              >
+                {copyStatus ? copyStatus : 'Copy ▾'}
+              </Button>
+              {copyOpen ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: 6,
+                    zIndex: 50,
+                    minWidth: 180,
+                    borderRadius: 10,
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'rgba(10,20,35,0.98)',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+                    padding: 6,
+                  }}
+                >
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      setCopyOpen(false);
+                      await copyText('Name', a.name ?? '');
+                    }}
+                    style={{ width: '100%', justifyContent: 'flex-start' } as any}
+                  >
+                    Name
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      setCopyOpen(false);
+                      const t = (totals as any)?.total ?? 0;
+                      await copyText('Total Price', Number(t).toFixed(2));
+                    }}
+                    style={{ width: '100%', justifyContent: 'flex-start' } as any}
+                  >
+                    Total Price
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      setCopyOpen(false);
+                      await copyText('Description', (a as any).description ?? '');
+                    }}
+                    style={{ width: '100%', justifyContent: 'flex-start' } as any}
+                  >
+                    Description
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
             <Button variant="primary" onClick={saveAll} disabled={saving}>
               Save
             </Button>
