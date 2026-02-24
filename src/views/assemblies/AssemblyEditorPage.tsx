@@ -941,11 +941,16 @@ export function AssemblyEditorPage() {
           </div>
         }
       >
+        
         <div className="grid2">
           <div className="stack">
             <label className="label">Assembly Name</label>
-            <Input value={a.name} disabled={readOnlyAppAssembly} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
-          
+            <Input
+              value={a.name}
+              disabled={readOnlyAppAssembly}
+              onChange={(e) => setA({ ...a, name: e.target.value } as any)}
+            />
+          </div>
 
           <div className="stack">
             <label className="label">Master Task Code</label>
@@ -968,7 +973,10 @@ export function AssemblyEditorPage() {
 
             <Input
               value={(a as any).task_code_base ?? ''}
-              disabled={readOnlyAppAssembly && !canOverrideAppAssemblyTaskCode || (canOverrideAppAssemblyTaskCode && (a as any).use_app_task_code !== false)}
+              disabled={
+                (readOnlyAppAssembly && !canOverrideAppAssemblyTaskCode) ||
+                (canOverrideAppAssemblyTaskCode && (a as any).use_app_task_code !== false)
+              }
               placeholder="e.g., 134205"
               onChange={(e) => {
                 const base = e.target.value;
@@ -983,9 +991,9 @@ export function AssemblyEditorPage() {
             <label className="label">Task Code (auto)</label>
             <Input value={(a as any).task_code ?? ''} disabled />
           </div>
-</div>
+        </div>
 
-          {/* Assemblies: keep Use Admin Rules functionality intact but hidden from view. */}
+/* Assemblies: keep Use Admin Rules functionality intact but hidden from view. */}
           {(
             <div className="stack">
               <label className="label">Use Admin Rules</label>
