@@ -100,6 +100,10 @@ export function AssemblyEditorPage() {
   const [jobTypes, setJobTypes] = useState<any[]>([]);
   const [isAppOwner, setIsAppOwner] = useState<boolean>(false);
 
+  // Copy dropdown (single-field clipboard copy)
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyStatus, setCopyStatus] = useState('');
+
   const didAutoSetDefaultJobType = useRef(false);
 
   // Reset one-time initialization when switching assemblies.
@@ -805,6 +809,28 @@ export function AssemblyEditorPage() {
     }
   }
 
+  async function copyToClipboard(kind: 'name' | 'price' | 'description') {
+    if (!a) return;
+    try {
+      let text = '';
+      if (kind === 'name') text = String((a as any).name ?? '');
+      if (kind === 'description') text = String((a as any).description ?? '');
+      if (kind === 'price') {
+        const total = Number((totals as any)?.total_price ?? 0) || 0;
+        text = total.toFixed(2);
+      }
+
+      await navigator.clipboard.writeText(text);
+      setCopyStatus('Copied');
+      setCopyOpen(false);
+      window.setTimeout(() => setCopyStatus(''), 900);
+    } catch (err) {
+      console.error(err);
+      setCopyStatus('Copy failed');
+      window.setTimeout(() => setCopyStatus(''), 1200);
+    }
+  }
+
 
   return (
     <div className="stack">
@@ -835,6 +861,32 @@ export function AssemblyEditorPage() {
             </Button>
             {/* Assemblies: keep rules feature in code for future, but hide it from the UI. */}
             {a.use_admin_rules ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
+
+            <div style={{ position: 'relative' }}>
+              <Button variant="secondary" onClick={() => setCopyOpen((v) => !v)}>
+                Copy ▾
+              </Button>
+              {copyOpen ? (
+                <div
+                  className="card"
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 'calc(100% + 6px)',
+                    padding: 8,
+                    minWidth: 180,
+                    zIndex: 50,
+                  }}
+                >
+                  <div className="stack" style={{ gap: 6 }}>
+                    <Button onClick={() => copyToClipboard('name')}>Name</Button>
+                    <Button onClick={() => copyToClipboard('price')}>Total Price</Button>
+                    <Button onClick={() => copyToClipboard('description')}>Description</Button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <Button variant="primary" onClick={saveAll} disabled={saving}>
               Save
             </Button>
@@ -845,7 +897,13 @@ export function AssemblyEditorPage() {
           <div className="stack">
             <label className="label">Assembly Name</label>
             <Input value={a.name} disabled={readOnlyAppAssembly} onChange={(e) => setA({ ...a, name: e.target.value } as any)} />
-          
+            {copyStatus ? <div className="muted small">{copyStatus}</div> : null}
+          </div>
+
+          <div className="stack">
+            <label className="label">Description</label>
+            <textarea className="input textarea" value={(a as any).description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
+          </div>
 
           <div className="stack">
             <label className="label">Master Task Code</label>
@@ -884,17 +942,17 @@ export function AssemblyEditorPage() {
             <Input value={(a as any).task_code ?? ''} disabled />
           </div>
 
-        </div>
-
           {/* Assemblies: keep Use Admin Rules functionality intact but hidden from view. */}
-          <div className="stack">
-            <label className="label">Use Admin Rules</label>
-            <Toggle
-              checked={Boolean(a.use_admin_rules)}
-              onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
-              label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
-            />
-          </div>
+          {false && (
+            <div className="stack">
+              <label className="label">Use Admin Rules</label>
+              <Toggle
+                checked={Boolean(a.use_admin_rules)}
+                onChange={(v) => setA({ ...a, use_admin_rules: v } as any)}
+                label={a.use_admin_rules ? 'Yes (locks job type)' : 'No'}
+              />
+            </div>
+          )}
 
           <div className="stack">
             <label className="label">Job Type</label>
@@ -940,10 +998,6 @@ export function AssemblyEditorPage() {
             <Input type="text" inputMode="decimal" value={laborMinutesText} onChange={(e) => setLaborMinutesText(e.target.value)} />
           </div>)}
 
-          <div className="stack" style={{ gridColumn: '1 / -1' }}>
-            <label className="label">Description</label>
-            <textarea className="input textarea" value={a.description ?? ''} onChange={(e) => setA({ ...a, description: e.target.value } as any)} />
-          </div>
         </div>
 
         <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
