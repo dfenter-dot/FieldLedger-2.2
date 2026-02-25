@@ -1,0 +1,5 @@
+-- Allow per-company job type overrides for app-owned assemblies.
+
+alter table public.app_assembly_overrides
+  add column if not exists job_type_id uuid null references public.job_types(id);
+
