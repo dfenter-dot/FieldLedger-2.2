@@ -115,6 +115,7 @@ export function EstimateEditorPage() {
 
   const [e, setE] = useState<Estimate | null>(null);
   const [status, setStatus] = useState('');
+  const [copyOpen, setCopyOpen] = useState(false);
   const [saveUi, setSaveUi] = useState<SaveUiState>('idle');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
   const [jobTypes, setJobTypes] = useState<any[]>([]);
@@ -206,46 +207,6 @@ export function EstimateEditorPage() {
   const [qtyEdits, setQtyEdits] = useState<Record<string, string>>({});
 
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
-
-  // Copy-to-clipboard dropdown (copy ONE field at a time)
-  const [copyOpen, setCopyOpen] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<string>('');
-  const copyWrapRef = useRef<HTMLDivElement | null>(null);
-
-  async function copyText(label: string, text: string) {
-    const value = String(text ?? '');
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = value;
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-      setCopyStatus(`Copied ${label}`);
-      setTimeout(() => setCopyStatus(''), 1200);
-    } catch {
-      setCopyStatus('Copy failed');
-      setTimeout(() => setCopyStatus(''), 1500);
-    }
-  }
-
-  useEffect(() => {
-    if (!copyOpen) return;
-    const onDown = (ev: MouseEvent) => {
-      const el = copyWrapRef.current;
-      if (!el) return;
-      if (ev.target instanceof Node && !el.contains(ev.target)) setCopyOpen(false);
-    };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
-  }, [copyOpen]);
 
   // Local edit buffer so numeric inputs can be blank while editing.
   // App-wide rule: backspacing should not require double-clicking.
@@ -663,6 +624,30 @@ export function EstimateEditorPage() {
       return;
     }
     await save(e);
+  }
+
+  async function copyText(label: string, value: string) {
+    try {
+      const text = value ?? '';
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setStatus(`Copied ${label}.`);
+      setTimeout(() => setStatus(''), 900);
+    } catch (err: any) {
+      console.error(err);
+      setStatus('Copy failed.');
+      setTimeout(() => setStatus(''), 1200);
+    }
   }
 
 	async function ensureEstimateCreatedFolder(): Promise<string | null> {
@@ -1360,61 +1345,55 @@ async function updateQuantity(itemId: string, quantity: number) {
             </Button>
             {!isLocked ? <Button onClick={applyAdminRules}>Apply Changes</Button> : null}
 
-            <div ref={copyWrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-              <Button
-                variant="secondary"
-                onClick={() => setCopyOpen((v) => !v)}
-                title={copyStatus ? copyStatus : 'Copy'}
-              >
-                {copyStatus ? copyStatus : 'Copy ▾'}
+            <div style={{ position: 'relative' }}>
+              <Button variant="secondary" onClick={() => setCopyOpen((v) => !v)}>
+                Copy ▾
               </Button>
               {copyOpen ? (
                 <div
                   style={{
                     position: 'absolute',
-                    top: '100%',
                     right: 0,
-                    marginTop: 6,
+                    top: 42,
                     zIndex: 50,
-                    minWidth: 180,
+                    minWidth: 220,
+                    border: '1px solid var(--border)',
+                    background: 'var(--panel)',
                     borderRadius: 10,
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    background: 'rgba(10,20,35,0.98)',
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-                    padding: 6,
+                    boxShadow: '0 10px 24px rgba(0,0,0,0.18)',
+                    overflow: 'hidden',
                   }}
                 >
-                  <Button
-                    variant="secondary"
-                    onClick={async () => {
+                  <div
+                    className="clickable"
+                    style={{ padding: '10px 12px' }}
+                    onClick={() => {
                       setCopyOpen(false);
-                      await copyText('Name', (e as any).name ?? '');
+                      copyText('Name', String((e as any)?.name ?? ''));
                     }}
-                    style={{ width: '100%', justifyContent: 'flex-start' } as any}
                   >
                     Name
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={async () => {
+                  </div>
+                  <div
+                    className="clickable"
+                    style={{ padding: '10px 12px' }}
+                    onClick={() => {
                       setCopyOpen(false);
-                      const t = totals?.total ?? 0;
-                      await copyText('Total Price', Number(t).toFixed(2));
+                      copyText('Total Price', safeFixed((totals as any)?.total, 2));
                     }}
-                    style={{ width: '100%', justifyContent: 'flex-start' } as any}
                   >
                     Total Price
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={async () => {
+                  </div>
+                  <div
+                    className="clickable"
+                    style={{ padding: '10px 12px' }}
+                    onClick={() => {
                       setCopyOpen(false);
-                      await copyText('Description', (e as any).private_notes ?? '');
+                      copyText('Description', String((e as any)?.description ?? ''));
                     }}
-                    style={{ width: '100%', justifyContent: 'flex-start' } as any}
                   >
                     Description
-                  </Button>
+                  </div>
                 </div>
               ) : null}
             </div>
