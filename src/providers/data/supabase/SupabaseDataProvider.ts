@@ -762,6 +762,24 @@ export class SupabaseDataProvider implements IDataProvider {
     if (error) throw error;
     if (!data) return null;
 
+    // Per-company overrides for app-owned assemblies (e.g., task code base + job type).
+    // App-owned base rows remain immutable; overrides are applied in-memory.
+    let appOverride: any | null = null;
+    if ((data as any).owner === 'app') {
+      try {
+        const companyId = await this.currentCompanyId();
+        const { data: ov, error: ovErr } = await this.supabase
+          .from('app_assembly_overrides')
+          .select('*')
+          .eq('company_id', companyId)
+          .eq('assembly_id', id)
+          .maybeSingle();
+        if (!ovErr) appOverride = ov as any;
+      } catch {
+        // ignore (override table may not exist / RLS may block); base assembly still loads.
+      }
+    }
+
     // Assembly line items have existed with a few different column names over the life of the project.
     // Some DB schemas use `sort_order`, others use `order_index`, and some have no order column.
     // We MUST be tolerant here because a 400 from PostgREST will prevent materials from ever being added.
@@ -791,6 +809,16 @@ export class SupabaseDataProvider implements IDataProvider {
       if (lastErr && items == null) throw lastErr;
     }
 
+    const baseTaskCodeBase = (data as any).task_code_base ?? null;
+    const useAppTaskCode = appOverride?.use_app_task_code;
+    const effectiveTaskCodeBase =
+      (data as any).owner === 'app' && appOverride
+        ? (useAppTaskCode === false ? (appOverride.task_code_base ?? baseTaskCodeBase) : baseTaskCodeBase)
+        : baseTaskCodeBase;
+
+    const effectiveJobTypeId =
+      (data as any).owner === 'app' && appOverride && appOverride.job_type_id ? appOverride.job_type_id : (data as any).job_type_id;
+
     return {
       id: data.id,
       company_id: data.company_id ?? null,
@@ -799,16 +827,16 @@ export class SupabaseDataProvider implements IDataProvider {
       folder_id: data.folder_id ?? null,
       name: data.name,
       description: data.description ?? null,
-      job_type_id: data.job_type_id ?? null,
+      job_type_id: effectiveJobTypeId ?? null,
       use_admin_rules: Boolean(data.use_admin_rules ?? false),
       // Keep both spellings to avoid UI/pricing drift.
       customer_supplied_materials: Boolean(data.customer_supplies_materials ?? false),
       customer_supplies_materials: Boolean(data.customer_supplies_materials ?? false),
       taxable: Boolean(data.taxable ?? false),
-      task_code_base: (data as any).task_code_base ?? null,
+      // App-owned: allow per-company override of the base task code via app_assembly_overrides.
+      use_app_task_code: (data as any).owner === 'app' && appOverride ? Boolean(appOverride.use_app_task_code ?? true) : true,
+      task_code_base: effectiveTaskCodeBase,
       task_code: (data as any).task_code ?? null,
-      task_code_base: data.task_code_base ?? null,
-      task_code: data.task_code ?? null,
       created_at: data.created_at,
       updated_at: data.updated_at,
       items: (items ?? []).map((it: any) => ({
@@ -838,19 +866,7 @@ export class SupabaseDataProvider implements IDataProvider {
     const companyId = await this.currentCompanyId();
 
     const assembly: any = arg?.assembly ? arg.assembly : arg;
-
-    // IMPORTANT:
-    // Some edit flows (e.g. task code updates, job type toggle) call upsertAssembly with a
-    // partial assembly object and do NOT include items. If we treat missing items as an empty
-    // array and "replace" rows, we will accidentally wipe all existing assembly_items.
-    //
-    // We only replace assembly_items when the caller explicitly provides an items array
-    // (either as arg.items or assembly.items).
-    const callerProvidedItems =
-      (arg && typeof arg === 'object' && Object.prototype.hasOwnProperty.call(arg, 'items')) ||
-      (assembly && typeof assembly === 'object' && Object.prototype.hasOwnProperty.call(assembly, 'items'));
-
-    const items: any[] = callerProvidedItems ? (arg?.items ?? assembly?.items ?? []) : [];
+    const items: any[] = arg?.items ?? assembly?.items ?? [];
 
     // Preserve existing owner when editing; fall back to library_type when creating.
     const owner: DbOwner =
@@ -860,15 +876,32 @@ export class SupabaseDataProvider implements IDataProvider {
           ? 'company'
           : this.toDbOwner(assembly.library_type ?? assembly.libraryType ?? 'company');
 
+    // If a company user edits an app-owned assembly, persist only allowed overrides.
+    // This prevents accidental global edits while still allowing per-company customization.
+    if ((assembly.company_id === null || owner === 'app') && !(await this.isAppOwner())) {
+      const useAppTask = (assembly as any).use_app_task_code;
+      const overridePayload: any = {
+        company_id: companyId,
+        assembly_id: assembly.id,
+        use_app_task_code: useAppTask === false ? false : true,
+        // Only store a base override when the company is NOT using the app base.
+        task_code_base: useAppTask === false ? ((assembly as any).task_code_base ?? null) : null,
+        // Allow per-company job type override for app-owned assemblies.
+        job_type_id: assembly.job_type_id ?? null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: ovErr } = await this.supabase.from('app_assembly_overrides').upsert(overridePayload);
+      if (ovErr) throw ovErr;
+
+      // Return the merged view.
+      return await this.getAssembly(assembly.id);
+    }
+
     // SPEC: assemblies must belong to a folder
     const folderId = assembly.folder_id ?? null;
     if (!folderId) {
       throw new Error('Assembly must be saved inside a folder (folder_id is required)');
-    }
-
-    // Permissions: prevent non-app-owner from mutating app-owned base
-    if ((assembly.company_id === null || owner === 'app') && !(await this.isAppOwner())) {
-      throw new Error('App assemblies cannot be edited directly');
     }
 
     const payload: any = {
@@ -895,9 +928,10 @@ export class SupabaseDataProvider implements IDataProvider {
     const { data, error } = await this.supabase.from('assemblies').upsert(payload).select().single();
     if (error) throw error;
 
-    // Line items: only replace when explicitly provided by the caller.
-    // (See callerProvidedItems note above.)
-    if (callerProvidedItems) {
+    // Line items: for reliability (and to avoid UUID issues from client-generated ids),
+    // we replace the entire item list on every save.
+    // This also guarantees removed rows are actually removed.
+    {
       // IMPORTANT: If RLS blocks DELETE, PostgREST can succeed with 0 rows affected.
       // That would cause duplicates because we then INSERT a new set of rows.
       // So we (1) count existing rows, (2) delete with `select()` returning, and
