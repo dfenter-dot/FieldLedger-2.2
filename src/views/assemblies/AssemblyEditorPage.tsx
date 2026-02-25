@@ -169,10 +169,11 @@ export function AssemblyEditorPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [s, jts] = await Promise.all([data.getCompanySettings(), data.listJobTypes()]);
+        const [s, jts, owner] = await Promise.all([data.getCompanySettings(), data.listJobTypes(), (data as any).isAppOwner?.() ?? Promise.resolve(false)]);
         if (!cancelled) {
           setCompanySettings(s);
           setJobTypes(jts);
+          setIsAppOwner(Boolean(owner));
         }
       } catch (e) {
         console.error(e);
@@ -809,12 +810,13 @@ export function AssemblyEditorPage() {
     }
   }
 
-  async function copyToClipboard(kind: 'name' | 'price' | 'description') {
+  async function copyToClipboard(kind: 'name' | 'price' | 'description' | 'task_code') {
     if (!a) return;
     try {
       let text = '';
       if (kind === 'name') text = String((a as any).name ?? '');
       if (kind === 'description') text = String((a as any).description ?? '');
+      if (kind === 'task_code') text = String((a as any).task_code ?? '');
       if (kind === 'price') {
         const total = Number((totals as any)?.total_price ?? 0) || 0;
         text = total.toFixed(2);
@@ -882,6 +884,7 @@ export function AssemblyEditorPage() {
                     <Button onClick={() => copyToClipboard('name')}>Name</Button>
                     <Button onClick={() => copyToClipboard('price')}>Total Price</Button>
                     <Button onClick={() => copyToClipboard('description')}>Description</Button>
+                    <Button onClick={() => copyToClipboard('task_code')}>Task Code</Button>
                   </div>
                 </div>
               ) : null}
@@ -1493,6 +1496,7 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
+
 
 
 
