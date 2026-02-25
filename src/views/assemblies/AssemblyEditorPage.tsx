@@ -94,6 +94,7 @@ export function AssemblyEditorPage() {
 
   const [a, setA] = useState<Assembly | null>(null);
   const [status, setStatus] = useState('');
+  const [copyOpen, setCopyOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [laborMinutesText, setLaborMinutesText] = useState('');
   const [companySettings, setCompanySettings] = useState<any | null>(null);
@@ -150,10 +151,7 @@ export function AssemblyEditorPage() {
   const enabledJobTypeIds = useMemo(() => {
     return new Set(enabledJobTypes.map((j: any) => j.id));
   }, [enabledJobTypes]);
-  const isAppAssembly = Boolean(a && a.library_type === 'app');
-  const readOnlyAppAssembly = Boolean(isAppAssembly && !isAppOwner);
-  const canOverrideAppAssemblyTaskCode = Boolean(isAppAssembly && !isAppOwner);
-  const canOverrideAppAssemblyJobType = Boolean(isAppAssembly && !isAppOwner);
+  const readOnlyAppAssembly = Boolean(a && a.library_type === 'personal' && !isAppOwner);
 
 
   function getEffectiveJobTypeId(asm: any): string | null {
@@ -166,11 +164,10 @@ export function AssemblyEditorPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [s, jts, isOwner] = await Promise.all([data.getCompanySettings(), data.listJobTypes(), data.isAppOwner()]);
+        const [s, jts] = await Promise.all([data.getCompanySettings(), data.listJobTypes()]);
         if (!cancelled) {
           setCompanySettings(s);
           setJobTypes(jts);
-          setIsAppOwner(Boolean(isOwner));
         }
       } catch (e) {
         console.error(e);
@@ -441,33 +438,8 @@ export function AssemblyEditorPage() {
 
   async function save(next: Assembly) {
     if (saving) return;
-
-    // App assemblies are read-only for normal companies EXCEPT task code override.
     if (readOnlyAppAssembly) {
-      if (!canOverrideAppAssemblyTaskCode) {
-        setStatus('App assemblies are read-only. Duplicate it into User Assemblies to customize.');
-        return;
-      }
-      try {
-        setSaving(true);
-        setStatus('Saving…');
-        const saved = await data.upsertAssembly({
-          id: next.id,
-          library_type: 'app' as any,
-          // override-only fields
-          use_app_task_code: (next as any).use_app_task_code !== false,
-          app_task_code_base: (next as any).app_task_code_base ?? null,
-          task_code_base: (next as any).task_code_base ?? null,
-        } as any);
-        setA(saved);
-        setStatus('Saved.');
-        setTimeout(() => setStatus(''), 1500);
-      } catch (e: any) {
-        console.error(e);
-        setStatus(String(e?.message ?? e));
-      } finally {
-        setSaving(false);
-      }
+      setStatus('App assemblies are read-only. Duplicate it into User Assemblies to customize.');
       return;
     }
     try {
@@ -614,6 +586,30 @@ export function AssemblyEditorPage() {
       jobTypeId: jtId,
       labor_minutes: Number.isFinite(lm) ? lm : 0,
     } as any);
+  }
+
+  async function copyText(label: string, value: string) {
+    try {
+      const text = value ?? '';
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setStatus(`Copied ${label}.`);
+      setTimeout(() => setStatus(''), 900);
+    } catch (err: any) {
+      console.error(err);
+      setStatus('Copy failed.');
+      setTimeout(() => setStatus(''), 1200);
+    }
   }
 
   async function duplicate() {
@@ -840,6 +836,70 @@ export function AssemblyEditorPage() {
             <Button variant="primary" onClick={saveAll} disabled={saving}>
               Save
             </Button>
+
+            <div style={{ position: 'relative' }}>
+              <Button variant="secondary" onClick={() => setCopyOpen((v) => !v)}>
+                Copy ▾
+              </Button>
+              {copyOpen ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 42,
+                    zIndex: 50,
+                    minWidth: 220,
+                    border: '1px solid var(--border)',
+                    background: 'var(--panel)',
+                    borderRadius: 10,
+                    boxShadow: '0 10px 24px rgba(0,0,0,0.18)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    className="clickable"
+                    style={{ padding: '10px 12px' }}
+                    onClick={() => {
+                      setCopyOpen(false);
+                      copyText('Name', String(a?.name ?? ''));
+                    }}
+                  >
+                    Name
+                  </div>
+                  <div
+                    className="clickable"
+                    style={{ padding: '10px 12px' }}
+                    onClick={() => {
+                      setCopyOpen(false);
+                      const total = Number((totals as any)?.total_price ?? 0) || 0;
+                      copyText('Total Price', total.toFixed(2));
+                    }}
+                  >
+                    Total Price
+                  </div>
+                  <div
+                    className="clickable"
+                    style={{ padding: '10px 12px' }}
+                    onClick={() => {
+                      setCopyOpen(false);
+                      copyText('Description', String((a as any)?.description ?? ''));
+                    }}
+                  >
+                    Description
+                  </div>
+                  <div
+                    className="clickable"
+                    style={{ padding: '10px 12px' }}
+                    onClick={() => {
+                      setCopyOpen(false);
+                      copyText('Task Code', String((a as any)?.task_code ?? ''));
+                    }}
+                  >
+                    Task Code
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         }
       >
@@ -851,26 +911,9 @@ export function AssemblyEditorPage() {
 
           <div className="stack">
             <label className="label">Master Task Code</label>
-            {canOverrideAppAssemblyTaskCode ? (
-              <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-                <Toggle
-                  checked={(a as any).use_app_task_code !== false}
-                  onChange={(checked) => {
-                    const useApp = checked;
-                    const appBase = String((a as any).app_task_code_base ?? (a as any).task_code_base ?? '').trim();
-                    const nextBase = useApp ? appBase : String((a as any).task_code_base ?? '').trim();
-                    const jtId = getEffectiveJobTypeId(a) ?? null;
-                    const full = computeFullTaskCode(nextBase, jtId);
-                    setA({ ...(a as any), use_app_task_code: useApp, task_code_base: nextBase, task_code: full ? full : null } as any);
-                  }}
-                  label="Use App Task Code"
-                />
-              </div>
-            ) : null}
-
             <Input
               value={(a as any).task_code_base ?? ''}
-              disabled={readOnlyAppAssembly && !canOverrideAppAssemblyTaskCode || (canOverrideAppAssemblyTaskCode && (a as any).use_app_task_code !== false)}
+              disabled={readOnlyAppAssembly}
               placeholder="e.g., 134205"
               onChange={(e) => {
                 const base = e.target.value;
@@ -904,7 +947,7 @@ export function AssemblyEditorPage() {
             <select
               className="input"
               // If Use Admin Rules is enabled, job type is locked and set via Rules.
-              disabled={Boolean(a.use_admin_rules) || (readOnlyAppAssembly && !canOverrideAppAssemblyJobType)}
+              disabled={readOnlyAppAssembly || Boolean(a.use_admin_rules)}
               value={getEffectiveJobTypeId(a) ?? ''}
               onChange={(ev) => {
                 const v = ev.target.value || null;
@@ -1442,7 +1485,6 @@ export function AssemblyEditorPage() {
     </div>
   );
 }
-
 
 
 
